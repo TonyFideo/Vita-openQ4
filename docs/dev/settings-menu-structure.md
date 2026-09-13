@@ -228,6 +228,7 @@ The Game Options pane is `p_settings_game` and is included from `content/baseoq4
 | Weapon X Offset | `sliderDef` + `editDef` | `set_game_cl_gun_x_slider_bar`, `set_game_cl_gun_x_value` | `cl_gun_x` | `-5..5`, step `0.05` | Additive client-side right offset. |
 | Weapon Y Offset | `sliderDef` + `editDef` | `set_game_cl_gun_y_slider_bar`, `set_game_cl_gun_y_value` | `cl_gun_y` | `-5..5`, step `0.05` | Additive client-side forward offset. |
 | Weapon Z Offset | `sliderDef` + `editDef` | `set_game_cl_gun_z_slider_bar`, `set_game_cl_gun_z_value` | `cl_gun_z` | `-5..5`, step `0.05` | Additive client-side up offset. |
+| Weapon Kick | `choiceDef` | `set_game_weaponkick_value` | `g_weaponMuzzleKick` | `No;Yes` | View model kicks back and tilts when the weapon fires. Presentation only: it never moves aim or the shot origin. Multiplayer weapon defs zero the stock kick values, so the game restores each weapon's single-player kick when this is on. |
 
 ## System
 

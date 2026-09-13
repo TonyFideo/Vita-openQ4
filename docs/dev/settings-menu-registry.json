@@ -3460,6 +3460,25 @@
       },
       "restart_required": false,
       "accessibility": "Slider with paired edit field."
+    },
+    {
+      "id": "game.weapon_kick",
+      "pane": "Game Options",
+      "section": "View Weapon",
+      "path": "Settings > Game Options > View Weapon > Weapon Kick",
+      "source": "game",
+      "container": "set_game_weaponkick",
+      "widgets": [
+        "set_game_weaponkick_value"
+      ],
+      "widget_type": "choice",
+      "label_key": "#str_229982",
+      "choices_key": "#str_200059",
+      "target_type": "cvar",
+      "target": "g_weaponMuzzleKick",
+      "default": "1",
+      "restart_required": false,
+      "accessibility": "Standard focusable choiceDef row."
     }
   ],
   "default_bind_sources": [

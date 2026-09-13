@@ -16353,6 +16353,8 @@ windowDef Desktop
 			set "set_game_cl_gun_y_hover::visible" "1" ;
 			set "set_game_cl_gun_z::visible" "1" ;
 			set "set_game_cl_gun_z_hover::visible" "1" ;
+			set "set_game_weaponkick::visible" "1" ;
+			set "set_game_weaponkick_hover::visible" "1" ;
 			set "set_game_freelook_value::noevents" "0" ;
 			set "set_game_autoreload::noevents" "0" ;
 			set "set_game_autoswitch::noevents" "0" ;
@@ -16404,6 +16406,7 @@ windowDef Desktop
 			set "set_game_cl_gun_x::noevents" "0" ;
 			set "set_game_cl_gun_y::noevents" "0" ;
 			set "set_game_cl_gun_z::noevents" "0" ;
+			set "set_game_weaponkick::noevents" "0" ;
 	
 
 		}
@@ -16516,6 +16519,8 @@ windowDef Desktop
 			set "set_game_cl_gun_y_hover::visible" "0" ;
 			set "set_game_cl_gun_z::visible" "0" ;
 			set "set_game_cl_gun_z_hover::visible" "0" ;
+			set "set_game_weaponkick::visible" "0" ;
+			set "set_game_weaponkick_hover::visible" "0" ;
 			set "set_game_freelook_value::noevents" "1" ;
 			set "set_game_autoreload::noevents" "1" ;
 			set "set_game_autoswitch::noevents" "1" ;
@@ -16567,6 +16572,7 @@ windowDef Desktop
 			set "set_game_cl_gun_x::noevents" "1" ;
 			set "set_game_cl_gun_y::noevents" "1" ;
 			set "set_game_cl_gun_z::noevents" "1" ;
+			set "set_game_weaponkick::noevents" "1" ;
 			set "set_game_scroll_thumb::visible" "0" ;
 			set "set_game_scroll_thumb::noevents" "1" ;
 		}
@@ -18650,6 +18656,7 @@ windowDef Desktop
 				set "set_game_cl_gun_x_background::matcolor_w" "0.4" ;
 				set "set_game_cl_gun_y_background::matcolor_w" "0.4" ;
 				set "set_game_cl_gun_z_background::matcolor_w" "0.4" ;
+				set "set_game_weaponkick_background::matcolor_w" "0.4" ;
 				if ( "gui::g_crosshairCustom" == 1 ) {
 					set "set_game_previewxhair_background::matcolor" "$desktop::corner" ;
 					set "set_game_previewxhair_description::forecolor" "$desktop::white_8" ;				
