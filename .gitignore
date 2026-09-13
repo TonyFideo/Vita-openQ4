@@ -40,9 +40,15 @@
 /build_meson_clangcl/
 /_save/
 /.tmp/meson_extref_test*/
+# Meson subprojects: ignore everything meson extracts/downloads here,
+# keep only the wrap files and the vendored subprojects we maintain in-tree.
 /subprojects/.wraplock
 /subprojects/packagecache/
-/subprojects/SDL3-*/
+/subprojects/*/
+!/subprojects/glew/
+!/subprojects/openal-soft-prebuilt/
+!/subprojects/packagefiles/
+!/subprojects/stb_vorbis/
 /.install/
 __pycache__/
 *.pyc
