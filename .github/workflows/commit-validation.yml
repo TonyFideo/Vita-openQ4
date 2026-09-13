@@ -26,7 +26,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Fetch openQ4-game
         shell: bash
@@ -39,7 +39,7 @@ jobs:
           test "$(git -C "${OPENQ4_GAMELIBS_REPO}" rev-parse HEAD)" = "${OPENQ4_GAMELIBS_SHA}"
 
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.x"
 
@@ -472,7 +472,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -489,7 +489,7 @@ jobs:
           }
 
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.x"
 
@@ -535,7 +535,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -550,7 +550,7 @@ jobs:
           test "$(git -C "${OPENQ4_GAMELIBS_REPO}" rev-parse HEAD)" = "${OPENQ4_GAMELIBS_SHA}"
 
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.x"
 
@@ -638,7 +638,7 @@ jobs:
 
       - name: Publish Linux ARM64 dedicated server smoke
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: commit-linux-arm64-dedicated-smoke
           path: .tmp/linux-dedicated-smoke/arm64
@@ -648,7 +648,7 @@ jobs:
 
       - name: Publish renderer validation reports
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: commit-linux-arm64-renderer-validation
           path: .tmp/renderer-validation
@@ -668,7 +668,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -683,7 +683,7 @@ jobs:
           test "$(git -C "${OPENQ4_GAMELIBS_REPO}" rev-parse HEAD)" = "${OPENQ4_GAMELIBS_SHA}"
 
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.x"
 
@@ -823,7 +823,7 @@ jobs:
 
       - name: Publish sanitizer validation artifacts
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: commit-linux-sanitizer-build-logs
           path: |
@@ -922,7 +922,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -937,7 +937,7 @@ jobs:
           test "$(git -C "${OPENQ4_GAMELIBS_REPO}" rev-parse HEAD)" = "${OPENQ4_GAMELIBS_SHA}"
 
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.x"
 
@@ -1120,7 +1120,7 @@ jobs:
 
       - name: Publish Linux x64 dedicated server smoke
         if: always() && matrix.artifact_suffix == 'x64-libdecor'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: commit-linux-x64-dedicated-smoke
           path: .tmp/linux-dedicated-smoke/x64
@@ -1130,7 +1130,7 @@ jobs:
 
       - name: Publish renderer validation reports
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: commit-linux-wayland-${{ matrix.artifact_suffix }}-renderer-validation
           path: .tmp/renderer-validation
@@ -1161,7 +1161,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -1176,7 +1176,7 @@ jobs:
           test "$(git -C "${OPENQ4_GAMELIBS_REPO}" rev-parse HEAD)" = "${OPENQ4_GAMELIBS_SHA}"
 
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.x"
 
@@ -1246,7 +1246,7 @@ jobs:
 
       - name: Publish macOS dedicated server smoke
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: commit-macos-arm64-${{ matrix.artifact_suffix }}-dedicated-smoke
           path: .tmp/macos-dedicated-smoke/${{ matrix.artifact_suffix }}
@@ -1266,7 +1266,7 @@ jobs:
 
       - name: Publish macOS ARM64 staged payload
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: commit-macos-arm64-${{ matrix.artifact_suffix }}-payload
           path: .tmp/macos-thin-payload/arm64-${{ matrix.artifact_suffix }}-payload.tar.gz
@@ -1297,7 +1297,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -1321,7 +1321,7 @@ jobs:
           test "$(git -C "${OPENQ4_GAMELIBS_REPO}" rev-parse HEAD)" = "${OPENQ4_GAMELIBS_SHA}"
 
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.x"
 
@@ -1392,7 +1392,7 @@ jobs:
 
       - name: Publish macOS Intel dedicated server smoke
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: commit-macos-x64-${{ matrix.artifact_suffix }}-dedicated-smoke
           path: .tmp/macos-dedicated-smoke/x64-${{ matrix.artifact_suffix }}
@@ -1412,7 +1412,7 @@ jobs:
 
       - name: Publish macOS Intel staged payload
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: commit-macos-x64-${{ matrix.artifact_suffix }}-payload
           path: .tmp/macos-thin-payload/x64-${{ matrix.artifact_suffix }}-payload.tar.gz
@@ -1439,12 +1439,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.x"
 
@@ -1452,13 +1452,13 @@ jobs:
         run: python -m pip install markdown
 
       - name: Download macOS ARM64 thin payload
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: commit-macos-arm64-${{ matrix.artifact_suffix }}-payload
           path: .tmp/macos-universal2/${{ matrix.artifact_suffix }}/arm64
 
       - name: Download macOS Intel thin payload
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: commit-macos-x64-${{ matrix.artifact_suffix }}-payload
           path: .tmp/macos-universal2/${{ matrix.artifact_suffix }}/x64
@@ -1522,7 +1522,7 @@ jobs:
 
       - name: Publish universal2 assembly evidence
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: commit-macos-universal2-${{ matrix.artifact_suffix }}
           path: .tmp/macos-universal2/${{ matrix.artifact_suffix }}

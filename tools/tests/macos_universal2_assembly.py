@@ -50,7 +50,7 @@ def populate_staging(root: Path, arch: str, *, shared_value: bytes = b"same\n") 
         "licenses/openal-soft/LICENSE-fmt": b"fmt-license\n",
         "licenses/openal-soft/LICENSE-gsl": b"gsl-license\n",
         "licenses/openal-soft/SOURCE.md": b"source\n",
-        "licenses/openal-soft/openal-soft-1.25.1.tar.gz": b"source-archive\n",
+        "licenses/openal-soft/openal-soft-1.25.2.tar.gz": b"source-archive\n",
         # libMoltenVK.dylib is third-party and already universal upstream, so both
         # thin trees stage the SAME bytes and it flows through as ordinary shared
         # payload rather than as a lipo-merged code key. The literal is deliberately

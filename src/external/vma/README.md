@@ -1,6 +1,6 @@
 # Vendored Vulkan Memory Allocator (VMA)
 
-- Source: Vulkan SDK 1.4.313.1 (VulkanMemoryAllocator, AMD)
+- Source: Vulkan SDK 1.4.357.0 (VulkanMemoryAllocator 3.4.0, AMD)
 - License: MIT (see file banner)
 - Header-only; the implementation is compiled in
   `src/renderer/Vulkan/VulkanVmaImpl.cpp` with

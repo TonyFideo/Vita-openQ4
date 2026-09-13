@@ -68,7 +68,7 @@ REQUIRED_SHARED_PATHS = (
     "licenses/openal-soft/LICENSE-fmt",
     "licenses/openal-soft/LICENSE-gsl",
     "licenses/openal-soft/SOURCE.md",
-    "licenses/openal-soft/openal-soft-1.25.1.tar.gz",
+    "licenses/openal-soft/openal-soft-1.25.2.tar.gz",
 )
 # Code files that lipo merges into one universal2 artifact. renderer-vk is the
 # macOS Vulkan renderer module; renderer-gl is not built on darwin, so it has no
