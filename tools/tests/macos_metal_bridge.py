@@ -363,7 +363,7 @@ def make_macos_archive_entries(
         f"{prefix}openQ4.app/Contents/Resources/licenses/openal-soft/LICENSE-fmt": (b"fmt-license\n", 0o644),
         f"{prefix}openQ4.app/Contents/Resources/licenses/openal-soft/LICENSE-gsl": (b"gsl-license\n", 0o644),
         f"{prefix}openQ4.app/Contents/Resources/licenses/openal-soft/SOURCE.md": (b"source\n", 0o644),
-        f"{prefix}openQ4.app/Contents/Resources/licenses/openal-soft/openal-soft-1.25.1.tar.gz": (
+        f"{prefix}openQ4.app/Contents/Resources/licenses/openal-soft/openal-soft-1.25.2.tar.gz": (
             b"source-archive\n",
             0o644,
         ),
@@ -3961,7 +3961,7 @@ def validate_docs_and_ci_hooks() -> None:
     require(platform_support, "keeps the legacy Carbon framework isolated to `-Dplatform_backend=native`", "platform support Carbon isolation")
     require(platform_support, "Hardened Runtime without custom entitlements by default", "platform support entitlement policy")
     require(platform_support, "App Sandbox or `get-task-allow` entitlements are rejected", "platform support entitlement policy")
-    require(platform_support, "checksum-pinned OpenAL Soft 1.25.1 CoreAudio runtime", "platform support OpenAL Soft provider policy")
+    require(platform_support, "checksum-pinned OpenAL Soft 1.25.2 CoreAudio runtime", "platform support OpenAL Soft provider policy")
     require(platform_support, "`-Dmacos_openal_provider=system`", "platform support OpenAL provider switch")
     require(migration, "leaves Carbon isolated to the native Cocoa fallback", "SDL3 migration Carbon isolation")
     require(migration, "experimental macOS CI covers OpenGL and Metal bridge configure/build/install/package validation", "SDL3 migration plan")

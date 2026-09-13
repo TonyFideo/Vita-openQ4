@@ -58,8 +58,8 @@ def validate_pinned_builder_and_licensing() -> None:
     source_notice = read("src/external/openal-soft/SOURCE.md")
     copying = read("src/external/openal-soft/COPYING")
     for token in (
-        'OPENAL_SOFT_VERSION="1.25.1"',
-        'OPENAL_SOFT_ARCHIVE_SHA256="5f8efe8dfba5e9307a50251ba615ace857c7fa9dddfe34130b83e213d7f7cf24"',
+        'OPENAL_SOFT_VERSION="1.25.2"',
+        'OPENAL_SOFT_ARCHIVE_SHA256="fb27e5839aa11f0e5b9d33756965291fad5d6909ab928ea1f796f4a1a6877894"',
         '[[ ! "${OPENAL_SOFT_ARCHIVE_SHA256}" =~ ^[0-9a-f]{64}$ ]]',
         "https://github.com/kcat/openal-soft/archive/refs/tags/",
         "-DCMAKE_OSX_DEPLOYMENT_TARGET=",
@@ -85,9 +85,9 @@ def validate_pinned_builder_and_licensing() -> None:
         require(script, token, "pinned macOS OpenAL Soft builder")
     for token in (
         "[OpenAL Soft](https://openal-soft.org/)",
-        "version 1.25.1",
-        "openal-soft-1.25.1.tar.gz",
-        "5f8efe8dfba5e9307a50251ba615ace857c7fa9dddfe34130b83e213d7f7cf24",
+        "version 1.25.2",
+        "openal-soft-1.25.2.tar.gz",
+        "fb27e5839aa11f0e5b9d33756965291fad5d6909ab928ea1f796f4a1a6877894",
         "prepare_macos_openal_soft.sh",
         "LICENSE-pffft",
         "LICENSE-fmt",
@@ -162,7 +162,7 @@ def validate_package_contract() -> None:
         "macos_embedded_openal_soft_path",
         "copy_macos_openal_soft_licenses",
         "MACOS_OPENAL_SOFT_LICENSE_FILES",
-        "openal-soft-1.25.1.tar.gz",
+        "openal-soft-1.25.2.tar.gz",
         "macOS client does not use exactly one bundled OpenAL Soft dependency",
         "misplaced OpenAL Soft runtime copies",
         "macos_embedded_library_paths",
@@ -178,7 +178,7 @@ def validate_package_contract() -> None:
         '"licenses/openal-soft/LICENSE-fmt"',
         '"licenses/openal-soft/LICENSE-gsl"',
         '"licenses/openal-soft/SOURCE.md"',
-        '"licenses/openal-soft/openal-soft-1.25.1.tar.gz"',
+        '"licenses/openal-soft/openal-soft-1.25.2.tar.gz"',
     ):
         require(assembler, token, "macOS universal2 OpenAL Soft contract")
     for token in (
@@ -230,14 +230,14 @@ def validate_docs_and_attribution() -> None:
     release_completion = read("docs/dev/release-completion.md")
     for token in (
         "-Dmacos_openal_provider=system",
-        "checksum-pinned OpenAL Soft 1.25.1",
+        "checksum-pinned OpenAL Soft 1.25.2",
         "openQ4.app/Contents/Frameworks/libopenal.1.dylib",
         "@rpath/libopenal.1.dylib",
         "Codesigning and notarization",
         "COPYING",
         "PFFFT/fmt/Microsoft GSL notices",
         "SOURCE.md",
-        "openal-soft-1.25.1.tar.gz",
+        "openal-soft-1.25.2.tar.gz",
         "Allocation-failure behavior",
         "logs/openal-summary.txt",
         "must not launch openQ4",

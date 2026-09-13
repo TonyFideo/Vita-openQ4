@@ -11,11 +11,11 @@ jobs use:
 -Dmacos_openal_provider=system
 ```
 
-For those jobs, `system` means the project’s checksum-pinned OpenAL Soft 1.25.1
+For those jobs, `system` means the project’s checksum-pinned OpenAL Soft 1.25.2
 build, not an untracked library from the build host. The build recipe is
 `tools/build/prepare_macos_openal_soft.sh`. It downloads the official
 [OpenAL Soft](https://openal-soft.org/) tag archive, verifies SHA-256
-`5f8efe8dfba5e9307a50251ba615ace857c7fa9dddfe34130b83e213d7f7cf24`,
+`fb27e5839aa11f0e5b9d33756965291fad5d6909ab928ea1f796f4a1a6877894`,
 builds a dynamic CoreAudio runtime for the package architecture and macOS 11.0
 floor, and exposes it to Meson through pkg-config. The lookup remains
 pkg-config-only so a missing dependency fails configuration instead of silently
@@ -52,7 +52,7 @@ Every macOS package must meet all of these requirements:
   include it.
 - License and corresponding source: `Contents/Resources/licenses/openal-soft/`
   contains `COPYING`, `SOURCE.md`, the PFFFT/fmt/Microsoft GSL notices, and the
-  verified `openal-soft-1.25.1.tar.gz` source archive. Package validation
+  verified `openal-soft-1.25.2.tar.gz` source archive. Package validation
   rejects a missing or misplaced item.
 
 The OpenAL Soft runtime is LGPL-licensed and dynamically linked. The repository

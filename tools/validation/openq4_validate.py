@@ -120,7 +120,7 @@ MACOS_OPENAL_SOFT_LICENSE_FILES = (
     "LICENSE-fmt",
     "LICENSE-gsl",
     "SOURCE.md",
-    "openal-soft-1.25.1.tar.gz",
+    "openal-soft-1.25.2.tar.gz",
 )
 MACOS_OPENAL_PROVIDERS = ("apple_framework", "system")
 MAX_MACOS_SUPPORT_INFO_SCRIPT_BYTES = 256 * 1024

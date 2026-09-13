@@ -155,7 +155,7 @@ MACOS_OPENAL_SOFT_LICENSE_FILES = (
     "LICENSE-fmt",
     "LICENSE-gsl",
     "SOURCE.md",
-    "openal-soft-1.25.1.tar.gz",
+    "openal-soft-1.25.2.tar.gz",
 )
 MACOS_APP_FRAMEWORKS_DIR = Path("Contents") / "Frameworks"
 MACOS_APP_RESOURCES_DIR = Path("Contents") / "Resources"
@@ -193,7 +193,7 @@ MACOS_EXPECTED_APP_BUNDLE_FILES = (
     "Contents/Resources/licenses/openal-soft/LICENSE-fmt",
     "Contents/Resources/licenses/openal-soft/LICENSE-gsl",
     "Contents/Resources/licenses/openal-soft/SOURCE.md",
-    "Contents/Resources/licenses/openal-soft/openal-soft-1.25.1.tar.gz",
+    "Contents/Resources/licenses/openal-soft/openal-soft-1.25.2.tar.gz",
     "Contents/Resources/English.lproj/InfoPlist.strings",
     "Contents/Resources/French.lproj/InfoPlist.strings",
     f"Contents/Resources/English.lproj/{MACOS_PACKAGE_ROOT_ERROR_STRINGS_NAME}",
