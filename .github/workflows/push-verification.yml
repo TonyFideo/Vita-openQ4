@@ -26,7 +26,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Fetch openQ4-game
         shell: bash
@@ -39,7 +39,7 @@ jobs:
           test "$(git -C "${OPENQ4_GAMELIBS_REPO}" rev-parse HEAD)" = "${OPENQ4_GAMELIBS_SHA}"
 
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.x"
 
@@ -510,7 +510,7 @@ jobs:
             macos_openal_provider: system
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Fetch openQ4-game
         shell: bash
@@ -522,7 +522,7 @@ jobs:
           git -C "${OPENQ4_GAMELIBS_REPO}" checkout --detach "${OPENQ4_GAMELIBS_SHA}"
           test "$(git -C "${OPENQ4_GAMELIBS_REPO}" rev-parse HEAD)" = "${OPENQ4_GAMELIBS_SHA}"
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.x"
 
@@ -650,7 +650,7 @@ jobs:
 
       - name: Publish Linux dedicated server smoke
         if: always() && startsWith(matrix.os, 'ubuntu-')
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: push-${{ matrix.artifact_name }}-dedicated-smoke
           path: .tmp/linux-dedicated-smoke/${{ matrix.artifact_name }}
@@ -668,7 +668,7 @@ jobs:
 
       - name: Publish macOS dedicated server smoke
         if: always() && startsWith(matrix.os, 'macos-')
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: push-${{ matrix.artifact_name }}-dedicated-smoke
           path: .tmp/macos-dedicated-smoke/${{ matrix.artifact_name }}
@@ -678,7 +678,7 @@ jobs:
 
       - name: Publish staged payload
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: push-${{ matrix.artifact_name }}-payload
           path: .install
@@ -688,7 +688,7 @@ jobs:
 
       - name: Publish renderer validation reports
         if: always() && matrix.runtime_smoke == true
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: push-${{ matrix.artifact_name }}-renderer-validation
           path: .tmp/renderer-validation
@@ -705,7 +705,7 @@ jobs:
       OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}/../openQ4-game
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Fetch openQ4-game
         shell: pwsh
@@ -720,7 +720,7 @@ jobs:
           }
 
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.x"
 
@@ -754,7 +754,7 @@ jobs:
 
       - name: Publish staged payload
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: push-windows-payload
           path: .install

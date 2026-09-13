@@ -92,7 +92,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ github.sha }}
@@ -189,7 +189,7 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.x"
 
@@ -638,7 +638,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # Save payloads use the engine commit count as their build number.
           # A shallow checkout makes every release build 1 and rejects its saves.
@@ -678,7 +678,7 @@ jobs:
           fi
 
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.x"
 
@@ -1147,7 +1147,7 @@ jobs:
 
       - name: Publish Linux release runtime diagnostics
         if: ${{ failure() && matrix.platform == 'linux' }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: openq4-release-${{ needs.metadata.outputs.version_tag }}-linux-${{ matrix.binary_arch }}${{ matrix.package_suffix }}-runtime-diagnostics
           path: .tmp/release-runtime/${{ matrix.binary_arch }}
@@ -1486,7 +1486,7 @@ jobs:
 
       - name: Publish Linux AppImage runtime diagnostics
         if: ${{ failure() && matrix.platform == 'linux' && inputs.generate_linux_arm64_evidence_candidate == false }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: openq4-release-${{ needs.metadata.outputs.version_tag }}-linux-${{ matrix.binary_arch }}${{ matrix.package_suffix }}-appimage-diagnostics
           path: .tmp/release-runtime/${{ matrix.binary_arch }}
@@ -1576,7 +1576,7 @@ jobs:
 
       - name: Upload Linux ARM64 first-class evidence candidate
         if: matrix.platform == 'linux' && matrix.binary_arch == 'arm64' && needs.metadata.outputs.linux_arm64_support_tier == 'preview' && inputs.generate_linux_arm64_evidence_candidate
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: openq4-linux-arm64-first-class-evidence-candidate-${{ needs.metadata.outputs.version_tag }}-${{ needs.metadata.outputs.openq4_source_sha }}
           path: |
@@ -2037,7 +2037,7 @@ jobs:
 
       - name: Upload artifact
         if: inputs.generate_linux_arm64_evidence_candidate == false
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: openq4-release-${{ needs.metadata.outputs.version_tag }}-${{ matrix.platform }}-${{ matrix.binary_arch }}${{ matrix.package_suffix }}
           path: ${{ steps.package.outputs.archive_path }}
@@ -2045,7 +2045,7 @@ jobs:
 
       - name: Upload macOS dSYM symbols
         if: matrix.platform == 'macos'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: openq4-release-${{ needs.metadata.outputs.version_tag }}-macos-${{ matrix.binary_arch }}${{ matrix.package_suffix }}-symbols
           path: ${{ steps.package.outputs.symbols_archive_path }}
@@ -2053,7 +2053,7 @@ jobs:
 
       - name: Upload Linux debug symbols
         if: matrix.platform == 'linux' && inputs.generate_linux_arm64_evidence_candidate == false
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: openq4-release-${{ needs.metadata.outputs.version_tag }}-linux-${{ matrix.binary_arch }}${{ matrix.package_suffix }}-debugsymbols
           path: ${{ steps.linux_symbols.outputs.debug_symbols_path }}
@@ -2061,7 +2061,7 @@ jobs:
 
       - name: Upload Linux AppImage
         if: matrix.platform == 'linux' && inputs.generate_linux_arm64_evidence_candidate == false
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: openq4-release-${{ needs.metadata.outputs.version_tag }}-linux-${{ matrix.binary_arch }}${{ matrix.package_suffix }}-appimage
           path: ${{ steps.appimage.outputs.appimage_path }}
@@ -2069,7 +2069,7 @@ jobs:
 
       - name: Upload Windows installer
         if: matrix.platform == 'windows'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: openq4-release-${{ needs.metadata.outputs.version_tag }}-windows-${{ matrix.binary_arch }}-installer
           path: ${{ steps.windows_installer.outputs.installer_path }}
@@ -2085,7 +2085,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ needs.metadata.outputs.openq4_source_sha }}
@@ -2127,12 +2127,12 @@ jobs:
           fi
 
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.x"
 
       - name: Download packaged artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           pattern: openq4-release-${{ needs.metadata.outputs.version_tag }}-*
           path: ${{ runner.temp }}/release-artifacts
@@ -2503,10 +2503,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 22
 
