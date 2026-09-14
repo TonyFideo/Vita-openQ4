@@ -40,6 +40,7 @@ If you have questions concerning this license or the applicable additional terms
 #include <limits>
 #include <mutex>
 #include <thread>
+#include <algorithm>
 #include <vector>
 
 #if defined( USE_SDL3 )
@@ -4376,7 +4377,14 @@ idModList *idFileSystemLocal::ListMods( void ) {
 		}
 	}
 
-	list->mods.Sort( idModInfoCompare );
+	// idList::Sort is a byte-for-byte qsort and idModInfo holds idStr members,
+	// which point their data at their own inline buffer while the string is
+	// short.  Swapping two entries byte-wise leaves each string addressing the
+	// other entry's buffer, so destroying the list hands the allocator a pointer
+	// it never returned and the process aborts.  std::sort moves entries through
+	// idStr's assignment operator, which repoints the buffers.
+	std::sort( list->mods.Ptr(), list->mods.Ptr() + list->mods.Num(),
+		[]( const idModInfo &a, const idModInfo &b ) { return idModInfoCompare( &a, &b ) < 0; } );
 
 	return list;
 }
