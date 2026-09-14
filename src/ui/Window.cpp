@@ -4718,6 +4718,18 @@ bool idWindow::WriteSaveGameTransition( idTransitionData &trans, idFile *savefil
 	dw.simp = NULL;
 	dw.win = NULL;
 	const intptr_t transitionOffset = gui->GetDesktop()->GetWinVarOffset( trans.data, &dw );
+	if ( transitionOffset == -1 && dw.win == NULL && dw.simp == NULL ) {
+		// A gui-declared var ("float rotate1", "definevec4 ...") is not a member of
+		// idWindow, so it has no offset and can never be re-addressed on restore.
+		// The original engine dropped these from the save rather than failing, and
+		// ReadSaveGameTransition still treats -1 as "no transition", so keep that
+		// behaviour: erroring here aborts an autosave the player cannot avoid.
+		// A resolved offset with a mismatched or missing owner is still genuinely
+		// inconsistent and keeps failing below.
+		common->DPrintf( "idWindow::WriteSaveGameTransition: dropping transition on non-member var"
+			" for window '%s' in gui '%s'\n", name.c_str(), gui->GetSourceFile() );
+		return OpenQ4_WriteSaveGameInt( savefile, -1, "idWindow::WriteSaveGameTransition", "target offset" );
+	}
 	if ( transitionOffset < 0 || transitionOffset > 0x7fffffff || ( dw.win == NULL ) == ( dw.simp == NULL ) ) {
 		common->Error( "idWindow::WriteSaveGameTransition: could not resolve transition target for window '%s' in gui '%s'",
 			name.c_str(), gui->GetSourceFile() );
