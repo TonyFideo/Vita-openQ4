@@ -42,6 +42,7 @@ This file describes project goals, rules, and upstream credits for anyone workin
 - Do not rely on `.install/` as a linker artifact store; keep compiler/linker intermediates and development-only outputs in `builddir/`.
 - MSVC import libraries (`*.lib`) are not runtime requirements for openQ4 execution; prefer keeping them in `builddir/` (or other developer artifact output), not in release-style `.install/` packages.
 - Use `meson install -C builddir --no-rebuild --skip-subprojects` (via `tools/build/meson_setup.ps1`) when staging `.install/` to avoid third-party subproject installs outside the package tree.
+- The multiplayer smokes qualify the staged `.install/` tree, not `builddir/`. Re-stage after every build or they measure the previous one and report the difference as a product failure; they now refuse to run against a stage older than the build, and `OPENQ4_ALLOW_STALE_RUNTIME=1` overrides that check.
 - `tools/build/meson_setup.ps1` can trigger SDK/game-library builds in `../openQ4-game` during `compile` when `OPENQ4_BUILD_GAMELIBS=1`; openQ4 no longer syncs a local `src/game` mirror.
 - On Windows, do not invoke raw `meson ...` from an arbitrary shell; use `tools/build/meson_setup.ps1 ...` (or run `tools/build/openq4_devcmd.cmd` first) so `cl.exe`/MSVC tools are always available.
 - Prefer platform abstractions through SDL3 and avoid introducing new platform-specific dependencies in shared engine code when an SDL3 path exists.

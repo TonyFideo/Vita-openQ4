@@ -11,7 +11,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from mp_round_remote_smoke import read_log, write_script
+from mp_round_remote_smoke import read_log, verify_runtime_is_current, write_script
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -27,6 +27,7 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=180)
     args = parser.parse_args()
     runtime, output = args.runtime_dir.resolve(), args.output_dir.resolve()
+    verify_runtime_is_current(runtime, getattr(args, "executable_name", ""))
     games = {role: output / role / "baseoq4" for role in ("server", "client")}
     logs = {role: game / "logs/openq4.log" for role, game in games.items()}
     loops, streams, processes, failures, exits = {}, [], {}, [], {}

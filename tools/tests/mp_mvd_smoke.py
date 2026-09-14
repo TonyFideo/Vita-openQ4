@@ -12,7 +12,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from mp_round_remote_smoke import read_log, write_script
+from mp_round_remote_smoke import read_log, verify_runtime_is_current, write_script
 
 ROOT = Path(__file__).resolve().parents[2]
 STATUS = re.compile(r"MVD_STATUS playing=(\d+) paused=(\d+) seeking=(\d+) time=(\d+) duration=(\d+) follow=(-?\d+)")
@@ -75,6 +75,7 @@ def main() -> int:
     assert not source.with_suffix(".mvd.part").exists()
 
     runtime, output = args.runtime_dir.resolve(), args.output_dir.resolve()
+    verify_runtime_is_current(runtime, getattr(args, "executable_name", ""))
     exe = runtime / (args.executable_name or ("openQ4-client_x64.exe" if os.name == "nt" else "openQ4-client_x64"))
     if not exe.is_file():
         parser.error("a staged runtime is required")

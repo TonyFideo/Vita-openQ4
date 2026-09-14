@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from mp_round_remote_smoke import read_log, write_script
+from mp_round_remote_smoke import read_log, verify_runtime_is_current, write_script
 from mp_view_decoder import MatchViewDecoder
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -40,6 +40,7 @@ def main() -> int:
     if args.startup_timeout <= 0:
         parser.error("startup-timeout must be positive")
     runtime, output = args.runtime_dir.resolve(), args.output_dir.resolve()
+    verify_runtime_is_current(runtime, getattr(args, "executable_name", ""))
     exe = runtime / (args.executable_name or ("openQ4-client_x64.exe" if os.name == "nt" else "openQ4-client_x64"))
     if not exe.is_file():
         parser.error("a staged runtime is required")

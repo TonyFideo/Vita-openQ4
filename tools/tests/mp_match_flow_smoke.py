@@ -10,6 +10,8 @@ import subprocess
 import time
 from pathlib import Path
 
+from mp_round_remote_smoke import verify_runtime_is_current
+
 ROOT = Path(__file__).resolve().parents[2]
 GAMETYPES = ("DM", "Tourney", "Team DM", "CTF", "One Flag CTF", "Arena CTF",
              "Arena One Flag CTF", "DeadZone", "Duel", "Clan Arena", "Freeze Tag", "Red Rover")
@@ -52,6 +54,7 @@ def main() -> int:
     if args.exercise_rescue and (args.gametype != "Freeze Tag" or not args.finish_by_round):
         parser.error("the rescue fixture requires Freeze Tag with --finish-by-round")
     runtime, output = args.runtime_dir.resolve(), args.output_dir.resolve()
+    verify_runtime_is_current(runtime, getattr(args, "executable_name", ""))
     suffix = ".exe" if os.name == "nt" else ""
     exe = runtime / (args.executable_name or f"openQ4-client_x64{suffix}")
     if not exe.is_file() or not args.basepath.is_dir():

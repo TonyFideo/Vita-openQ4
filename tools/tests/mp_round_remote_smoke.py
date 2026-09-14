@@ -13,6 +13,48 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def verify_runtime_is_current(runtime, executable_name):
+    """Refuse to qualify a staged runtime older than the build it came from.
+
+    These smokes run whatever sits in the staged tree, which `meson install`
+    moves and a plain compile does not. Qualifying a stale stage reports
+    yesterday's binaries as today's behaviour, and the difference surfaces as a
+    product failure rather than a packaging mistake.
+    """
+    if os.environ.get("OPENQ4_ALLOW_STALE_RUNTIME", "").strip() == "1":
+        return
+    build = ROOT / "builddir"
+    if not build.is_dir():
+        return
+
+    pairs = [(runtime / executable_name, build / executable_name)]
+    staged_game, built_game = runtime / "baseoq4", build / "baseoq4"
+    if staged_game.is_dir() and built_game.is_dir():
+        pairs += [(staged_game / built.name, built)
+                  for built in sorted(built_game.iterdir())
+                  if built.is_file() and (staged_game / built.name).is_file()]
+
+    # One second of slack: install copies rather than hardlinks, so identical
+    # content can still differ by the filesystem's timestamp granularity.
+    stale = [(staged, built) for staged, built in pairs
+             if staged.is_file() and built.is_file()
+             and built.stat().st_mtime - staged.stat().st_mtime > 1.0]
+    if not stale:
+        return
+
+    restage = ("tools/build/meson_setup.ps1 install -C builddir --no-rebuild --skip-subprojects"
+               if os.name == "nt" else
+               "meson install -C builddir --no-rebuild --skip-subprojects")
+    listing = "\n".join(
+        f"  {staged.name}: staged {int(staged.stat().st_mtime)} < built {int(built.stat().st_mtime)}"
+        for staged, built in stale)
+    raise SystemExit(
+        f"{runtime} is older than {build} and would qualify a stale build:\n{listing}\n\n"
+        f"Re-stage it before running:\n  {restage}\n"
+        "Pass --runtime-dir to qualify a different tree, or set "
+        "OPENQ4_ALLOW_STALE_RUNTIME=1 to run the stale one deliberately.\n")
+
+
 def write_script(path: Path, lines: list[str]) -> None:
     temporary = path.with_suffix(".tmp")
     temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -54,6 +96,7 @@ def main() -> int:
     active_marker = "MP_REMOTE_CAPTURE_ACTIVE" if flag_mode else "MP_REMOTE_ROUND_TWO_ACTIVE"
     live_shot = "capture_one" if flag_mode else "round_two"
     runtime, output = args.runtime_dir.resolve(), args.output_dir.resolve()
+    verify_runtime_is_current(runtime, getattr(args, "executable_name", ""))
     exe = runtime / (args.executable_name or ("openQ4-client_x64.exe" if os.name == "nt" else "openQ4-client_x64"))
     if not exe.is_file() or not args.basepath.is_dir():
         parser.error("a staged runtime and installed Quake 4 assets are required")

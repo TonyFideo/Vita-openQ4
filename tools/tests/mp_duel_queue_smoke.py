@@ -11,7 +11,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from mp_round_remote_smoke import read_log, write_script
+from mp_round_remote_smoke import read_log, verify_runtime_is_current, write_script
 from mp_view_decoder import MatchViewDecoder
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -22,6 +22,7 @@ class DuelQueueRun:
     def __init__(self, args):
         self.args = args
         self.runtime, self.output = args.runtime_dir.resolve(), args.output_dir.resolve()
+        verify_runtime_is_current(self.runtime, getattr(args, "executable_name", ""))
         self.games = {role: self.output / role / "baseoq4" for role in ROLES}
         self.logs = {role: game / "logs/openq4.log" for role, game in self.games.items()}
         self.loops, self.processes, self.streams = {}, {}, []
