@@ -202,6 +202,13 @@ def validate_linux_dependency_contract(
 def validate_linux_runtime_payload(runtime_root: Path, arch: str) -> list[tuple[Path, str, bool]]:
     require_native_arch(arch)
     runtime_root = require_directory(runtime_root, "Linux runtime root")
+    # Windows embeds the startup splash as an RC resource and the macOS bundle
+    # carries it under Contents/Resources, so Linux is the only package that ships
+    # it as a loose file - and the only one that can quietly lose it.
+    require_regular_file(
+        runtime_root / "assets" / "splash" / "quake4_rt_bitmap_4001.bmp",
+        "Linux startup splash bitmap",
+    )
     game_dir = require_directory(runtime_root / "baseoq4", "Linux runtime game directory")
     expected = expected_runtime_binaries(runtime_root, arch)
     for binary_path, stem, _ in expected:

@@ -3229,6 +3229,29 @@ def copy_optional_share_tree(platform: str, install_dir: Path, package_root: Pat
     return True
 
 
+def copy_required_linux_splash(
+    install_dir: Path,
+    package_root: Path,
+    allow_missing_binaries: bool,
+) -> list[str]:
+    """Ship the startup splash bitmap beside the Linux binaries.
+
+    Windows compiles the bitmap in as an RC resource and the macOS bundle carries
+    its own copy under Contents/Resources, so Linux is the only package that has to
+    ship it as a loose file.  posix_syscon.cpp resolves it relative to the working
+    directory, SDL's base path and the executable, so the package root is where it
+    has to land.
+    """
+    relative = Path("assets") / "splash" / "quake4_rt_bitmap_4001.bmp"
+    source = install_dir / relative
+    if not source.is_file():
+        if allow_missing_binaries:
+            return [relative.as_posix()]
+        raise FileNotFoundError(f"required Linux startup splash not found: {source}")
+
+    copy_regular_file(source, package_root / relative)
+    return []
+
 def copy_optional_linux_launchers(install_dir: Path, package_root: Path) -> list[str]:
     copied: list[str] = []
 
@@ -3828,6 +3851,9 @@ def main(argv: list[str]) -> int:
     copied_share = copy_optional_share_tree(args.platform, install_dir, package_root)
     copied_linux_launchers: list[str] = []
     if args.platform == "linux":
+        missing_required.extend(
+            copy_required_linux_splash(install_dir, package_root, args.allow_missing_binaries)
+        )
         copied_linux_launchers = copy_optional_linux_launchers(install_dir, package_root)
         try:
             validate_linux_package_metadata(
