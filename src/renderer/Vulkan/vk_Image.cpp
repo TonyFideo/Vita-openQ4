@@ -328,6 +328,107 @@ static VkSampler VK_Image_GetSampler( textureFilter_t filter, textureRepeat_t re
 
 /*
 ====================
+VK_Image_AcquireResolveScratch
+
+vkCmdBlitImage cannot read a multisampled source, so a _currentRender capture
+taken while the scene renders into an MSAA target has to be resolved first.
+vkCmdResolveImage demands a destination of the source's exact format with one
+sample, while the capture destination is the front-end's own format, so the
+resolve needs its own storage: this image. It is also the blit's source, hence
+TRANSFER_SRC as well as TRANSFER_DST. One image, reused every frame, recreated
+through the deferred-destroy queue when the render target changes size or
+format, and never entered in the image table because it is never sampled.
+====================
+*/
+static vkImageEntry_t vkResolveScratch;
+
+static void VK_Image_ReleaseResolveScratch( bool deferred ) {
+	if ( vkResolveScratch.image != VK_NULL_HANDLE ) {
+		if ( deferred ) {
+			// an in-flight frame may still be reading it
+			VK_Device_DeferDestroy( vkResolveScratch.image, VK_NULL_HANDLE,
+					VK_NULL_HANDLE, vkResolveScratch.allocation );
+		} else if ( vkCtx.allocator != NULL ) {
+			vmaDestroyImage( vkCtx.allocator, vkResolveScratch.image,
+					vkResolveScratch.allocation );
+		}
+	}
+	memset( &vkResolveScratch, 0, sizeof( vkResolveScratch ) );
+}
+
+vkImageEntry_t *VK_Image_AcquireResolveScratch( int width, int height,
+		VkFormat format ) {
+	if ( !vkCtx.initialized || width <= 0 || height <= 0
+			|| format == VK_FORMAT_UNDEFINED ) {
+		return NULL;
+	}
+	if ( vkResolveScratch.image != VK_NULL_HANDLE
+			&& vkResolveScratch.width == width
+			&& vkResolveScratch.height == height
+			&& vkResolveScratch.format == format ) {
+		return &vkResolveScratch;
+	}
+	VK_Image_ReleaseResolveScratch( true );
+
+	const VkImageUsageFlags usage =
+			VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+
+	VkImageCreateInfo ici;
+	memset( &ici, 0, sizeof( ici ) );
+	ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+	ici.imageType = VK_IMAGE_TYPE_2D;
+	ici.format = format;
+	ici.extent.width = (uint32_t)width;
+	ici.extent.height = (uint32_t)height;
+	ici.extent.depth = 1;
+	ici.mipLevels = 1;
+	ici.arrayLayers = 1;
+	ici.samples = VK_SAMPLE_COUNT_1_BIT;
+	ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+	ici.usage = usage;
+	ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+	VmaAllocationCreateInfo vaci;
+	memset( &vaci, 0, sizeof( vaci ) );
+	vaci.usage = VMA_MEMORY_USAGE_AUTO;
+
+	VkImage newImage = VK_NULL_HANDLE;
+	VmaAllocation newAllocation = NULL;
+	if ( vmaCreateImage( vkCtx.allocator, &ici, &vaci,
+			&newImage, &newAllocation, NULL ) != VK_SUCCESS ) {
+		static bool warnedCreate = false;
+		if ( !warnedCreate ) {
+			warnedCreate = true;
+			common->Warning( "Vulkan: capture resolve scratch creation failed (%dx%d fmt %d)",
+					width, height, (int)format );
+		}
+		memset( &vkResolveScratch, 0, sizeof( vkResolveScratch ) );
+		return NULL;
+	}
+
+	vkResolveScratch.image = newImage;
+	vkResolveScratch.allocation = newAllocation;
+	vkResolveScratch.view = VK_NULL_HANDLE;
+	vkResolveScratch.attachmentView = VK_NULL_HANDLE;
+	vkResolveScratch.sampler = VK_NULL_HANDLE;
+	vkResolveScratch.format = format;
+	vkResolveScratch.usage = usage;
+	vkResolveScratch.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	vkResolveScratch.layout = VK_IMAGE_LAYOUT_UNDEFINED;
+	vkResolveScratch.samples = VK_SAMPLE_COUNT_1_BIT;
+	vkResolveScratch.width = width;
+	vkResolveScratch.height = height;
+	vkResolveScratch.numMips = 1;
+	vkResolveScratch.numLayers = 1;
+	vkResolveScratch.isCube = false;
+	vkResolveScratch.everUploaded = false;
+	vkResolveScratch.inUse = false;
+	vkResolveScratch.generation = 0;
+	return &vkResolveScratch;
+}
+
+/*
+====================
 VK_Image_ShutdownAll
 
 Device-shutdown hook: destroys every live image and sampler immediately
@@ -351,6 +452,7 @@ void VK_Image_ShutdownAll( void ) {
 		}
 		memset( &vkImages[ i ], 0, sizeof( vkImages[ i ] ) );
 	}
+	VK_Image_ReleaseResolveScratch( false );
 	for ( int i = 0; i < vkNumSamplers; i++ ) {
 		vkDestroySampler( vkCtx.device, vkSamplers[ i ], NULL );
 	}

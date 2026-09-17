@@ -4772,10 +4772,14 @@ bool VK_Exec_CopyRender( idImage *image, int x, int y, int width, int height,
 		sourceImage = sourceEntry != NULL ? sourceEntry->image : vkCtx.swapchainImages[ vkExec.swapImageIndex ];
 		sourceFormat = sourceEntry != NULL ? sourceEntry->format : vkCtx.swapchainFormat;
 	}
+	// A multisampled colour source is resolved below. A multisampled depth
+	// source is still refused: that needs VK_KHR_depth_stencil_resolve inside a
+	// render pass, and no shipped content captures depth from an MSAA target.
 	if ( sourceImage == VK_NULL_HANDLE
 			|| ( sourceEntry == NULL && !copyDepth && !vkCtx.swapchainTransferSrc )
 			|| ( sourceEntry != NULL && ( sourceEntry->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT ) == 0 )
-			|| ( sourceEntry != NULL && sourceEntry->samples != VK_SAMPLE_COUNT_1_BIT ) ) {
+			|| ( sourceEntry != NULL && copyDepth
+				&& sourceEntry->samples != VK_SAMPLE_COUNT_1_BIT ) ) {
 		return false;
 	}
 
@@ -4836,6 +4840,43 @@ bool VK_Exec_CopyRender( idImage *image, int x, int y, int width, int height,
 				VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL );
 	}
 	VK_Exec_TransitionImage( destination, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL );
+
+	// With r_multiSamples on, the scene target is multisampled and
+	// vkCmdBlitImage refuses it outright, so the capture failed here and
+	// VK_GuiExecutor_Draw3DView then skipped every _currentRender-consuming
+	// surface. Resolve into single-sample scratch of the source's own format
+	// first; the format-converting, Y-flipping blit below then runs exactly as
+	// it does at one sample (a resolve can neither flip nor convert, so both
+	// steps are needed).
+	VkImage blitSource = sourceImage;
+	if ( !copyDepth && sourceEntry != NULL
+			&& sourceEntry->samples != VK_SAMPLE_COUNT_1_BIT ) {
+		vkImageEntry_t *scratch = VK_Image_AcquireResolveScratch( sourceWidth,
+				sourceHeight, sourceFormat );
+		if ( scratch == NULL ) {
+			VK_Exec_TransitionImage( destination, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
+			VK_Exec_TransitionImage( sourceEntry, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL );
+			VK_Exec_BeginMainRendering( false );
+			return false;
+		}
+		VK_Exec_TransitionImage( scratch, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL );
+
+		VkImageResolve resolveRegion;
+		memset( &resolveRegion, 0, sizeof( resolveRegion ) );
+		resolveRegion.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		resolveRegion.srcSubresource.layerCount = 1;
+		resolveRegion.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		resolveRegion.dstSubresource.layerCount = 1;
+		resolveRegion.extent.width = (uint32_t)sourceWidth;
+		resolveRegion.extent.height = (uint32_t)sourceHeight;
+		resolveRegion.extent.depth = 1;
+		vkCmdResolveImage( vkExec.cmd, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+				scratch->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &resolveRegion );
+
+		scratch->everUploaded = true;
+		VK_Exec_TransitionImage( scratch, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL );
+		blitSource = scratch->image;
+	}
 
 	if ( copyDepth ) {
 		if ( VK_Exec_DepthBlitSupported( sourceFormat ) ) {
@@ -4924,7 +4965,7 @@ bool VK_Exec_CopyRender( idImage *image, int x, int y, int width, int height,
 	region.dstOffsets[ 1 ].x = width;
 	region.dstOffsets[ 1 ].y = height;
 	region.dstOffsets[ 1 ].z = 1;
-	vkCmdBlitImage( vkExec.cmd, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+	vkCmdBlitImage( vkExec.cmd, blitSource, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
 			destination->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VK_FILTER_NEAREST );
 
 	destination->everUploaded = true;

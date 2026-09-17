@@ -51,6 +51,10 @@ vkImageEntry_t *VK_Image_GetEntry( unsigned int texnum );
 // dimensions in sync with the copied region.
 bool	VK_Image_MakeDepthCopyTarget( idImage *image, int width, int height,
 			VkFormat depthFormat );
+// Single-sample scratch storage in the source's exact format, used to resolve
+// a multisampled scene target before the format-converting feedback blit.
+vkImageEntry_t *VK_Image_AcquireResolveScratch( int width, int height,
+			VkFormat format );
 void	VK_Image_ShutdownAll( void );
 
 #endif /* !__VK_IMAGE_H__ */
