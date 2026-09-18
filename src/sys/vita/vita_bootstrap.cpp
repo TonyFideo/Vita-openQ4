@@ -9,7 +9,7 @@
 
 namespace {
 
-const char *kPreRenderLog = "ux0:data/Vita-OpenQ4/prerender.log";
+const char *kPreRenderLog = "ux0:data/Vita-OpenQ4/logs/prerender.log";
 
 static void Vita_WriteLogLine( const char *text ) {
 	if ( text == NULL ) {

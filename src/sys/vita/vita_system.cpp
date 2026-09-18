@@ -51,6 +51,11 @@ int _newlib_heap_size_user = 300 * 1024 * 1024;
 void Sys_Init( void ) {
 	sceIoMkdir( "ux0:data", 0777 );
 	sceIoMkdir( VITA_DATA_ROOT, 0777 );
+	sceIoMkdir( "ux0:data/Vita-OpenQ4/q4base", 0777 );
+	sceIoMkdir( "ux0:data/Vita-OpenQ4/savegames", 0777 );
+	sceIoMkdir( "ux0:data/Vita-OpenQ4/config", 0777 );
+	sceIoMkdir( "ux0:data/Vita-OpenQ4/cache", 0777 );
+	sceIoMkdir( "ux0:data/Vita-OpenQ4/logs", 0777 );
 	Vita_InitThreads();
 	Sys_Milliseconds();
 }
