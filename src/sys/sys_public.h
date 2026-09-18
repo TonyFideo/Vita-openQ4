@@ -178,6 +178,35 @@ class idStr;
 
 #endif
 
+
+// PlayStation Vita / VitaSDK
+#if defined(__vita__) || defined(VITA)
+
+#define BUILD_OS_ID                     3
+#define BUILD_STRING                    "vita-armv7"
+#define CPUSTRING                       "armv7"
+#define CPU_EASYARGS                    1
+
+#define _alloca( x )                    __builtin_alloca( x )
+#define _alloca16( x )                  ((void *)((((intptr_t)__builtin_alloca( (x) + 15 )) + 15) & ~((intptr_t)15)))
+
+#define ALIGN16( x )                    __attribute__((aligned(16))) x
+#define PACKED                          __attribute__((packed))
+
+#define PATHSEPERATOR_STR               "/"
+#define PATHSEPERATOR_CHAR              '/'
+
+#define __cdecl
+#define ASSERT                          assert
+
+#define ID_INLINE                       inline
+#define ID_INLINE_EXTERN                inline
+#define ID_STATIC_TEMPLATE
+
+#define assertmem( x, y )
+
+#endif
+
 #ifdef __GNUC__
 #define id_attribute(x) __attribute__(x)
 #else
