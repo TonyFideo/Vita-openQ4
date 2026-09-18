@@ -33,6 +33,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /meson.build
+            /meson_options.txt
+            /src/
+            /tools/build/
+            /tools/vita/
+            /assets/icons/
+            /assets/splash/
 
       - name: Verify VitaSDK toolchain
         shell: bash
