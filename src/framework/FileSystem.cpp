@@ -1295,9 +1295,30 @@ static bool FS_FindFirstValidInstallPath( const idStrList &candidates, idStr &re
 	return false;
 }
 
+#if defined( __vita__ ) || defined( VITA )
+static void FS_BuildVitaInstallCandidates( idStrList &candidates ) {
+	candidates.Clear();
+
+	// Preserve the established ux0 layout first, then allow removable/external
+	// storage and finally the Vita internal ur0 partition. A candidate is only
+	// accepted when q4base/pak001.pk4 is present, so the writable ux0 skeleton
+	// created by Sys_Init cannot mask a valid install on uma0 or ur0.
+	FS_AddUniquePath( candidates, "ux0:data/Vita-OpenQ4" );
+	FS_AddUniquePath( candidates, "uma0:data/Vita-OpenQ4" );
+	FS_AddUniquePath( candidates, "ur0:data/Vita-OpenQ4" );
+
+	FS_LogPathList( "Vita Quake 4 data candidates", candidates );
+}
+#endif
+
 static bool FS_AutoDiscoverBasePath( idStr &basePath ) {
-	idStr		cwd;
 	idStrList	candidates;
+
+#if defined( __vita__ ) || defined( VITA )
+	FS_BuildVitaInstallCandidates( candidates );
+	return FS_FindFirstValidInstallPath( candidates, basePath );
+#else
+	idStr		cwd;
 	idStr		resolvedBasePath;
 
 	if ( FS_GetCurrentWorkingDirectory( cwd ) && FS_TryResolveBasePathCandidate( cwd.c_str(), resolvedBasePath ) ) {
@@ -1316,6 +1337,7 @@ static bool FS_AutoDiscoverBasePath( idStr &basePath ) {
 	}
 
 	return false;
+#endif
 }
 
 #define MAX_ZIPPED_FILE_NAME	2048
@@ -6149,9 +6171,10 @@ void idFileSystemLocal::Init( void ) {
 
 	// fs_basepath auto-discovery order:
 	// 1) valid fs_basepath override
-	// 2) current working directory
-	// 3) Steam install paths, including explicit OPENQ4_* environment overrides
-	// 4) GOG install paths
+	// 2) Vita: ux0:data/Vita-OpenQ4, uma0:data/Vita-OpenQ4, ur0:data/Vita-OpenQ4
+	// 3) Desktop: current working directory
+	// 4) Desktop: Steam install paths, including explicit OPENQ4_* environment overrides
+	// 5) Desktop: GOG install paths
 	if ( fs_basepath.GetString()[0] ) {
 		if ( !FS_HasGameFilesAtBasePath( fs_basepath.GetString() ) ) {
 			common->Warning( "fs_basepath '%s' has no %s game files, auto-discovery will be attempted", fs_basepath.GetString(), BASE_GAMEDIR );
