@@ -110,6 +110,7 @@ jobs:
             tools/tests/campaign_split_state_transition.py \
             tools/tests/clang_tidy_input_safety.py \
             tools/tests/cmdargs_append_contract.py \
+            tools/tests/console_completion_contract.py \
             tools/tests/competitive_match_layer.py \
             tools/tests/mp_control_smoke.py \
             tools/tests/mp_series_smoke.py \
@@ -300,6 +301,7 @@ jobs:
           python tools/tests/campaign_split_state_transition.py
           python tools/tests/clang_tidy_input_safety.py
           python tools/tests/cmdargs_append_contract.py
+          python tools/tests/console_completion_contract.py
           python tools/tests/competitive_match_layer.py
           python tools/tests/competitive_match_localization.py
           python tools/tests/decl_checksum_stability_contract.py

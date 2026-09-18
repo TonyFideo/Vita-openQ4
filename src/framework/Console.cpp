@@ -30,6 +30,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "Session_local.h"
+#include "ConsoleCompletion.h"
 
 void SCR_DrawTextLeftAlign( float &y, const char *text, ... ) id_attribute((format(printf,2,3)));
 void SCR_DrawTextRightAlign( float &y, const char *text, ... ) id_attribute((format(printf,2,3)));
@@ -50,7 +51,8 @@ void SCR_DrawTextRightAlign( float &y, const char *text, ... ) id_attribute((for
 #define CON_SCROLLBAR_MIN_THUMB			18.0f
 #define CON_SCROLLBAR_LERP_SPEED		12.0f
 #define CON_SELECTION_ALPHA				0.35f
-#define CON_COMPLETION_MAX_MATCHES		1024
+#define CON_COMPLETION_MAX_MATCHES		oq4completion::MAX_MATCHES
+#define CON_COMPLETION_MAX_FUZZY_MATCHES	oq4completion::MAX_FUZZY_MATCHES
 #define CON_COMPLETION_MAX_VISIBLE		8
 #define CON_TEXT_DRAG_THRESHOLD			4.0f
 #define CON_MOUSE_CURSOR_SIZE			32.0f
@@ -191,7 +193,9 @@ private:
 	void				ClampCompletionScroll( bool keepSelectionVisible );
 	void				MoveCompletionSelection( int delta );
 	void				RefreshCompletionState( void );
+	int					MeasureCompletionPopupChars( void ) const;
 	void				ApplySelectedCompletion( int direction );
+	bool				EnterAcceptsCompletion( void );
 	bool				IsCurrentSegmentCompletionMatch( const char *match ) const;
 	bool				ShouldHideMatchedCompletionPopup( void ) const;
 	bool				GetCompletionCvarInfo( const char *match, char *value, int valueSize, bool *modified ) const;
@@ -287,6 +291,7 @@ private:
 	int					completionReplaceOffset;
 	int					completionReplaceLength;
 	int					completionSnapshotCursor;
+	int					completionPopupChars;	// widest row, measured when the list is rebuilt
 	bool				completionAppendSpace;
 	bool				completionPrependSlash;
 	bool				completionPopupVisible;
@@ -309,6 +314,7 @@ private:
 	consoleFocus_t		focus;
 	char				completionSnapshotBuffer[MAX_EDIT_LINE];
 	char				completionMatches[CON_COMPLETION_MAX_MATCHES][MAX_EDIT_LINE];
+	oq4completion::CandidateIndex<CON_COMPLETION_MAX_MATCHES>	completionMatchIndex;
 	char				textDragText[MAX_EDIT_LINE];
 
 	int					lineWidth;
@@ -427,8 +433,9 @@ struct consoleCompletionCandidate_t {
 
 struct consoleFuzzyCompletionState_t {
 	char						needle[MAX_EDIT_LINE];
+	int							argIndex;
 	int							count;
-	consoleCompletionCandidate_t	matches[CON_COMPLETION_MAX_MATCHES];
+	consoleCompletionCandidate_t	matches[CON_COMPLETION_MAX_FUZZY_MATCHES];
 };
 
 static void Con_LightenColor( const idVec4 &color, float amount, idVec4 &outColor ) {
@@ -712,6 +719,55 @@ static int Con_CompareFuzzyCompletionMatches( const void *lhs, const void *rhs )
 	return idStr::Icmp( a.match, b.match );
 }
 
+/*
+================
+Con_ExtractCompletionCandidateToken
+
+Candidate lines hold a whole command, such as "com_maxfps 120"; the popup shows
+and inserts only the token at argIndex. A command token loses its leading slash.
+================
+*/
+static bool Con_ExtractCompletionCandidateToken( const char *candidateLine, int argIndex, char *token, int tokenSize ) {
+	idCmdArgs args;
+	const char *candidateToken;
+
+	if ( token != NULL && tokenSize > 0 ) {
+		token[0] = '\0';
+	}
+
+	if ( candidateLine == NULL || candidateLine[0] == '\0' || token == NULL || tokenSize <= 0 ) {
+		return false;
+	}
+
+	args.TokenizeString( candidateLine, false );
+	if ( args.Argc() <= 0 ) {
+		return false;
+	}
+
+	if ( argIndex >= 0 && argIndex < args.Argc() ) {
+		candidateToken = args.Argv( argIndex );
+	} else if ( args.Argc() == 1 ) {
+		candidateToken = args.Argv( 0 );
+	} else {
+		return false;
+	}
+
+	if ( candidateToken == NULL || candidateToken[0] == '\0' ) {
+		return false;
+	}
+
+	if ( argIndex == 0 && ( candidateToken[0] == '\\' || candidateToken[0] == '/' ) ) {
+		++candidateToken;
+	}
+
+	if ( candidateToken[0] == '\0' ) {
+		return false;
+	}
+
+	idStr::Copynz( token, candidateToken, tokenSize );
+	return true;
+}
+
 static bool Con_CollectCompletionMatchCallback( const char *match, void *context ) {
 	return reinterpret_cast<idConsoleLocal *>( context )->CollectCompletionMatch( match );
 }
@@ -719,8 +775,23 @@ static bool Con_CollectCompletionMatchCallback( const char *match, void *context
 static bool Con_CollectFuzzyCompletionMatchCallback( const char *match, void *context ) {
 	consoleFuzzyCompletionState_t *state = reinterpret_cast<consoleFuzzyCompletionState_t *>( context );
 	consoleCompletionCandidate_t candidate;
+	char token[MAX_EDIT_LINE];
 
-	if ( state == NULL || !Con_BuildFuzzyCompletionMatch( match, state->needle, candidate ) ) {
+	if ( state == NULL ) {
+		return true;
+	}
+
+	// Argument candidates are whole lines. Score and keep only the argument
+	// being completed, as the prefix path does; a suggestion holding the whole
+	// line would put the command in place of the token a second time.
+	if ( state->argIndex > 0 ) {
+		if ( !Con_ExtractCompletionCandidateToken( match, state->argIndex, token, sizeof( token ) ) ) {
+			return true;
+		}
+		match = token;
+	}
+
+	if ( !Con_BuildFuzzyCompletionMatch( match, state->needle, candidate ) ) {
 		return true;
 	}
 
@@ -735,7 +806,7 @@ static bool Con_CollectFuzzyCompletionMatchCallback( const char *match, void *co
 		return true;
 	}
 
-	if ( state->count < CON_COMPLETION_MAX_MATCHES ) {
+	if ( state->count < CON_COMPLETION_MAX_FUZZY_MATCHES ) {
 		state->matches[state->count++] = candidate;
 		return true;
 	}
@@ -1311,10 +1382,12 @@ void idConsoleLocal::Init( void ) {
 	completionReplaceOffset = 0;
 	completionReplaceLength = 0;
 	completionSnapshotCursor = 0;
+	completionPopupChars = 0;
 	completionAppendSpace = false;
 	completionPrependSlash = false;
 	completionPopupVisible = false;
 	completionSnapshotValid = false;
+	completionMatchIndex.Clear();
 	mouseInitialized = false;
 	scrollbarDragging = false;
 	completionScrollbarDragging = false;
@@ -2825,6 +2898,7 @@ void idConsoleLocal::InvalidateCompletionState( void ) {
 	completionReplaceArgIndex = 0;
 	completionReplaceOffset = 0;
 	completionReplaceLength = 0;
+	completionPopupChars = 0;
 	completionAppendSpace = false;
 	completionPrependSlash = false;
 	completionPopupVisible = false;
@@ -2940,19 +3014,10 @@ bool idConsoleLocal::CollectCompletionMatch( const char *match ) {
 		return true;
 	}
 
-	for ( int i = 0; i < completionCount; ++i ) {
-		if ( idStr::Icmp( completionMatches[i], token ) == 0 ) {
-			return true;
-		}
-	}
-
-	if ( completionCount >= CON_COMPLETION_MAX_MATCHES ) {
-		return false;
-	}
-
-	idStr::Copynz( completionMatches[completionCount], token, sizeof( completionMatches[completionCount] ) );
-	++completionCount;
-	return true;
+	// Only candidates that start with the typed text arrive here, so the cap is
+	// reached only while a large domain is barely narrowed, such as the first
+	// digit of a 0..60000 value.
+	return completionMatchIndex.Add( completionMatches, completionCount, token );
 }
 
 static int Con_CompareCompletionStrings( const void *lhs, const void *rhs ) {
@@ -3184,44 +3249,7 @@ idConsoleLocal::ExtractCompletionCandidateToken
 ================
 */
 bool idConsoleLocal::ExtractCompletionCandidateToken( const char *candidateLine, char *token, int tokenSize ) const {
-	idCmdArgs args;
-	const char *candidateToken;
-
-	if ( token != NULL && tokenSize > 0 ) {
-		token[0] = '\0';
-	}
-
-	if ( candidateLine == NULL || candidateLine[0] == '\0' || token == NULL || tokenSize <= 0 ) {
-		return false;
-	}
-
-	args.TokenizeString( candidateLine, false );
-	if ( args.Argc() <= 0 ) {
-		return false;
-	}
-
-	if ( completionReplaceArgIndex >= 0 && completionReplaceArgIndex < args.Argc() ) {
-		candidateToken = args.Argv( completionReplaceArgIndex );
-	} else if ( args.Argc() == 1 ) {
-		candidateToken = args.Argv( 0 );
-	} else {
-		return false;
-	}
-
-	if ( candidateToken == NULL || candidateToken[0] == '\0' ) {
-		return false;
-	}
-
-	if ( completionReplaceArgIndex == 0 && ( candidateToken[0] == '\\' || candidateToken[0] == '/' ) ) {
-		++candidateToken;
-	}
-
-	if ( candidateToken[0] == '\0' ) {
-		return false;
-	}
-
-	idStr::Copynz( token, candidateToken, tokenSize );
-	return true;
+	return Con_ExtractCompletionCandidateToken( candidateLine, completionReplaceArgIndex, token, tokenSize );
 }
 
 /*
@@ -3300,12 +3328,14 @@ void idConsoleLocal::RefreshCompletionState( void ) {
 		currentToken[0] = '\0';
 	}
 
+	completionMatchIndex.Clear();
 	idEditField::QueryCompletionMatches( prefixBuffer, &appendSpace, Con_CollectCompletionMatchCallback, this );
 
-	if ( completionCount < 1 && currentToken[0] != '\0' && currentToken[1] != '\0' ) {
+	if ( completionCount < 1 && oq4completion::AllowsFuzzyFallback( completionReplaceArgIndex, currentToken ) ) {
 		consoleFuzzyCompletionState_t fuzzyState;
 
 		completionCount = 0;
+		fuzzyState.argIndex = completionReplaceArgIndex;
 		fuzzyState.count = 0;
 		idStr::Copynz( completionFuzzyNeedle, currentToken, sizeof( completionFuzzyNeedle ) );
 		idStr::Copynz( fuzzyState.needle, completionFuzzyNeedle, sizeof( fuzzyState.needle ) );
@@ -3381,11 +3411,39 @@ void idConsoleLocal::RefreshCompletionState( void ) {
 	}
 
 	completionAppendSpace = ( completionCount == 1 );
+	completionPopupChars = MeasureCompletionPopupChars();
 	ClampCompletionScroll( true );
 	completionPopupVisible = true;
 	completionSnapshotValid = true;
 	completionSnapshotCursor = cursor;
 	idStr::Copynz( completionSnapshotBuffer, buffer, sizeof( completionSnapshotBuffer ) );
+}
+
+/*
+================
+idConsoleLocal::MeasureCompletionPopupChars
+
+Width in characters of the widest popup row, CVar value included. Measured once
+per rebuilt list: the popup geometry is queried several times a frame, and a
+whole name family can be a thousand rows.
+================
+*/
+int idConsoleLocal::MeasureCompletionPopupChars( void ) const {
+	int longest = 0;
+
+	for ( int i = 0; i < completionCount; ++i ) {
+		char cvarValue[MAX_EDIT_LINE];
+		bool modified;
+		size_t matchLength = strlen( completionMatches[i] );
+		if ( GetCompletionCvarInfo( completionMatches[i], cvarValue, sizeof( cvarValue ), &modified ) ) {
+			matchLength += 3 + strlen( cvarValue );
+		}
+		const int matchLen = idLib::SizeToInt( matchLength, "idConsoleLocal::MeasureCompletionPopupChars" );
+		if ( matchLen > longest ) {
+			longest = matchLen;
+		}
+	}
+	return longest;
 }
 
 /*
@@ -3483,6 +3541,28 @@ void idConsoleLocal::ApplySelectedCompletion( int direction ) {
 
 /*
 ================
+idConsoleLocal::EnterAcceptsCompletion
+
+Enter takes the highlighted popup entry only when that changes the line. When
+the highlighted entry already is the token under the cursor, as "60" is after
+typing "com_maxfps 60" while 600-609 are still listed, there is nothing left to
+complete and Enter runs the line, as it does with the popup closed.
+================
+*/
+bool idConsoleLocal::EnterAcceptsCompletion( void ) {
+	if ( !HasActiveCompletionPopup() ) {
+		return false;
+	}
+
+	RefreshCompletionState();
+	if ( !HasActiveCompletionPopup() || completionSelection < 0 || completionSelection >= completionCount ) {
+		return false;
+	}
+	return !IsCurrentSegmentCompletionMatch( completionMatches[completionSelection] );
+}
+
+/*
+================
 idConsoleLocal::GetCompletionPopupGeometry
 ================
 */
@@ -3503,19 +3583,7 @@ bool idConsoleLocal::GetCompletionPopupGeometry( float &popupX, float &popupY, f
 	ClampCompletionScroll( false );
 	first = completionScroll;
 
-	int longest = 8;
-	for ( int i = 0; i < completionCount; ++i ) {
-		char cvarValue[MAX_EDIT_LINE];
-		bool modified;
-		size_t matchLength = strlen( completionMatches[i] );
-		if ( GetCompletionCvarInfo( completionMatches[i], cvarValue, sizeof( cvarValue ), &modified ) ) {
-			matchLength += 3 + strlen( cvarValue );
-		}
-		const int matchLen = idLib::SizeToInt( matchLength, "idConsoleLocal::GetCompletionPopupGeometry" );
-		if ( matchLen > longest ) {
-			longest = matchLen;
-		}
-	}
+	int longest = Max( 8, completionPopupChars );
 
 	float consoleX, consoleY, consoleW, consoleH;
 	GetConsoleRect( consoleX, consoleY, consoleW, consoleH );
@@ -3799,9 +3867,12 @@ bool idConsoleLocal::InputKeyDownEvent( int key ) {
 				return true;
 			case K_ENTER:
 			case K_KP_ENTER:
-				ApplySelectedCompletion( 0 );
-				DismissCompletionPopup();
-				return true;
+				if ( EnterAcceptsCompletion() ) {
+					ApplySelectedCompletion( 0 );
+					DismissCompletionPopup();
+					return true;
+				}
+				break;
 			default:
 				break;
 		}
@@ -4129,7 +4200,7 @@ void idConsoleLocal::KeyDownEvent( int key ) {
 	}
 
 	if ( key == K_ENTER || key == K_KP_ENTER ) {
-		if ( HasActiveCompletionPopup() ) {
+		if ( EnterAcceptsCompletion() ) {
 			ApplySelectedCompletion( 0 );
 			DismissCompletionPopup();
 			return;

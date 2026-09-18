@@ -384,6 +384,18 @@ if get_option('build_native_tests')
     openq4_specular_probe_atlas_packing_test,
     timeout: 30,
   )
+
+  openq4_console_completion_test = executable(
+    'openq4-console-completion-test',
+    files('tools/tests/native/ConsoleCompletionTest.cpp'),
+    include_directories: root_include_dir,
+    install: false,
+  )
+  test(
+    'openq4-console-completion',
+    openq4_console_completion_test,
+    timeout: 30,
+  )
 endif
 
 openq4_pak_files = []

@@ -26,7 +26,7 @@ If you have questions concerning this license or the applicable additional terms
 ===========================================================================
 */
 
-
+#include "ConsoleCompletion.h"
 
 
 static autoComplete_t	globalAutoComplete;
@@ -535,10 +535,16 @@ static int QueryCompletionInternal( const char *cmd, bool *appendSpace, editFiel
 	globalAutoComplete.currentMatch[0] = '\0';
 
 	const int normalizedLength = idLib::SizeToInt( strlen( normalizedCmd ), "QueryCompletionInternal" );
-	const bool trailingWhitespace = normalizedLength > 0 && normalizedCmd[normalizedLength - 1] <= ' ';
+	const bool trailingWhitespace = normalizedLength > 0 && static_cast<unsigned char>( normalizedCmd[normalizedLength - 1] ) <= ' ';
 	const bool completingArguments = ( args.Argc() > 1 ) || trailingWhitespace;
 	if ( completingArguments ) {
-		globalAutoComplete.completionString[0] = '\0';
+		// Argument candidates arrive as whole lines ("com_maxfps 120"), so the
+		// typed line narrows them, as idTech4's AutoComplete did. An empty
+		// prefix let every value through, and the popup's cap then kept only the
+		// first values a producer offered: typing 30000 for a 0..60000 CVar
+		// listed only the lowest values, and Enter replaced 30000 with one.
+		oq4completion::BuildArgumentLinePrefix( normalizedCmd, globalAutoComplete.completionString,
+			sizeof( globalAutoComplete.completionString ) );
 	} else {
 		idStr::Copynz( globalAutoComplete.completionString, args.Argv( args.Argc() - 1 ), sizeof( globalAutoComplete.completionString ) );
 	}
