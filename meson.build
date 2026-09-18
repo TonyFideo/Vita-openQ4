@@ -8,7 +8,7 @@ project(
 
 host_system = host_machine.system()
 host_cpu_family = host_machine.cpu_family()
-if not ['windows', 'linux', 'darwin'].contains(host_system)
+if not ['windows', 'linux', 'darwin', 'vita'].contains(host_system)
   error('Unsupported host system for openQ4 Meson build: ' + host_system)
 endif
 
@@ -19,6 +19,8 @@ elif host_cpu_family == 'x86'
   binary_arch = 'x86'
 elif host_cpu_family == 'aarch64'
   binary_arch = 'arm64'
+elif host_cpu_family == 'arm'
+  binary_arch = 'armv7'
 endif
 game_sp_binary_name = 'game-sp_' + binary_arch
 game_mp_binary_name = 'game-mp_' + binary_arch
@@ -69,6 +71,10 @@ elif host_system == 'darwin'
       'platform_backend=native on macOS is comparison-only diagnostic infrastructure. '
       + 'Release packages use platform_backend=sdl3; do not treat the native Cocoa/OpenGL backend as supported release coverage.'
     )
+  endif
+elif host_system == 'vita'
+  if platform_backend_requested != 'native'
+    error('PlayStation Vita bring-up currently requires -Dplatform_backend=native.')
   endif
 elif host_system != 'windows'
   error('Unsupported host system for platform backend selection: ' + host_system)
@@ -216,8 +222,12 @@ bse_source_root = meson.project_source_root() / 'src' / 'bse'
 game_sp_module_defs_file = ''
 game_mp_module_defs_file = ''
 
-if not build_engine and not build_games
+if not build_engine and not build_games and host_system != 'vita'
   error('At least one build target must be enabled. Use -Dbuild_engine=true and/or -Dbuild_games=true.')
+endif
+
+if host_system == 'vita' and not build_engine and not build_games
+  message('Vita bring-up configure-only mode: engine and game targets are intentionally disabled.')
 endif
 
 if get_option('build_native_tests')
