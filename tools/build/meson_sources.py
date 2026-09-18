@@ -214,6 +214,11 @@ LINUX_PLATFORM_SOURCES = (
     "sys/linux/libXNVCtrl/NVCtrl.c",
 )
 
+VITA_PLATFORM_SOURCES = (
+    "sys/vita/vita_system.cpp",
+    "sys/vita/vita_threads.cpp",
+)
+
 DARWIN_PLATFORM_SOURCES = (
     "sys/posix/posix_input.cpp",
     "sys/posix/posix_main.cpp",
@@ -450,11 +455,10 @@ def main(argv: list[str]) -> int:
             for rel_path in platform_sources:
                 add_required_source(source_set, ordered_sources, source_root, rel_path)
         elif args.host_system == "vita":
-            # Vita source selection is intentionally empty during the first
-            # bring-up stage. The generic engine list is still validated, while
-            # a dedicated sys/vita backend is introduced incrementally.
             if args.platform_backend != "native":
                 raise SourceListError("Vita source discovery currently requires platform_backend=native")
+            for rel_path in VITA_PLATFORM_SOURCES:
+                add_required_source(source_set, ordered_sources, source_root, rel_path)
         else:
             print(f"Unsupported host system: {args.host_system}", file=sys.stderr)
             return 1
