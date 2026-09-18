@@ -122,6 +122,45 @@ target_compile_options(openq4_vita_system_probe PRIVATE
 )
 
 target_compile_features(openq4_vita_system_probe PRIVATE cxx_std_20)
+add_executable(openq4_vita_prerender
+  ${OPENQ4_ROOT}/src/sys/vita/vita_bootstrap.cpp
+  ${OPENQ4_ROOT}/src/sys/vita/vita_system.cpp
+  ${OPENQ4_ROOT}/src/sys/vita/vita_threads.cpp
+)
+
+target_include_directories(openq4_vita_prerender PRIVATE
+  ${CMAKE_CURRENT_BINARY_DIR}
+  ${OPENQ4_ROOT}
+  ${OPENQ4_ROOT}/src
+  ${OPENQ4_ROOT}/.tmp/gamelibs_stage/src/game
+  ${OPENQ4_ROOT}/.tmp/gamelibs_stage/src/mpgame
+)
+
+target_compile_options(openq4_vita_prerender PRIVATE
+  -fsigned-char
+  -DVITA=1
+  -D__DOOM_DLL__
+  -DUSE_OPENAL
+  -DGLEW_NO_GLU
+  -DID_GL_HARDLINK
+  -fno-strict-aliasing
+  -ffp-contract=off
+)
+
+target_compile_features(openq4_vita_prerender PRIVATE cxx_std_20)
+
+target_link_libraries(openq4_vita_prerender PRIVATE
+  SceLibKernel_stub
+  SceIofilemgr_stub
+  ScePower_stub
+)
+
+vita_create_self(openq4_vita_prerender.self openq4_vita_prerender)
+vita_create_vpk(Vita-OpenQ4-PreRender.vpk Q4VITA001 openq4_vita_prerender.self
+  VERSION 01.00
+  NAME "Vita OpenQ4 Pre-Render"
+)
+
 add_executable(vita_sdk_smoke
   main.cpp
   platform_probe.cpp
