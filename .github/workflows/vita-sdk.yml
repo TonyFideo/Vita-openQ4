@@ -7,12 +7,16 @@ on:
     paths:
       - .github/workflows/vita-sdk.yml
       - tools/vita/**
+      - tools/build/meson_sources.py
       - meson.build
-      - meson.build
+      - meson_options.txt
   pull_request:
     paths:
       - .github/workflows/vita-sdk.yml
       - tools/vita/**
+      - tools/build/meson_sources.py
+      - meson.build
+      - meson_options.txt
   workflow_dispatch:
 
 permissions:
