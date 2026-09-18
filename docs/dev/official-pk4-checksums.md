@@ -11,11 +11,23 @@ openQ4 ignores the retail game-binary PK4 archives (`game000.pk4` through `game3
 
 ## Pure multiplayer game-module token
 
-Quake 4 protocol 2.41 carries a game-code PK4 checksum after the ordered pure asset list. openQ4 preserves that field by sending the official Quake 4 1.4.2 `q4base/game300.pk4` engine checksum, `0x68fb90b1`, for the legacy Windows, Linux, and macOS OS IDs. The same value is used on every platform, so an openQ4 client and server do not need identical executable formats to complete the asset handshake.
+openQ4's network protocol, 2.41, carries a game-code PK4 checksum after the ordered pure asset list. That version number is Doom 3's minor number under Quake 4's major number; no retail Quake 4 release used it. openQ4 fills the field with a fixed token for the Windows, Linux, and macOS OS IDs: `0x68fb90b1`, the engine checksum of the official Quake 4 1.4.2 `q4base/game300.pk4`. The same value is used on every platform, so an openQ4 client and server do not need identical executable formats to complete the asset handshake.
+
+The token only works between openQ4 builds. It does not make openQ4 compatible with retail servers, for two reasons:
+
+- Retail 1.4.2 servers speak protocol 2.85 and reject a 2.41 client before the pure check.
+- `q4base/game300.pk4` holds the single-player game code. Since 1.4.0, retail multiplayer runs from `q4mp/`, so a retail pure server expects a `q4mp` game pak:
+
+| PK4 | Checksum | Contents |
+|---|---|---|
+| `q4mp/game300.pk4` | `0xe9732a13` | Windows, Linux, and macOS multiplayer game code |
+| `q4mp/game000.pk4` | `0x540bbe81` | Windows multiplayer game code |
+| `q4mp/game100.pk4` | `0x11cd8117` | Linux multiplayer game code |
+| `q4mp/game200.pk4` | `0x34249b52` | macOS multiplayer game code |
 
 The value is only a protocol compatibility token. openQ4 does not open, extract, download, restart into, or execute `game300.pk4`. It accepts the token only when a game module has already been resolved from the trusted local openQ4 package/module roots; a missing local module or any other token fails the pure handshake as unavailable game code. The ordered retail/openQ4 asset PK4 list is still checked separately.
 
-`0x68fb90b1` is not a hash of the loaded openQ4 module, cryptographic attestation, or an anti-cheat guarantee. It preserves the stock 1.4.2 wire meaning while executable trust remains a local packaging decision.
+`0x68fb90b1` is not a hash of the loaded openQ4 module, cryptographic attestation, or an anti-cheat guarantee. It only keeps the field populated with a stable value; executable trust remains a local packaging decision.
 
 ## Required official baseline
 

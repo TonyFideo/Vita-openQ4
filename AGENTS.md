@@ -100,7 +100,7 @@ This file describes project goals, rules, and upstream credits for anyone workin
 - Upstream engine base (local folder name retained): `E:\_SOURCE\_CODE\Quake4Doom-master`
 - Quake 4 BSE (Basic Set of Effects): `E:\_SOURCE\_CODE\Quake4BSE-master`
 - Quake 4 engine decompiled (Hex-Rays): `E:\Repositories\Quake4Decompiled-main`
-- Quake 4 installation (Steam): `C:\Program Files (x86)\Steam\steamapps\common\Quake 4`
+- Quake 4 installation (Steam, 1.4.2, includes `Quake4Ded.exe`): `E:\SteamLibrary\steamapps\common\Quake 4`
 
 **Upstream Credits**
 - Justin Marshall.

@@ -101,9 +101,10 @@ asset PK4s, but standard packages do not enable in-process direct transfer. Any
 separately integrated curl-enabled package path remains asset-only and never
 supplies executable game code.
 
-The legacy protocol also carries a game-code checksum. openQ4 sends the official
-Quake 4 1.4.2 `game300.pk4` checksum, `0x68fb90b1`, only as a compatibility
-token. It does not require, mount, download, extract, or execute that archive.
+The pure handshake also carries a game-code checksum. openQ4 sends a fixed
+token, `0x68fb90b1`, which is the checksum of the official Quake 4 1.4.2
+`q4base/game300.pk4`. It does not require, mount, download, extract, or execute
+that archive.
 The engine accepts the token only when the required `game_sp` or `game_mp`
 module was already loaded from trusted local openQ4 package/module roots. A missing
 module, an unsupported platform ID, an empty pure asset list, or a different
@@ -115,10 +116,10 @@ openQ4 module. An administrator who intentionally operates a code-bearing mod
 must set `net_serverAllowServerMod 1` and distribute a complete, trusted package
 to clients separately; the setting does not make module code downloadable.
 
-The compatibility token preserves the stock 1.4.2 packet field across Windows,
-Linux, and macOS. It is not a cryptographic measurement of the loaded module and
-does not turn pure mode into an anti-cheat system. It also does not guarantee
-that an arbitrary gameplay mod remains compatible with stock clients.
+The token is the same on Windows, Linux, and macOS, and it only works between
+openQ4 builds. Retail multiplayer servers expect the checksum of a `q4mp` game
+pak instead. The token is not a cryptographic measurement of the loaded module
+and does not turn pure mode into an anti-cheat system.
 
 ## Malformed network traffic
 
@@ -157,10 +158,16 @@ client talking to an old server needs the client setting. Legacy mode sends the
 password and command in plaintext and should be enabled only temporarily on a
 trusted network. Return both variables to `0` when compatibility testing ends.
 
-Stock Quake 4 clients can still join and play on an openQ4 server because the
-gameplay and connection packet layouts remain compatible. The intentional
-administration compatibility change is that old plaintext-rcon tools receive no
-response until the server operator explicitly enables the legacy path.
+Old plaintext-rcon tools receive no response until the server operator
+explicitly enables the legacy path.
+
+## Retail Quake 4 clients and servers
+
+Retail Quake 4 clients cannot join an openQ4 server, and openQ4 cannot join a
+retail server. openQ4 uses network protocol 2.41, while retail Quake 4 1.4.2
+uses 2.85, and each side rejects the other when connecting. The two protocols
+also differ beyond the version number, including the reliable message numbering
+and the player input format.
 
 ## Standards and provenance
 
