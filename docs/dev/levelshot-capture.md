@@ -55,6 +55,9 @@ requester racing the frame loop. The file is deleted once handled; that is the c
   with probes, then capture a second run behind `after <best time>`. Keep `timescale` at or below 1
   before a gated capture; after a stretch at 8 the view clock no longer tracked the game clock that
   item spin runs on.
+- Scripted scenes often hide the thing the retail shot shows, or show what it doesn't: the storage1
+  intro hides the player's own pod, and the second visit folds the core-room bridge away until the
+  player extends it. Read the level script and replay the relevant function with `script`.
 - The console `script` command cannot carry quoted strings. Staging that needs them (for example
   `$light.setShader( "..." )`) goes in a function appended to a copy of the level script under the
   run's savepath, which overrides the pak copy; then `script "map_<name>::lsq_stage()"`.
@@ -84,7 +87,7 @@ distinctive surfaces, or look-at shells around a landmark for exterior shots.
 
 ## The issue #11 sets
 
-All 24 have a retail original in the Steam paks. Each set was recaptured at the recovered retail camera
+All 24 have a retail original in the Steam paks (storage1_second, not one of them, was redone the same way). Each set was recaptured at the recovered retail camera
 with openQ4's shipped maps and assets; where the retail shot was taken in a pre-release build, the
 shipped content wins and the difference is noted.
 
@@ -93,7 +96,8 @@ shipped content wins and the difference is noted.
 | convoy2b | `game/convoy2b` | time chosen for sky scroll and fires | fire and smoke particles differ |
 | defstation | `game/building_b` | `s_constantAmplitude 1`, time chosen for the flicker lights | retail has far stronger red light near the camera than the shipped lights give |
 | medlabs | `game/medlabs` | `s_constantAmplitude 1` | retail shows a large hanging machine the shipped map does not have |
-| storage1_first | `game/storage1 first` | drop-pod intro frozen at 17 s, camera above a falling pod | best effort: the retail camera and its fire trail could not be recovered, and the pods render unlit from above |
+| storage1_first | `game/storage1 first` | drop-pod intro frozen at 16.1 s as the burning pod falls past; the player's own pod (`envPodInFlight`, which the intro script hides) shown, since retail frames it from behind and above where `light_8124` lights it | retail is hazier; smoke and fire particles differ |
+| storage1_second | `game/storage1 second` | the core-room bridge and catwalks extended (`map_storage1::shaft_bridge()`), as retail shows them | an earlier openQ4 capture showed the Dark Matter Gun's energy ball; retail has none |
 | storage2 | `game/storage2` | level-start alarm lighting, hidden monitor `func_static_13207` shown | retail's floor shows the grid of the ceiling spotlights, which the shipped map only turns on after the light changeover |
 | tram1b | `game/tram1b` | none | none |
 | q4ctf1 | CTF | flags | retail has a rock ceiling and fan the shipped map does not |
