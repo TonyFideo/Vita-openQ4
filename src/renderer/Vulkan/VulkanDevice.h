@@ -64,6 +64,10 @@ typedef struct vkDeviceContext_s {
 	VkPhysicalDeviceProperties deviceProperties;
 	bool				depthClampSupported;
 	bool				depthBoundsSupported;
+	// line widths and point sizes other than 1, for the debug tools
+	// (glLineWidth / glPointSize); both optional, 1 when missing
+	bool				wideLinesSupported;
+	bool				largePointsSupported;
 	// Vulkan Portability (MoltenVK on macOS): the device is a portability
 	// implementation whose optional subset features must be honored instead of
 	// assumed. False on native drivers, where the whole subset reads as

@@ -116,6 +116,7 @@ void VK_GuiExecutor_DrawResolvedSpecialEffects(
 		idRenderTexture *destinationRenderTexture );
 bool VK_GuiExecutor_EnsureFrameOpen( void );
 bool VK_GuiExecutor_EndFrameAndPresent( void );
+void VK_PostProcess_ApplyBackBuffer( void );
 bool VK_GuiExecutor_FrameIsOpen( void );
 bool VK_Exec_SetRenderTarget( idRenderTexture *renderTexture );
 void VK_Exec_ClearRenderTarget( bool clearColor, bool clearDepth, float depthValue,
@@ -690,6 +691,11 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 				break;
 			}
 			case RC_SWAP_BUFFERS:
+				// RB_SwapBuffers runs the back-buffer passes (CRT, then
+				// r_brightness/r_gamma) before presenting, and screenshots read
+				// the result, so they run here whether or not this frame is a
+				// capture.
+				VK_PostProcess_ApplyBackBuffer();
 				// CaptureRenderToFile flushes a cropped save-preview frame with
 				// tr.takingScreenshot set. Match RB_SwapBuffers: retain that
 				// back-buffer work for readback so it can be replaced by the real
@@ -1138,8 +1144,89 @@ int R_FindARBProgram( unsigned int target, const char *program ) {
 	return vkNumMaterialPrograms;
 }
 
+/*
+====================
+Soft particles
+
+The contract of RB_SoftParticleStageContractSupported and
+RB_DrawSurfHasSoftParticleStage (draw_common.cpp): BSE sprite and oriented
+segments with one plain textured ambient stage, alpha or additive blend,
+sorted between SS_FAR and SS_POST_PROCESS, and not bolted to a depth-hacked
+space. VK_Exec_DrawAmbientStages draws such stages with soft_particle.frag.
+OpenGL also requires GLSL; every Vulkan device has the shader.
+====================
+*/
+static bool VK_SoftParticleBlendSupported( int drawStateBits ) {
+	const int blendBits = drawStateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS );
+	return blendBits == ( GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA )
+		|| blendBits == ( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE );
+}
+
+bool VK_SoftParticleStageSupported( const drawSurf_t *surf, const shaderStage_t *pStage ) {
+	if ( !r_softParticles.GetBool() || surf == NULL || pStage == NULL || surf->geo == NULL ) {
+		return false;
+	}
+	if ( ( surf->dsFlags & DSF_BSE_EFFECT ) == 0 || ( surf->geo->surfaceFlags & STF_SOFT_PARTICLE_CANDIDATE ) == 0 ) {
+		return false;
+	}
+	if ( surf->space == NULL || surf->space->weaponDepthHack || surf->space->modelDepthHack != 0.0f ) {
+		return false;
+	}
+	if ( R_TriHasPrimBatchMesh( surf->geo ) || pStage->newStage != NULL ) {
+		return false;
+	}
+	if ( pStage->lighting != SL_AMBIENT || pStage->hasAlphaTest ) {
+		return false;
+	}
+	if ( pStage->texture.image == NULL && pStage->texture.cinematic == NULL ) {
+		return false;
+	}
+	if ( pStage->texture.texgen != TG_EXPLICIT && pStage->texture.texgen != TG_POT_CORRECTION ) {
+		return false;
+	}
+	if ( !VK_SoftParticleBlendSupported( pStage->drawStateBits ) ) {
+		return false;
+	}
+	const idMaterial *shader = surf->material;
+	return shader != NULL && shader->GetSort() >= SS_FAR && shader->GetSort() < SS_POST_PROCESS;
+}
+
+// RB_SoftParticleStageVisible
+static bool VK_SoftParticleStageVisible( const shaderStage_t *pStage, const float *regs ) {
+	if ( regs != NULL && regs[ pStage->conditionRegister ] == 0.0f ) {
+		return false;
+	}
+	const int blendBits = pStage->drawStateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS );
+	if ( regs != NULL ) {
+		const float r = regs[ pStage->color.registers[0] ];
+		const float g = regs[ pStage->color.registers[1] ];
+		const float b = regs[ pStage->color.registers[2] ];
+		const float a = regs[ pStage->color.registers[3] ];
+		if ( blendBits == ( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE ) && r <= 0.0f && g <= 0.0f && b <= 0.0f ) {
+			return false;
+		}
+		if ( blendBits == ( GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA ) && a <= 0.0f ) {
+			return false;
+		}
+	}
+	return true;
+}
+
 bool RB_DrawSurfHasSoftParticleStage( const drawSurf_t *surf ) {
-	(void)surf;
+	if ( !r_softParticles.GetBool() || surf == NULL || surf->material == NULL || surf->geo == NULL ) {
+		return false;
+	}
+	const idMaterial *shader = surf->material;
+	if ( !shader->HasAmbient() ) {
+		return false;
+	}
+	for ( int stage = 0; stage < shader->GetNumStages(); ++stage ) {
+		const shaderStage_t *pStage = shader->GetStage( stage );
+		if ( VK_SoftParticleStageSupported( surf, pStage )
+				&& VK_SoftParticleStageVisible( pStage, surf->shaderRegisters ) ) {
+			return true;
+		}
+	}
 	return false;
 }
 
@@ -1377,13 +1464,17 @@ vkMaterialProgramFamily_t R_GetARBProgramFamily( unsigned int target, unsigned i
 	return record.family;
 }
 
-// GL state wrappers (cold)
+// GL state wrappers: cold, except that the debug tools' emulation
+// (vk_DebugTools.cpp) tracks them while it draws
+void VK_DebugGL_State( int stateBits );
+void VK_DebugGL_Cull( int cullType );
+
 void GL_State( int stateBits ) {
-	(void)stateBits;
+	VK_DebugGL_State( stateBits );
 }
 
 void GL_Cull( int cullType ) {
-	(void)cullType;
+	VK_DebugGL_Cull( cullType );
 }
 
 void GL_SelectTexture( int unit ) {
@@ -1531,48 +1622,10 @@ void RB_ShutdownShadowMapResources( void ) {
 void RB_ShutdownScenePostProcess( void ) {
 }
 
-// buffered debug-tool surface (Phase I implements as buffered-line draws)
-void RB_AddDebugLine( const idVec4 &color, const idVec3 &start, const idVec3 &end, const int lifeTime, const bool depthTest ) {
-	(void)color; (void)start; (void)end; (void)lifeTime; (void)depthTest;
-}
-
-void RB_AddDebugPolygon( const idVec4 &color, const idWinding &winding, const int lifeTime, const bool depthTest ) {
-	(void)color; (void)winding; (void)lifeTime; (void)depthTest;
-}
-
-void RB_AddDebugText( const char *text, const idVec3 &origin, float scale, const idVec4 &color, const idMat3 &viewAxis, const int align, const int lifetime, bool depthTest ) {
-	(void)text; (void)origin; (void)scale; (void)color; (void)viewAxis; (void)align; (void)lifetime; (void)depthTest;
-}
-
-void RB_ClearDebugLines( int time ) {
-	(void)time;
-}
-
-void RB_ClearDebugPolygons( int time ) {
-	(void)time;
-}
-
-void RB_ClearDebugText( int time ) {
-	(void)time;
-}
-
-void RB_DrawBounds( const idBounds &bounds ) {
-	(void)bounds;
-}
-
-float RB_DrawTextLength( const char *text, float scale, int len ) {
-	(void)text; (void)scale; (void)len;
-	return 0.0f;
-}
-
-void RB_DrawElementsImmediate( const srfTriangles_t *tri ) {
-	(void)tri;
-}
-
+// The debug-tool buffers, RB_DrawBounds and RB_ShutdownDebugTools come from
+// tr_rendertools.cpp and RB_DrawElementsImmediate from vk_DebugTools.cpp.
+// RB_ShowImages is empty on OpenGL too (tr_backend.cpp).
 void RB_ShowImages( void ) {
-}
-
-void RB_ShutdownDebugTools( void ) {
 }
 
 // GL-subsystem self-test commands: honest skips under the Vulkan backend

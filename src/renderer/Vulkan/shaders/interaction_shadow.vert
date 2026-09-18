@@ -43,6 +43,9 @@ layout(set = 6, binding = 0, std140) uniform InteractionBlock {
     vec4 diffuseColor;
     vec4 specularColor;
     vec4 flatDiffuseParams;
+    // cel banding (RB_SetCelInteractionUniform): x enabled, y band count,
+    // z hard specular, w softness; zero when the surface is not banded
+    vec4 celParams;
 } inter;
 
 layout(set = 7, binding = 1, std140) uniform ShadowBlock {

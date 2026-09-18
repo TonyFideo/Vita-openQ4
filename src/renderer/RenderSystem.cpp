@@ -2429,8 +2429,9 @@ bool idRenderSystemLocal::ResolveTemporalPresentation(
 idRenderSystemLocal::SetUnderwaterView
 
 Publishes the underwater state for this frame and reports whether the effect will actually be
-drawn. Only the GL back end has the post-process pass; the Vulkan module supports a fixed set of
-material programs and no arbitrary GLSL, so it answers false and the caller falls back.
+drawn. Both back ends have the post-process pass (draw_common.cpp, Vulkan/vk_PostProcess.cpp);
+RB_UnderwaterViewAvailable answers false when r_underwater is off or the pass cannot run, and the
+caller falls back to a flat wash.
 ===============
 */
 bool idRenderSystemLocal::SetUnderwaterView( float amount, const idVec3 &tint, float fogDistance ) {

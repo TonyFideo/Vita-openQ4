@@ -1094,9 +1094,14 @@ bool VK_Device_Init( const renderWindowServices_s *windowServices ) {
 	// rejects generated .bimage files when the renderer denies compression, so the
 	// feature is enabled whenever the device has it and reported honestly downstream.
 	features2.features.textureCompressionBC = supported.textureCompressionBC;
+	// the debug tools' glLineWidth / glPointSize; they draw at 1 without these
+	features2.features.wideLines = supported.wideLines;
+	features2.features.largePoints = supported.largePoints;
 	vkCtx.depthClampSupported = supported.depthClamp == VK_TRUE;
 	vkCtx.depthBoundsSupported = supported.depthBounds == VK_TRUE;
 	vkCtx.textureCompressionBCSupported = supported.textureCompressionBC == VK_TRUE;
+	vkCtx.wideLinesSupported = supported.wideLines == VK_TRUE;
+	vkCtx.largePointsSupported = supported.largePoints == VK_TRUE;
 	common->Printf( "Vulkan: optional depth features clamp=%d bounds=%d, BC texture compression=%d\n",
 			vkCtx.depthClampSupported ? 1 : 0,
 			vkCtx.depthBoundsSupported ? 1 : 0,

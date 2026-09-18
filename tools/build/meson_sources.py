@@ -124,7 +124,8 @@ RENDERER_VK_EXCLUDED_SOURCES = (
     "src/renderer/draw_common.cpp",
     "src/renderer/tr_backend.cpp",
     "src/renderer/tr_render.cpp",
-    "src/renderer/tr_rendertools.cpp",
+    # tr_rendertools.cpp stays: its fixed-function debug drawing runs through
+    # the emulation in renderer/Vulkan/vk_DebugTools.cpp
     "src/renderer/ModernGLExecutor.cpp",
     "src/renderer/ModernGLShaderLibrary.cpp",
     "src/renderer/ModernLightImageAtlas.cpp",

@@ -2943,17 +2943,13 @@ void idRenderWorldLocal::LoadLightGridImages( bool forceReloadLoaded ) {
 ===================
 LightGrid_BackendStreamsAtlases
 
-The GL backend streams an area's atlases the first time the area is drawn.
-The Vulkan backend has no light-grid pass, so holding a pack for it would
-only cost memory.
+Both backends stream an area's atlases the first time the area is drawn
+(RB_STD_LightGridIndirect, and VK_SceneEffects_DrawLightGrid in
+vk_SceneEffects.cpp), so both want the pack held in memory ahead of it.
 ===================
 */
 static bool LightGrid_BackendStreamsAtlases() {
-#if defined( OPENQ4_RENDERER_VK_MODULE )
-	return false;
-#else
 	return r_useLightGrid.GetBool();
-#endif
 }
 
 void idRenderWorldLocal::PreloadLightGridImages() {

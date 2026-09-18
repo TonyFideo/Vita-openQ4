@@ -80,6 +80,14 @@ int				rb_debugPolygonTime = 0;
 
 static void RB_DrawText( const char *text, const idVec3 &origin, float scale, const idVec4 &color, const idMat3 &viewAxis, const int align );
 
+#if defined( OPENQ4_RENDERER_VK_MODULE )
+// Vulkan cannot read pixels back in the middle of a frame; the module's
+// versions of these (and RB_ScanStencilBuffer) are in Vulkan/vk_DebugTools.cpp
+void RB_CountStencilBuffer( void );
+void RB_ShowIntensity( void );
+void RB_ShowDepthBuffer( void );
+#endif
+
 /*
 ================
 RB_DrawBounds
@@ -385,6 +393,7 @@ RB_ScanStencilBuffer
 Debugging tool to see what values are in the stencil buffer
 ===================
 */
+#if !defined( OPENQ4_RENDERER_VK_MODULE )	// Vulkan: Vulkan/vk_DebugTools.cpp
 void RB_ScanStencilBuffer( void ) {
 	int		counts[256];
 	int		i;
@@ -409,6 +418,7 @@ void RB_ScanStencilBuffer( void ) {
 		}
 	}
 }
+#endif
 
 
 /*
@@ -418,6 +428,7 @@ RB_CountStencilBuffer
 Print an overdraw count based on stencil index values
 ===================
 */
+#if !defined( OPENQ4_RENDERER_VK_MODULE )	// Vulkan: Vulkan/vk_DebugTools.cpp
 void RB_CountStencilBuffer( void ) {
 	int		count;
 	int		i;
@@ -437,6 +448,7 @@ void RB_CountStencilBuffer( void ) {
 	// print some stats (not supposed to do from back end in SMP...)
 	common->Printf( "overdraw: %5.1f\n", (float)count/(glConfig.vidWidth * glConfig.vidHeight)  );
 }
+#endif
 
 /*
 ===================
@@ -701,7 +713,7 @@ static void RB_DrawCachedViewLightDebugVisuals( void ) {
 	RB_SimpleWorldSetup();
 
 	glDisableClientState( GL_TEXTURE_COORD_ARRAY );
-	globalImages->BindNull();
+	RB_BindNullDebugImage();
 	glDisable( GL_STENCIL_TEST );
 	glDisable( GL_DEPTH_TEST );
 	GL_Cull( CT_TWO_SIDED );
@@ -871,6 +883,7 @@ The greatest of the rgb values at each pixel will be used, with
 the resulting color shading from red at 0 to green at 128 to blue at 255
 ===================
 */
+#if !defined( OPENQ4_RENDERER_VK_MODULE )	// Vulkan: Vulkan/vk_DebugTools.cpp
 void RB_ShowIntensity( void ) {
 	byte	*colorReadback;
 	int		i, j, c;
@@ -912,13 +925,14 @@ void RB_ShowIntensity( void ) {
 	glRasterPos2f( 0, 0 );
 	glPopMatrix();
 	glColor3f( 1, 1, 1 );
-	globalImages->BindNull();
+	RB_BindNullDebugImage();
 	glMatrixMode( GL_MODELVIEW );
 
 	glDrawPixels( glConfig.vidWidth, glConfig.vidHeight, GL_RGBA , GL_UNSIGNED_BYTE, colorReadback );
 
 	R_StaticFree( colorReadback );
 }
+#endif
 
 
 /*
@@ -928,6 +942,7 @@ RB_ShowDepthBuffer
 Draw the depth buffer as colors
 ===================
 */
+#if !defined( OPENQ4_RENDERER_VK_MODULE )	// Vulkan: Vulkan/vk_DebugTools.cpp
 void RB_ShowDepthBuffer( void ) {
 	void	*depthReadback;
 
@@ -948,7 +963,7 @@ void RB_ShowDepthBuffer( void ) {
 
 	GL_State( GLS_DEPTHFUNC_ALWAYS );
 	glColor3f( 1, 1, 1 );
-	globalImages->BindNull();
+	RB_BindNullDebugImage();
 
 	depthReadback = R_StaticAlloc( glConfig.vidWidth * glConfig.vidHeight*4 );
 	memset( depthReadback, 0, glConfig.vidWidth * glConfig.vidHeight*4 );
@@ -967,6 +982,7 @@ void RB_ShowDepthBuffer( void ) {
 	glDrawPixels( glConfig.vidWidth, glConfig.vidHeight, GL_RGBA , GL_UNSIGNED_BYTE, depthReadback );
 	R_StaticFree( depthReadback );
 }
+#endif
 
 /*
 =================
@@ -1002,7 +1018,7 @@ void RB_ShowLightCount( void ) {
 
 	glStencilFunc( GL_ALWAYS, 1, 255 );
 
-	globalImages->defaultImage->Bind();
+	RB_BindDebugImage( globalImages->defaultImage );
 
 	for ( vLight = backEnd.viewDef->viewLights ; vLight ; vLight = vLight->next ) {
 		for ( i = 0 ; i < 2 ; i++ ) {
@@ -1043,7 +1059,7 @@ void RB_ShowSilhouette( void ) {
 	// clear all triangle edges to black
 	//
 	glDisableClientState( GL_TEXTURE_COORD_ARRAY );
-	globalImages->BindNull();
+	RB_BindNullDebugImage();
 	glDisable( GL_TEXTURE_2D );
 	glDisable( GL_STENCIL_TEST );
 
@@ -1134,7 +1150,7 @@ static void RB_ShowShadowCount( void ) {
 
 	glStencilFunc( GL_ALWAYS, 1, 255 );
 
-	globalImages->defaultImage->Bind();
+	RB_BindDebugImage( globalImages->defaultImage );
 
 	// draw both sides
 	GL_Cull( CT_TWO_SIDED );
@@ -1236,7 +1252,7 @@ static void RB_ShowTris( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 	}
 
 	glDisableClientState( GL_TEXTURE_COORD_ARRAY );
-	globalImages->BindNull();
+	RB_BindNullDebugImage();
 	glDisable( GL_TEXTURE_2D );
 	glDisable( GL_STENCIL_TEST );
 
@@ -1295,7 +1311,7 @@ static void RB_ShowSurfaceInfo( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 	}
 
 	glDisableClientState( GL_TEXTURE_COORD_ARRAY );
-	globalImages->BindNull();
+	RB_BindNullDebugImage();
 	glDisable( GL_TEXTURE_2D );
 	glDisable( GL_STENCIL_TEST );
 
@@ -1347,7 +1363,7 @@ static void RB_ShowViewEntitys( viewEntity_t *vModels ) {
 	}
 
 	glDisableClientState( GL_TEXTURE_COORD_ARRAY );
-	globalImages->BindNull();
+	RB_BindNullDebugImage();
 	glDisable( GL_TEXTURE_2D );
 	glDisable( GL_STENCIL_TEST );
 
@@ -1410,7 +1426,7 @@ static void RB_ShowTexturePolarity( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 		return;
 	}
 	glDisableClientState( GL_TEXTURE_COORD_ARRAY );
-	globalImages->BindNull();
+	RB_BindNullDebugImage();
 	glDisable( GL_STENCIL_TEST );
 
 	GL_State( GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA );
@@ -1481,7 +1497,7 @@ static void RB_ShowUnsmoothedTangents( drawSurf_t **drawSurfs, int numDrawSurfs 
 		return;
 	}
 	glDisableClientState( GL_TEXTURE_COORD_ARRAY );
-	globalImages->BindNull();
+	RB_BindNullDebugImage();
 	glDisable( GL_STENCIL_TEST );
 
 	GL_State( GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA );
@@ -1541,7 +1557,7 @@ static void RB_ShowTangentSpace( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 		return;
 	}
 	glDisableClientState( GL_TEXTURE_COORD_ARRAY );
-	globalImages->BindNull();
+	RB_BindNullDebugImage();
 	glDisable( GL_STENCIL_TEST );
 
 	GL_State( GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA );
@@ -1597,7 +1613,7 @@ static void RB_ShowVertexColor( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 		return;
 	}
 	glDisableClientState( GL_TEXTURE_COORD_ARRAY );
-	globalImages->BindNull();
+	RB_BindNullDebugImage();
 	glDisable( GL_STENCIL_TEST );
 
 	GL_State( GLS_DEPTHFUNC_LESS );
@@ -1651,7 +1667,7 @@ static void RB_ShowNormals( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 	GL_State( GLS_POLYMODE_LINE );
 	glDisableClientState( GL_TEXTURE_COORD_ARRAY );
 
-	globalImages->BindNull();
+	RB_BindNullDebugImage();
 	glDisable( GL_STENCIL_TEST );
 	if ( !r_debugLineDepthTest.GetBool() ) {
 		glDisable( GL_DEPTH_TEST );
@@ -1745,7 +1761,7 @@ static void RB_ShowTextureVectors( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 	GL_State( GLS_DEPTHFUNC_LESS );
 	glDisableClientState( GL_TEXTURE_COORD_ARRAY );
 
-	globalImages->BindNull();
+	RB_BindNullDebugImage();
 
 	for ( i = 0 ; i < numDrawSurfs ; i++ ) {
 		drawSurf = drawSurfs[i];
@@ -1846,7 +1862,7 @@ static void RB_ShowDominantTris( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 	glPolygonOffset( -1, -2 );
 	glEnable( GL_POLYGON_OFFSET_LINE );
 
-	globalImages->BindNull();
+	RB_BindNullDebugImage();
 
 	for ( i = 0 ; i < numDrawSurfs ; i++ ) {
 		drawSurf = drawSurfs[i];
@@ -1908,7 +1924,7 @@ static void RB_ShowEdges( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 	GL_State( GLS_DEFAULT );
 	glDisableClientState( GL_TEXTURE_COORD_ARRAY );
 
-	globalImages->BindNull();
+	RB_BindNullDebugImage();
 	glDisable( GL_DEPTH_TEST );
 
 	for ( i = 0 ; i < numDrawSurfs ; i++ ) {
@@ -2011,7 +2027,7 @@ void RB_ShowLights( void ) {
 	RB_SimpleWorldSetup();
 
 	glDisableClientState( GL_TEXTURE_COORD_ARRAY );
-	globalImages->BindNull();
+	RB_BindNullDebugImage();
 	glDisable( GL_STENCIL_TEST );
 
 
@@ -2080,7 +2096,7 @@ void RB_ShowPortals( void ) {
 	// all portals are expressed in world coordinates
 	RB_SimpleWorldSetup();
 
-	globalImages->BindNull();
+	RB_BindNullDebugImage();
 	glDisable( GL_DEPTH_TEST );
 
 	GL_State( GLS_DEFAULT );
@@ -2107,7 +2123,7 @@ static void RB_ShowLightGrid( void ) {
 	}
 
 	RB_SimpleWorldSetup();
-	globalImages->BindNull();
+	RB_BindNullDebugImage();
 	GL_State( GLS_DEFAULT );
 	GL_Cull( CT_TWO_SIDED );
 
@@ -2347,7 +2363,7 @@ void RB_ShowDebugText( void ) {
 	// all lines are expressed in world coordinates
 	RB_SimpleWorldSetup();
 
-	globalImages->BindNull();
+	RB_BindNullDebugImage();
 
 	width = r_debugLineWidth.GetInteger();
 	if ( width < 1 ) {
@@ -2452,7 +2468,7 @@ void RB_ShowDebugLines( void ) {
 	// all lines are expressed in world coordinates
 	RB_SimpleWorldSetup();
 
-	globalImages->BindNull();
+	RB_BindNullDebugImage();
 
 	width = r_debugLineWidth.GetInteger();
 	if ( width < 1 ) {
@@ -2567,7 +2583,7 @@ void RB_ShowDebugPolygons( void ) {
 	// all lines are expressed in world coordinates
 	RB_SimpleWorldSetup();
 
-	globalImages->BindNull();
+	RB_BindNullDebugImage();
 
 	glDisable( GL_TEXTURE_2D );
 	glDisable( GL_STENCIL_TEST );
@@ -2804,7 +2820,7 @@ void RB_TestImage( void ) {
 	glLoadIdentity(); 
     glOrtho( 0, 1, 0, 1, -1, 1 );
 
-	tr.testImage->Bind();
+	RB_BindDebugImage( tr.testImage );
 	glBegin( GL_QUADS );
 	
 	glTexCoord2f( 0, 1 );
@@ -2830,9 +2846,12 @@ void RB_TestImage( void ) {
 RB_CaptureLevelshotDepth
 
 Copies the main view's depth buffer out for levelshotProbe. Runs before the debug
-tools draw, so nothing but the scene has touched depth yet.
+tools draw, so nothing but the scene has touched depth yet. OpenGL only: in the
+Vulkan module the GL calls below are stubs, and LevelShotDepth.h promises that
+only the GL backend fills the capture.
 =================
 */
+#if !defined( OPENQ4_RENDERER_VK_MODULE )
 static void RB_CaptureLevelshotDepth( void ) {
 	levelshotDepthCapture_t &capture = tr_levelshotDepthCapture;
 	if ( capture.linearDepth == NULL || capture.captured ) {
@@ -2896,6 +2915,7 @@ static void RB_CaptureLevelshotDepth( void ) {
 	}
 	capture.captured = true;
 }
+#endif
 
 /*
 =================
@@ -2908,7 +2928,9 @@ void RB_RenderDebugTools( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 		return;
 	}
 
+#if !defined( OPENQ4_RENDERER_VK_MODULE )
 	RB_CaptureLevelshotDepth();
+#endif
 
 	RB_LogComment( "---------- RB_RenderDebugTools ----------\n" );
 

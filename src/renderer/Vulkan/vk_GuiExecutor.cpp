@@ -64,6 +64,7 @@
 // vk_ShadowMap.h: VK_ShadowMap_Shutdown + the point cube pool size the
 // descriptor pool budgets for (Phase F2a/F2b)
 #include "vk_ShadowMap.h"
+#include "vk_ExecutorHooks.h"
 #include "shaders/gui_shaders_spv.h"
 #include "shaders/temporal_resolve_spv.h"
 
@@ -85,6 +86,17 @@ void VK_ClassicFogBlend_DrawOwnedView( const viewDef_t *viewDef );
 bool VK_Exec_BeginMainRendering( bool clearColorDepth );
 void VK_Exec_EndMainRendering( void );
 bool VK_GuiExecutor_EndFrameAndPresent( void );
+void VK_PostProcess_Shutdown( void );
+int VK_PostProcess_WorldDepthCaptures( const viewDef_t *viewDef );
+int VK_PostProcess_DepthFillPhase( const drawSurf_t *surf, int captures );
+void VK_PostProcess_CaptureWorldDepth( const viewDef_t *viewDef, int fillPhase, int captures,
+		const int phaseDrawn[ 3 ] );
+bool VK_PostProcess_DrawSceneEffects( const viewDef_t *viewDef );
+bool VK_SceneEffects_DrawPreFog( const viewDef_t *viewDef, int processed );
+bool VK_PostProcess_DrawUnderwater( const viewDef_t *viewDef );
+void VK_DebugTools_DrawView( const viewDef_t *viewDef );
+static void VK_Exec_ReleaseStencilReadbacks( void );
+static void VK_Exec_PrintStencilReadbacks( int slot );
 static bool VK_GuiExecutor_SubmitFrame( bool present );
 VkDescriptorSet VK_Exec_InteractionUniformSet( void );
 int VK_Exec_InteractionUniformAlloc( const void *data, int bytes );
@@ -119,6 +131,7 @@ static const int VK_MAX_PROGRAM_PIPELINES = 128;
 static const int VK_MAX_BLEND_LIGHT_PIPELINES = 32;
 static const int VK_MAX_SPECIAL_PIPELINES = 64;
 static const int VK_MAX_TEMPORAL_RESOLVE_PIPELINES = 8;
+static const int VK_MAX_POST_PIPELINES = 128;
 static const int VK_MAX_DESCRIPTOR_SETS = 4096;
 // rvspecial_depth.fs linearizes the Raven controller's depth texture with
 // this historical near-plane convention.  The Vulkan path samples raw depth,
@@ -154,9 +167,25 @@ typedef struct vkPipelineTarget_s {
 typedef struct vkGuiPipeline_s {
 	int				stateBits;		// GLS blend + per-channel write masks
 	bool			separateColor;	// tightly-packed RGBA8 stream on binding 1
+	bool			alphaToCoverage;	// multisampled targets only
 	vkPipelineTarget_t target;
 	VkPipeline		pipeline;
 } vkGuiPipeline_t;
+
+// full-screen post passes and the extra geometry passes (vk_PostProcess.cpp,
+// vk_SceneEffects.cpp, vk_DebugTools.cpp), keyed by pass kind, blend state,
+// vertex layout, VK_EXTRA_PIPELINE_* flags and target
+typedef struct vkPostPipeline_s {
+	int				kind;
+	int				stateBits;
+	int				vertexLayout;
+	int				flags;
+	vkPipelineTarget_t target;
+	VkPipeline		pipeline;
+} vkPostPipeline_t;
+
+// VK_Exec_ExtraPipeline kinds used inside this file (vk_ExecutorHooks.h)
+static const int VK_EXTRA_KIND_SOFT_PARTICLE = VK_EXTRA_KIND_EXECUTOR_BASE;
 
 typedef struct vkProgramPipeline_s {
 	int				family;			// ARB family, or 0x100 + vkGLSLProgramFamily_t
@@ -215,6 +244,15 @@ typedef struct vkBumpyEnvironmentBlock_s {
 	float			modelRow1[ 4 ];
 	float			modelRow2[ 4 ];
 } vkBumpyEnvironmentBlock_t;
+
+// std140 layout of SoftParticleBlock in soft_particle.frag
+typedef struct vkSoftParticleBlock_s {
+	float			depthInfo[ 4 ];		// P[10], P[14], fade distance, additive blend
+	float			viewInfo[ 4 ];		// viewport origin (OpenGL window space), 1 / depth texture size
+	float			framebuffer[ 4 ];	// x: framebuffer height
+} vkSoftParticleBlock_t;
+
+bool VK_SoftParticleStageSupported( const drawSurf_t *surf, const shaderStage_t *pStage );
 
 // std140-compatible block consumed by temporal_resolve.frag. Keep this under
 // the established 256-byte dynamic-uniform slice so the temporal pass can
@@ -338,6 +376,7 @@ typedef struct vkGuiExecutor_s {
 	VkShaderModule		fogFragModule;
 	VkShaderModule		blendLightVertModule;
 	VkShaderModule		blendLightFragModule;
+	VkShaderModule		softParticleFragModule;
 	VkShaderModule		gpuSkinningModule;
 	VkShaderModule		temporalResolveVertModule;
 	VkShaderModule		temporalResolveFragModule;
@@ -370,6 +409,10 @@ typedef struct vkGuiExecutor_s {
 	vkGuiPipeline_t		pipelines[ VK_MAX_GUI_PIPELINES ];
 	int					numPipelines;
 	int					lastPipelineMRU;	// index of the last exact-key VK_GuiExecutor_GetPipeline result
+	// the world walker sets this around a perforated surface
+	// (RB_UseAlphaToCoverage); VK_GuiExecutor_GetPipeline honours it on
+	// multisampled targets
+	bool				alphaToCoverageSurface;
 	vkGuiPipeline_t		screenPipelines[ VK_MAX_SCREEN_PIPELINES ];
 	int					numScreenPipelines;
 	vkCubePipeline_t	cubePipelines[ VK_MAX_CUBE_PIPELINES ];
@@ -382,6 +425,8 @@ typedef struct vkGuiExecutor_s {
 	int					numBlendLightPipelines;
 	vkGuiPipeline_t		temporalResolvePipelines[ VK_MAX_TEMPORAL_RESOLVE_PIPELINES ];
 	int					numTemporalResolvePipelines;
+	vkPostPipeline_t	postPipelines[ VK_MAX_POST_PIPELINES ];
+	int					numPostPipelines;
 	VkFormat			pipelineTargetFormat;	// swapchain format the pipelines were built for
 
 	vkRing_t			vertexRings[ VK_FRAMES_IN_FLIGHT ];
@@ -714,7 +759,9 @@ static VkBlendFactor VK_BlendFactorFromGLSDst( int bits ) {
 static VkPipeline VK_Exec_CreatePipeline( VkShaderModule vertModule, VkShaderModule fragModule,
 		const VkPipelineVertexInputStateCreateInfo *vertexInput, int blendBits, VkPipelineLayout layout,
 		bool depthOnly, bool colorWriteOff, const vkPipelineTarget_t &target,
-		bool enableDepthClamp = false ) {
+		bool enableDepthClamp = false,
+		VkPrimitiveTopology topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+		bool alphaToCoverage = false ) {
 	VkPipelineShaderStageCreateInfo stages[ 2 ];
 	memset( stages, 0, sizeof( stages ) );
 	stages[ 0 ].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -729,7 +776,7 @@ static VkPipeline VK_Exec_CreatePipeline( VkShaderModule vertModule, VkShaderMod
 	VkPipelineInputAssemblyStateCreateInfo inputAssembly;
 	memset( &inputAssembly, 0, sizeof( inputAssembly ) );
 	inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-	inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+	inputAssembly.topology = topology;
 
 	VkPipelineViewportStateCreateInfo viewportState;
 	memset( &viewportState, 0, sizeof( viewportState ) );
@@ -750,6 +797,9 @@ static VkPipeline VK_Exec_CreatePipeline( VkShaderModule vertModule, VkShaderMod
 	memset( &multisample, 0, sizeof( multisample ) );
 	multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
 	multisample.rasterizationSamples = target.samples;
+	// GL_SAMPLE_ALPHA_TO_COVERAGE only has an effect on a multisampled target
+	multisample.alphaToCoverageEnable = alphaToCoverage && target.samples != VK_SAMPLE_COUNT_1_BIT
+		? VK_TRUE : VK_FALSE;
 
 	VkPipelineColorBlendAttachmentState blendAttachment;
 	memset( &blendAttachment, 0, sizeof( blendAttachment ) );
@@ -794,7 +844,7 @@ static VkPipeline VK_Exec_CreatePipeline( VkShaderModule vertModule, VkShaderMod
 	// reference are core 1.0; the interaction pipelines can then toggle
 	// per-light stencil without pipeline-cache growth. The frame baseline
 	// (VK_Exec_BeginMainRendering) latches all five before any draw.
-	VkDynamicState dynamicStates[ 16 ] = {
+	VkDynamicState dynamicStates[ 18 ] = {
 		VK_DYNAMIC_STATE_VIEWPORT,
 		VK_DYNAMIC_STATE_SCISSOR,
 		VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE,
@@ -814,6 +864,11 @@ static VkPipeline VK_Exec_CreatePipeline( VkShaderModule vertModule, VkShaderMod
 	if ( vkCtx.depthBoundsSupported ) {
 		dynamicStates[ dynamicStateCount++ ] = VK_DYNAMIC_STATE_DEPTH_BOUNDS_TEST_ENABLE;
 		dynamicStates[ dynamicStateCount++ ] = VK_DYNAMIC_STATE_DEPTH_BOUNDS;
+	}
+	// only the debug tools draw lines, and they set the width per batch
+	// (glLineWidth); every other pipeline keeps the static 1.0
+	if ( topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST ) {
+		dynamicStates[ dynamicStateCount++ ] = VK_DYNAMIC_STATE_LINE_WIDTH;
 	}
 	VkPipelineDynamicStateCreateInfo dynamicState;
 	memset( &dynamicState, 0, sizeof( dynamicState ) );
@@ -858,14 +913,26 @@ static VkPipeline VK_Exec_CreatePipeline( VkShaderModule vertModule, VkShaderMod
 	return pipeline;
 }
 
+// RB_UseAlphaToCoverage: perforated materials on a multisampled target. The
+// swapchain is never multisampled, so like OpenGL this only applies inside a
+// multisampled render texture (the game's forward target).
+static bool VK_Exec_UseAlphaToCoverage( const idMaterial *shader ) {
+	return r_msaaAlphaToCoverage.GetBool() && shader != NULL
+		&& shader->Coverage() == MC_PERFORATED
+		&& VK_Exec_CurrentPipelineTarget().samples != VK_SAMPLE_COUNT_1_BIT;
+}
+
 static VkPipeline VK_GuiExecutor_GetPipeline( int stateBits, bool separateColor = false ) {
 	const int pipelineBits = stateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS
 			| GLS_COLORMASK | GLS_ALPHAMASK );
 	const vkPipelineTarget_t target = VK_Exec_CurrentPipelineTarget();
+	const bool alphaToCoverage = vkExec.alphaToCoverageSurface
+			&& target.samples != VK_SAMPLE_COUNT_1_BIT;
 
 	if ( vkExec.lastPipelineMRU >= 0 && vkExec.lastPipelineMRU < vkExec.numPipelines ) {
 		const vkGuiPipeline_t &mru = vkExec.pipelines[ vkExec.lastPipelineMRU ];
 		if ( mru.stateBits == pipelineBits && mru.separateColor == separateColor
+				&& mru.alphaToCoverage == alphaToCoverage
 				&& VK_Exec_PipelineTargetsMatch( mru.target, target ) ) {
 			return mru.pipeline;
 		}
@@ -874,6 +941,7 @@ static VkPipeline VK_GuiExecutor_GetPipeline( int stateBits, bool separateColor 
 	for ( int i = 0; i < vkExec.numPipelines; i++ ) {
 		if ( vkExec.pipelines[ i ].stateBits == pipelineBits
 				&& vkExec.pipelines[ i ].separateColor == separateColor
+				&& vkExec.pipelines[ i ].alphaToCoverage == alphaToCoverage
 				&& VK_Exec_PipelineTargetsMatch( vkExec.pipelines[ i ].target, target ) ) {
 			vkExec.lastPipelineMRU = i;
 			return vkExec.pipelines[ i ].pipeline;
@@ -916,12 +984,22 @@ static VkPipeline VK_GuiExecutor_GetPipeline( int stateBits, bool separateColor 
 	vertexInput.pVertexAttributeDescriptions = attrs;
 
 	VkPipeline pipeline = VK_Exec_CreatePipeline( vkExec.vertModule, vkExec.fragModule,
-			&vertexInput, pipelineBits, vkExec.pipelineLayout, false, false, target );
+			&vertexInput, pipelineBits, vkExec.pipelineLayout, false, false, target,
+			false, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, alphaToCoverage );
 	if ( pipeline == VK_NULL_HANDLE ) {
 		return vkExec.numPipelines > 0 ? vkExec.pipelines[ 0 ].pipeline : VK_NULL_HANDLE;
 	}
+	if ( alphaToCoverage ) {
+		static bool loggedFirstAlphaToCoverage = false;
+		if ( !loggedFirstAlphaToCoverage ) {
+			loggedFirstAlphaToCoverage = true;
+			common->Printf( "Vulkan: first alpha-to-coverage pipeline (%d-sample target)\n",
+					(int)target.samples );
+		}
+	}
 	vkExec.pipelines[ vkExec.numPipelines ].stateBits = pipelineBits;
 	vkExec.pipelines[ vkExec.numPipelines ].separateColor = separateColor;
+	vkExec.pipelines[ vkExec.numPipelines ].alphaToCoverage = alphaToCoverage;
 	vkExec.pipelines[ vkExec.numPipelines ].target = target;
 	vkExec.pipelines[ vkExec.numPipelines ].pipeline = pipeline;
 	vkExec.numPipelines++;
@@ -2624,6 +2702,12 @@ static bool VK_GuiExecutor_Init( void ) {
 		common->Warning( "Vulkan: blend light fragment shader module creation failed" );
 		return false;
 	}
+	smci.codeSize = vk_soft_particle_frag_spv_size;
+	smci.pCode = (const uint32_t *)vk_soft_particle_frag_spv;
+	if ( vkCreateShaderModule( vkCtx.device, &smci, NULL, &vkExec.softParticleFragModule ) != VK_SUCCESS ) {
+		common->Warning( "Vulkan: soft particle fragment shader module creation failed" );
+		return false;
+	}
 
 	VkDescriptorSetLayoutBinding bindingInfo;
 	memset( &bindingInfo, 0, sizeof( bindingInfo ) );
@@ -2853,6 +2937,11 @@ static bool VK_GuiExecutor_Init( void ) {
 }
 
 void VK_GuiExecutor_Shutdown( void ) {
+	// the post/scene/debug passes free their render textures and shader
+	// modules first; their pipelines are destroyed with the others below
+	// (a pipeline outlives the modules it was built from)
+	VK_PostProcess_Shutdown();
+	VK_Exec_ReleaseStencilReadbacks();
 	for ( int i = 0; i < 2; ++i ) {
 		if ( vkExec.temporalDirectHistoryRenderTextures[i] != NULL ) {
 			delete vkExec.temporalDirectHistoryRenderTextures[i];
@@ -2925,6 +3014,12 @@ void VK_GuiExecutor_Shutdown( void ) {
 				vkExec.temporalResolvePipelines[i].pipeline, NULL );
 		}
 	}
+	for ( int i = 0; i < vkExec.numPostPipelines; ++i ) {
+		if ( vkExec.postPipelines[i].pipeline != VK_NULL_HANDLE ) {
+			vkDestroyPipeline( vkCtx.device, vkExec.postPipelines[i].pipeline, NULL );
+		}
+	}
+	vkExec.numPostPipelines = 0;
 	if ( vkExec.pipelineLayout != VK_NULL_HANDLE ) {
 		vkDestroyPipelineLayout( vkCtx.device, vkExec.pipelineLayout, NULL );
 	}
@@ -3093,6 +3188,9 @@ void VK_GuiExecutor_Shutdown( void ) {
 	if ( vkExec.blendLightFragModule != VK_NULL_HANDLE ) {
 		vkDestroyShaderModule( vkCtx.device, vkExec.blendLightFragModule, NULL );
 	}
+	if ( vkExec.softParticleFragModule != VK_NULL_HANDLE ) {
+		vkDestroyShaderModule( vkCtx.device, vkExec.softParticleFragModule, NULL );
+	}
 	for ( int i = 0; i < VK_FRAMES_IN_FLIGHT; i++ ) {
 		if ( vkExec.vertexRings[ i ].buffer != VK_NULL_HANDLE ) {
 			vmaDestroyBuffer( vkCtx.allocator, vkExec.vertexRings[ i ].buffer, vkExec.vertexRings[ i ].allocation );
@@ -3208,6 +3306,10 @@ static bool VK_GuiExecutor_BeginFrame( void ) {
 				vkExec.temporalResolvePipelines[i].pipeline, NULL );
 		}
 		vkExec.numTemporalResolvePipelines = 0;
+		for ( int i = 0; i < vkExec.numPostPipelines; ++i ) {
+			vkDestroyPipeline( vkCtx.device, vkExec.postPipelines[i].pipeline, NULL );
+		}
+		vkExec.numPostPipelines = 0;
 		vkExec.pipelineTargetFormat = vkCtx.swapchainFormat;
 	}
 
@@ -3222,6 +3324,8 @@ static bool VK_GuiExecutor_BeginFrame( void ) {
 			static_cast<int>( frameFenceResult ) );
 		return false;
 	}
+	// the debug tools' stencil copies from this slot's last frame are done
+	VK_Exec_PrintStencilReadbacks( slot );
 	// retire the last upload batch (and, per fence submission-order scope,
 	// every earlier one) before deferred destroys can release images those
 	// batches referenced; near-free, since the batch was submitted before the
@@ -4741,6 +4845,10 @@ static bool VK_Exec_PrepareCopyDestination( idImage *image, int width, int heigh
 	return entry != NULL && ( entry->usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT ) != 0;
 }
 
+static VkResolveModeFlagBits VK_Exec_DepthResolveMode( void );
+static bool VK_Exec_ResolveDepthImage( vkImageEntry_t *sourceDepth,
+		vkImageEntry_t *destinationDepth, uint32_t width, uint32_t height );
+
 bool VK_Exec_CopyRender( idImage *image, int x, int y, int width, int height,
 		int cubeFace, bool copyDepth ) {
 	if ( !VK_GuiExecutor_BeginFrame() || image == NULL || width <= 0 || height <= 0 ) {
@@ -4772,14 +4880,18 @@ bool VK_Exec_CopyRender( idImage *image, int x, int y, int width, int height,
 		sourceImage = sourceEntry != NULL ? sourceEntry->image : vkCtx.swapchainImages[ vkExec.swapImageIndex ];
 		sourceFormat = sourceEntry != NULL ? sourceEntry->format : vkCtx.swapchainFormat;
 	}
-	// A multisampled colour source is resolved below. A multisampled depth
-	// source is still refused: that needs VK_KHR_depth_stencil_resolve inside a
-	// render pass, and no shipped content captures depth from an MSAA target.
+	// Both multisampled sources are resolved below: colour with
+	// vkCmdResolveImage, depth with a render-pass resolve
+	// (VK_Exec_ResolveDepthImage), which only fails on a device offering no
+	// depth resolve mode. The game's forward target is multisampled whenever
+	// r_multiSamples is on, and SSAO, motion blur and the cel ink all read
+	// depth from it, as OpenGL's resolving glBlitFramebuffer lets them.
+	const bool resolveDepthSource = copyDepth && sourceEntry != NULL
+		&& sourceEntry->samples != VK_SAMPLE_COUNT_1_BIT;
 	if ( sourceImage == VK_NULL_HANDLE
 			|| ( sourceEntry == NULL && !copyDepth && !vkCtx.swapchainTransferSrc )
 			|| ( sourceEntry != NULL && ( sourceEntry->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT ) == 0 )
-			|| ( sourceEntry != NULL && copyDepth
-				&& sourceEntry->samples != VK_SAMPLE_COUNT_1_BIT ) ) {
+			|| ( resolveDepthSource && VK_Exec_DepthResolveMode() == VK_RESOLVE_MODE_NONE ) ) {
 		return false;
 	}
 
@@ -4826,7 +4938,9 @@ bool VK_Exec_CopyRender( idImage *image, int x, int y, int width, int height,
 	}
 
 	VK_Exec_EndMainRendering();
-	if ( sourceEntry != NULL ) {
+	if ( resolveDepthSource ) {
+		// stays a depth attachment; the resolve pass reads it as one
+	} else if ( sourceEntry != NULL ) {
 		VK_Exec_TransitionImage( sourceEntry, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL );
 	} else if ( !copyDepth ) {
 		if ( !vkCtx.swapchainTransferSrc ) {
@@ -4879,6 +4993,20 @@ bool VK_Exec_CopyRender( idImage *image, int x, int y, int width, int height,
 	}
 
 	if ( copyDepth ) {
+		VkImage depthSource = sourceImage;
+		if ( resolveDepthSource ) {
+			vkImageEntry_t *scratch = VK_Image_AcquireDepthResolveScratch( sourceWidth,
+					sourceHeight, sourceFormat );
+			if ( scratch == NULL || !VK_Exec_ResolveDepthImage( sourceEntry, scratch,
+					(uint32_t)sourceWidth, (uint32_t)sourceHeight ) ) {
+				VK_Exec_TransitionImage( destination, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
+				VK_Exec_TransitionImage( sourceEntry, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL );
+				VK_Exec_BeginMainRendering( false );
+				return false;
+			}
+			VK_Exec_TransitionImage( scratch, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL );
+			depthSource = scratch->image;
+		}
 		if ( VK_Exec_DepthBlitSupported( sourceFormat ) ) {
 			// One flipped NEAREST blit reproduces the per-row copy's GL
 			// bottom-left orientation texel-exactly (identical format + NEAREST),
@@ -4899,7 +5027,7 @@ bool VK_Exec_CopyRender( idImage *image, int x, int y, int width, int height,
 			depthBlit.dstOffsets[ 1 ].x = width;
 			depthBlit.dstOffsets[ 1 ].y = height;
 			depthBlit.dstOffsets[ 1 ].z = 1;
-			vkCmdBlitImage( vkExec.cmd, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			vkCmdBlitImage( vkExec.cmd, depthSource, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
 					destination->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 					1, &depthBlit, VK_FILTER_NEAREST );
 		} else {
@@ -4932,7 +5060,7 @@ bool VK_Exec_CopyRender( idImage *image, int x, int y, int width, int height,
 				rows[ row ].extent.height = 1;
 				rows[ row ].extent.depth = 1;
 			}
-			vkCmdCopyImage( vkExec.cmd, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			vkCmdCopyImage( vkExec.cmd, depthSource, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
 					destination->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 					(uint32_t)height, rows );
 			Mem_Free( rows );
@@ -5307,6 +5435,217 @@ static bool VK_Exec_ResolveDepthImage( vkImageEntry_t *sourceDepth,
 	VK_Exec_TransitionImage( destinationDepth,
 			VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
 	return true;
+}
+
+/*
+====================
+VK_Exec_QueueStencilReadback
+
+The debug tools' stencil prints (RB_CountStencilBuffer for r_showLightCount 3
+and r_showShadowCount 2-4, RB_ScanStencilBuffer). OpenGL reads the stencil
+back on the spot with glReadPixels; a Vulkan frame cannot stall for that, so
+the active target's stencil is copied into a host-visible buffer here (a
+multisampled target resolves sample zero first, through the depth resolve
+scratch) and VK_Exec_PrintStencilReadbacks prints it after the slot's fence
+wait in VK_GuiExecutor_BeginFrame, a frame or two later.
+====================
+*/
+static const int VK_STENCIL_READBACKS_PER_SLOT = 4;
+
+typedef struct vkStencilReadback_s {
+	VkBuffer		buffer;
+	VmaAllocation	allocation;
+	void *			mapped;
+	VkDeviceSize	capacity;
+	int				width;
+	int				height;
+	int				mode;		// vkStencilReadbackMode_t; 0 when nothing is pending
+} vkStencilReadback_t;
+
+static vkStencilReadback_t vkStencilReadbacks[ VK_FRAMES_IN_FLIGHT ][ VK_STENCIL_READBACKS_PER_SLOT ];
+
+static void VK_Exec_ReleaseStencilReadbacks( void ) {
+	for ( int slot = 0; slot < VK_FRAMES_IN_FLIGHT; slot++ ) {
+		for ( int i = 0; i < VK_STENCIL_READBACKS_PER_SLOT; i++ ) {
+			vkStencilReadback_t &readback = vkStencilReadbacks[ slot ][ i ];
+			if ( readback.buffer != VK_NULL_HANDLE && vkCtx.allocator != NULL ) {
+				vmaDestroyBuffer( vkCtx.allocator, readback.buffer, readback.allocation );
+			}
+			memset( &readback, 0, sizeof( readback ) );
+		}
+	}
+}
+
+static void VK_Exec_PrintStencilReadbacks( int slot ) {
+	if ( slot < 0 || slot >= VK_FRAMES_IN_FLIGHT ) {
+		return;
+	}
+	for ( int i = 0; i < VK_STENCIL_READBACKS_PER_SLOT; i++ ) {
+		vkStencilReadback_t &readback = vkStencilReadbacks[ slot ][ i ];
+		if ( readback.mode == 0 ) {
+			continue;
+		}
+		vmaInvalidateAllocation( vkCtx.allocator, readback.allocation, 0, VK_WHOLE_SIZE );
+		VK_DebugTools_PrintStencilReadback( (const byte *)readback.mapped,
+				readback.width, readback.height, readback.mode );
+		readback.mode = 0;
+	}
+}
+
+// SAMPLE_ZERO on both aspects: every device supports it for depth and for
+// stencil, and one mode for both needs neither independentResolve property
+static bool VK_Exec_ResolveStencilImage( vkImageEntry_t *sourceDepth,
+		vkImageEntry_t *destinationDepth, uint32_t width, uint32_t height ) {
+	if ( sourceDepth == NULL || destinationDepth == NULL
+			|| sourceDepth->format != destinationDepth->format
+			|| sourceDepth->attachmentView == VK_NULL_HANDLE
+			|| destinationDepth->attachmentView == VK_NULL_HANDLE
+			|| destinationDepth->samples != VK_SAMPLE_COUNT_1_BIT ) {
+		return false;
+	}
+	VK_Exec_DepthResolveBarrier( sourceDepth, destinationDepth, true );
+
+	VkRenderingAttachmentInfo attachment;
+	memset( &attachment, 0, sizeof( attachment ) );
+	attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+	attachment.imageView = sourceDepth->attachmentView;
+	attachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+	attachment.resolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
+	attachment.resolveImageView = destinationDepth->attachmentView;
+	attachment.resolveImageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+	attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+	attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+	VkRenderingInfo renderingInfo;
+	memset( &renderingInfo, 0, sizeof( renderingInfo ) );
+	renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+	renderingInfo.renderArea.extent.width = width;
+	renderingInfo.renderArea.extent.height = height;
+	renderingInfo.layerCount = 1;
+	renderingInfo.pDepthAttachment = &attachment;
+	renderingInfo.pStencilAttachment = &attachment;
+	vkCmdBeginRendering( vkExec.cmd, &renderingInfo );
+	vkCmdEndRendering( vkExec.cmd );
+
+	VK_Exec_DepthResolveBarrier( sourceDepth, destinationDepth, false );
+	sourceDepth->everUploaded = true;
+	destinationDepth->everUploaded = true;
+	return true;
+}
+
+static void VK_Exec_CopyStencilToBuffer( VkImage image, VkBuffer buffer,
+		uint32_t width, uint32_t height ) {
+	VkBufferImageCopy copy;
+	memset( &copy, 0, sizeof( copy ) );
+	copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_STENCIL_BIT;
+	copy.imageSubresource.layerCount = 1;
+	copy.imageExtent.width = width;
+	copy.imageExtent.height = height;
+	copy.imageExtent.depth = 1;
+	vkCmdCopyImageToBuffer( vkExec.cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			buffer, 1, &copy );
+}
+
+bool VK_Exec_QueueStencilReadback( int mode ) {
+	if ( !VK_Exec_MainRenderingScopeOpen() || !VK_Exec_ActiveTargetHasStencil() ) {
+		return false;
+	}
+	const int slot = vkExec.frameSlot;
+	if ( slot < 0 || slot >= VK_FRAMES_IN_FLIGHT ) {
+		return false;
+	}
+	vkStencilReadback_t *readback = NULL;
+	for ( int i = 0; i < VK_STENCIL_READBACKS_PER_SLOT && readback == NULL; i++ ) {
+		if ( vkStencilReadbacks[ slot ][ i ].mode == 0 ) {
+			readback = &vkStencilReadbacks[ slot ][ i ];
+		}
+	}
+	vkImageEntry_t *depthEntry = vkExec.activeDepthEntry;
+	const uint32_t width = vkExec.activeExtent.width;
+	const uint32_t height = vkExec.activeExtent.height;
+	if ( readback == NULL || width == 0 || height == 0
+			|| ( depthEntry != NULL && depthEntry->samples == VK_SAMPLE_COUNT_1_BIT
+				&& ( depthEntry->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT ) == 0 ) ) {
+		return false;
+	}
+
+	// the slot's fence was waited on before this frame began recording, so a
+	// buffer this slot used last time is idle
+	const VkDeviceSize bytes = (VkDeviceSize)width * (VkDeviceSize)height;
+	if ( readback->capacity < bytes ) {
+		if ( readback->buffer != VK_NULL_HANDLE ) {
+			vmaDestroyBuffer( vkCtx.allocator, readback->buffer, readback->allocation );
+			readback->buffer = VK_NULL_HANDLE;
+			readback->allocation = NULL;
+			readback->mapped = NULL;
+			readback->capacity = 0;
+		}
+		VkBufferCreateInfo bci;
+		memset( &bci, 0, sizeof( bci ) );
+		bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+		bci.size = bytes;
+		bci.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+		VmaAllocationCreateInfo vaci;
+		memset( &vaci, 0, sizeof( vaci ) );
+		vaci.usage = VMA_MEMORY_USAGE_AUTO;
+		vaci.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+		VmaAllocationInfo allocationInfo;
+		memset( &allocationInfo, 0, sizeof( allocationInfo ) );
+		if ( vmaCreateBuffer( vkCtx.allocator, &bci, &vaci, &readback->buffer,
+				&readback->allocation, &allocationInfo ) != VK_SUCCESS ) {
+			readback->buffer = VK_NULL_HANDLE;
+			readback->allocation = NULL;
+			return false;
+		}
+		readback->mapped = allocationInfo.pMappedData;
+		readback->capacity = bytes;
+	}
+
+	VK_Exec_EndMainRendering();
+	bool copied = true;
+	if ( depthEntry == NULL ) {
+		VK_Exec_TransitionSwapchainDepth( VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+				VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL );
+		VK_Exec_CopyStencilToBuffer( vkCtx.depthImages[ slot ], readback->buffer, width, height );
+		VK_Exec_TransitionSwapchainDepth( VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+				VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL );
+	} else if ( depthEntry->samples == VK_SAMPLE_COUNT_1_BIT ) {
+		VK_Exec_TransitionImage( depthEntry, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL );
+		VK_Exec_CopyStencilToBuffer( depthEntry->image, readback->buffer, width, height );
+	} else {
+		vkImageEntry_t *scratch = VK_Image_AcquireDepthResolveScratch( (int)width, (int)height,
+				depthEntry->format );
+		copied = scratch != NULL && VK_Exec_ResolveStencilImage( depthEntry, scratch, width, height );
+		if ( copied ) {
+			VK_Exec_TransitionImage( scratch, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL );
+			VK_Exec_CopyStencilToBuffer( scratch->image, readback->buffer, width, height );
+		}
+	}
+	if ( copied ) {
+		VkBufferMemoryBarrier2 toHost;
+		memset( &toHost, 0, sizeof( toHost ) );
+		toHost.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
+		toHost.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+		toHost.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+		toHost.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+		toHost.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+		toHost.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		toHost.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		toHost.buffer = readback->buffer;
+		toHost.size = VK_WHOLE_SIZE;
+		VkDependencyInfo dep;
+		memset( &dep, 0, sizeof( dep ) );
+		dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+		dep.bufferMemoryBarrierCount = 1;
+		dep.pBufferMemoryBarriers = &toHost;
+		vkCmdPipelineBarrier2( vkExec.cmd, &dep );
+		readback->width = (int)width;
+		readback->height = (int)height;
+		readback->mode = mode;
+	}
+	VK_Exec_TransitionActiveTargetToAttachments();
+	VK_Exec_BeginMainRendering( false );
+	return copied;
 }
 
 bool VK_Exec_ResolveRenderTargets( idRenderTexture *sourceRenderTexture,
@@ -6522,6 +6861,186 @@ VkDescriptorSet VK_Exec_ImageDescriptor( unsigned int texnum, bool require2D ) {
 
 VkDescriptorSet VK_Exec_InteractionUniformSet( void ) {
 	return vkExec.uniformRingSets[ vkExec.frameSlot ];
+}
+
+/*
+====================
+VK_Exec_ExtraPipeline
+
+Pipelines for the passes that live outside this file: the full-screen post
+passes (vk_PostProcess.cpp), the scene overlay passes (vk_SceneEffects.cpp)
+and the debug tools (vk_DebugTools.cpp). All of them share the interaction
+layout: single-sampler sets 0-5, the dynamic uniform slice on set 6 and the
+128-byte push range. Cached per pass kind, blend state, vertex layout
+(vkExtraVertexLayout_t), VK_EXTRA_PIPELINE_* flags and current target.
+====================
+*/
+VkPipeline VK_Exec_ExtraPipeline( int kind, VkShaderModule vertModule,
+		VkShaderModule fragModule, int stateBits, int vertexLayout, int flags ) {
+	if ( vertModule == VK_NULL_HANDLE || fragModule == VK_NULL_HANDLE ) {
+		return VK_NULL_HANDLE;
+	}
+	const vkPipelineTarget_t target = VK_Exec_CurrentPipelineTarget();
+	for ( int i = 0; i < vkExec.numPostPipelines; ++i ) {
+		const vkPostPipeline_t &entry = vkExec.postPipelines[i];
+		if ( entry.kind == kind && entry.stateBits == stateBits
+				&& entry.vertexLayout == vertexLayout && entry.flags == flags
+				&& VK_Exec_PipelineTargetsMatch( entry.target, target ) ) {
+			return entry.pipeline;
+		}
+	}
+	if ( vkExec.numPostPipelines >= VK_MAX_POST_PIPELINES ) {
+		static bool warned = false;
+		if ( !warned ) {
+			warned = true;
+			common->Warning( "Vulkan: extra pipeline cache exhausted" );
+		}
+		return VK_NULL_HANDLE;
+	}
+
+	VkVertexInputBindingDescription binding;
+	VkVertexInputAttributeDescription attrs[ 6 ];
+	VkPipelineVertexInputStateCreateInfo vertexInput;
+	memset( &binding, 0, sizeof( binding ) );
+	memset( attrs, 0, sizeof( attrs ) );
+	memset( &vertexInput, 0, sizeof( vertexInput ) );
+	vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+	switch ( vertexLayout ) {
+		case VK_EXTRA_VERTEX_POSITION:
+			binding.stride = sizeof( idDrawVert );
+			binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+			attrs[ 0 ].location = 0;
+			attrs[ 0 ].format = VK_FORMAT_R32G32B32_SFLOAT;
+			attrs[ 0 ].offset = (uint32_t)offsetof( idDrawVert, xyz );
+			vertexInput.vertexBindingDescriptionCount = 1;
+			vertexInput.pVertexBindingDescriptions = &binding;
+			vertexInput.vertexAttributeDescriptionCount = 1;
+			vertexInput.pVertexAttributeDescriptions = attrs;
+			break;
+		case VK_EXTRA_VERTEX_DRAWVERT:
+			VK_Exec_InteractionVertexInput( binding, attrs, vertexInput );
+			break;
+		case VK_EXTRA_VERTEX_GUI:
+			binding.stride = sizeof( idDrawVert );
+			binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+			attrs[ 0 ].location = 0;
+			attrs[ 0 ].format = VK_FORMAT_R32G32B32_SFLOAT;
+			attrs[ 0 ].offset = (uint32_t)offsetof( idDrawVert, xyz );
+			attrs[ 1 ].location = 1;
+			attrs[ 1 ].format = VK_FORMAT_R8G8B8A8_UNORM;
+			attrs[ 1 ].offset = (uint32_t)offsetof( idDrawVert, color );
+			attrs[ 2 ].location = 2;
+			attrs[ 2 ].format = VK_FORMAT_R32G32_SFLOAT;
+			attrs[ 2 ].offset = (uint32_t)offsetof( idDrawVert, st );
+			vertexInput.vertexBindingDescriptionCount = 1;
+			vertexInput.pVertexBindingDescriptions = &binding;
+			vertexInput.vertexAttributeDescriptionCount = 3;
+			vertexInput.pVertexAttributeDescriptions = attrs;
+			break;
+		case VK_EXTRA_VERTEX_DEBUG:
+			// vkDebugVert_t: float xyzw[4] + byte rgba[4] + float st[2]
+			binding.stride = 28;
+			binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+			attrs[ 0 ].location = 0;
+			attrs[ 0 ].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+			attrs[ 0 ].offset = 0;
+			attrs[ 1 ].location = 1;
+			attrs[ 1 ].format = VK_FORMAT_R8G8B8A8_UNORM;
+			attrs[ 1 ].offset = 16;
+			attrs[ 2 ].location = 2;
+			attrs[ 2 ].format = VK_FORMAT_R32G32_SFLOAT;
+			attrs[ 2 ].offset = 20;
+			vertexInput.vertexBindingDescriptionCount = 1;
+			vertexInput.pVertexBindingDescriptions = &binding;
+			vertexInput.vertexAttributeDescriptionCount = 3;
+			vertexInput.pVertexAttributeDescriptions = attrs;
+			break;
+		default:
+			break;
+	}
+	VkPrimitiveTopology topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+	if ( flags & VK_EXTRA_PIPELINE_LINES ) {
+		topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+	} else if ( flags & VK_EXTRA_PIPELINE_POINTS ) {
+		topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+	}
+	const VkPipeline pipeline = VK_Exec_CreatePipeline( vertModule, fragModule,
+		&vertexInput, stateBits, vkExec.interactionPipelineLayout,
+		false, ( flags & VK_EXTRA_PIPELINE_COLOR_OFF ) != 0, target, false,
+		topology, ( flags & VK_EXTRA_PIPELINE_ALPHA_TO_COVERAGE ) != 0 );
+	if ( pipeline == VK_NULL_HANDLE ) {
+		return VK_NULL_HANDLE;
+	}
+	vkPostPipeline_t &entry = vkExec.postPipelines[ vkExec.numPostPipelines++ ];
+	entry.kind = kind;
+	entry.stateBits = stateBits;
+	entry.vertexLayout = vertexLayout;
+	entry.flags = flags;
+	entry.target = target;
+	entry.pipeline = pipeline;
+	return pipeline;
+}
+
+// full-screen passes: no vertex input, the vertex shader emits one covering
+// triangle
+VkPipeline VK_Exec_PostPipeline( int kind, VkShaderModule vertModule,
+		VkShaderModule fragModule, int stateBits ) {
+	return VK_Exec_ExtraPipeline( kind, vertModule, fragModule, stateBits,
+		VK_EXTRA_VERTEX_NONE, 0 );
+}
+
+// the target the executor is drawing into (NULL: the swapchain image)
+idRenderTexture *VK_Exec_ActiveRenderTexture( void ) {
+	return vkExec.activeRenderTexture;
+}
+
+bool VK_Exec_SetViewViewport( VkCommandBuffer cmd, const viewDef_t *viewDef, float maxDepth ) {
+	if ( cmd == VK_NULL_HANDLE || viewDef == NULL ) {
+		return false;
+	}
+	VkViewport viewport;
+	if ( !VK_BuildCanonicalViewport( viewport, (float)viewDef->viewport.x1,
+			(float)viewDef->viewport.y1,
+			(float)( viewDef->viewport.x2 - viewDef->viewport.x1 + 1 ),
+			(float)( viewDef->viewport.y2 - viewDef->viewport.y1 + 1 ),
+			(float)VK_Exec_ActiveFramebufferHeight(), 0.0f, maxDepth ) ) {
+		return false;
+	}
+	vkCmdSetViewport( cmd, 0, 1, &viewport );
+	return true;
+}
+
+bool VK_Exec_CaptureViewDepth( const viewDef_t *viewDef ) {
+	return backEnd.currentDepthCopied || VK_Exec_CaptureCurrentDepth( viewDef );
+}
+
+bool VK_Exec_BindTransientVertices( VkCommandBuffer cmd, const void *data, int bytes ) {
+	if ( cmd == VK_NULL_HANDLE || data == NULL || bytes <= 0 ) {
+		return false;
+	}
+	const int slot = vkExec.frameSlot;
+	const int offset = VK_Ring_Alloc( vkExec.vertexRings[ slot ], data, (size_t)bytes, 16 );
+	if ( offset < 0 ) {
+		return false;
+	}
+	const VkDeviceSize bindOffset = (VkDeviceSize)offset;
+	vkCmdBindVertexBuffers( cmd, 0, 1, &vkExec.vertexRings[ slot ].buffer, &bindOffset );
+	return true;
+}
+
+// VK_Exec_CurrentPipelineTarget().samples for passes outside this file
+bool VK_Exec_ActiveTargetMultisampled( void ) {
+	return VK_Exec_CurrentPipelineTarget().samples != VK_SAMPLE_COUNT_1_BIT;
+}
+
+void VK_Exec_TransitionImageForSampling( idImage *image ) {
+	if ( image == NULL ) {
+		return;
+	}
+	vkImageEntry_t *entry = VK_Image_GetEntry( image->GetDeviceHandle() );
+	if ( entry != NULL ) {
+		VK_Exec_TransitionImage( entry, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
+	}
 }
 
 // Streams one ordinary interaction block into the frame's uniform ring.
@@ -8936,6 +9455,46 @@ static void VK_Exec_DrawAmbientStages( const viewDef_t *viewDef, const drawSurf_
 			continue;
 		}
 
+		// soft particles (RB_TryDrawSoftParticleStage) fade against the
+		// prepass depth. Like OpenGL, the capture is taken even under an
+		// explicit offscreen chain, and a failed capture leaves the stage on
+		// the plain path with no fade.
+		bool softParticle = worldDepthState && drawSurf->decalColorCache == NULL
+				&& globalImages->currentDepthImage != NULL
+				&& VK_SoftParticleStageSupported( drawSurf, pStage );
+		if ( softParticle && !backEnd.currentDepthCopied ) {
+			if ( VK_Exec_CaptureCurrentDepth( viewDef ) ) {
+				VK_Exec_RestoreSurfaceState( cmd, viewDef, shader, worldDepthState );
+			} else {
+				softParticle = false;
+			}
+		}
+		VkDescriptorSet softDepthDescriptor = VK_NULL_HANDLE;
+		int softUniformOffset = -1;
+		if ( softParticle ) {
+			idImage *depthImage = globalImages->currentDepthImage;
+			const int depthWidth = depthImage->GetOpts().width;
+			const int depthHeight = depthImage->GetOpts().height;
+			softDepthDescriptor = VK_Exec_ImageDescriptor( depthImage->GetDeviceHandle(), true );
+			if ( depthWidth > 0 && depthHeight > 0 && softDepthDescriptor != VK_NULL_HANDLE ) {
+				vkSoftParticleBlock_t block;
+				memset( &block, 0, sizeof( block ) );
+				block.depthInfo[ 0 ] = viewDef->projectionMatrix[ 10 ];
+				block.depthInfo[ 1 ] = viewDef->projectionMatrix[ 14 ];
+				block.depthInfo[ 2 ] = idMath::ClampFloat( 1.0f, 512.0f, r_softParticleFadeDistance.GetFloat() );
+				block.depthInfo[ 3 ] = blendBits == ( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE ) ? 1.0f : 0.0f;
+				block.viewInfo[ 0 ] = (float)viewDef->viewport.x1;
+				block.viewInfo[ 1 ] = (float)viewDef->viewport.y1;
+				block.viewInfo[ 2 ] = 1.0f / (float)depthWidth;
+				block.viewInfo[ 3 ] = 1.0f / (float)depthHeight;
+				block.framebuffer[ 0 ] = (float)VK_Exec_ActiveFramebufferHeight();
+				softUniformOffset = VK_Exec_InteractionUniformAlloc( &block, sizeof( block ) );
+			}
+			if ( softUniformOffset < 0 ) {
+				softParticle = false;
+			}
+		}
+
 		// texture: cinematic or static image (RB_BindVariableStageImage contract)
 		idImage *stageImage = NULL;
 		if ( pStage->texture.cinematic != NULL ) {
@@ -9157,11 +9716,23 @@ static void VK_Exec_DrawAmbientStages( const viewDef_t *viewDef, const drawSurf_
 			pipeline = VK_Exec_GetGlassWarpPipeline( pStage->drawStateBits );
 		} else if ( screenStage ) {
 			pipeline = VK_GuiExecutor_GetScreenPipeline( pStage->drawStateBits, bakedDecalStageColor );
+		} else if ( softParticle ) {
+			pipeline = VK_Exec_ExtraPipeline( VK_EXTRA_KIND_SOFT_PARTICLE, vkExec.vertModule,
+					vkExec.softParticleFragModule, pStage->drawStateBits & ( GLS_SRCBLEND_BITS
+						| GLS_DSTBLEND_BITS | GLS_COLORMASK | GLS_ALPHAMASK ),
+					VK_EXTRA_VERTEX_GUI, 0 );
 		} else {
 			pipeline = VK_GuiExecutor_GetPipeline( pStage->drawStateBits, bakedDecalStageColor );
 		}
 		if ( pipeline == VK_NULL_HANDLE ) {
 			continue;
+		}
+		if ( softParticle ) {
+			static bool loggedFirstSoftParticleStage = false;
+			if ( !loggedFirstSoftParticleStage ) {
+				loggedFirstSoftParticleStage = true;
+				common->Printf( "Vulkan: first soft particle stage drew (%s)\n", shader->GetName() );
+			}
 		}
 
 		// one-shot bring-up evidence that a cube texgen actually drew
@@ -9197,12 +9768,19 @@ static void VK_Exec_DrawAmbientStages( const viewDef_t *viewDef, const drawSurf_
 						shader->GetName() );
 			}
 		}
-		const VkPipelineLayout stageLayout = bumpyReflectStage || glassStage
+		const VkPipelineLayout stageLayout = bumpyReflectStage || glassStage || softParticle
 				? vkExec.interactionPipelineLayout : vkExec.pipelineLayout;
 		vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline );
 		vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
 				stageLayout, 0, 1, &descriptor, 0, NULL );
-		if ( bumpyReflectStage ) {
+		if ( softParticle ) {
+			vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+					stageLayout, 1, 1, &softDepthDescriptor, 0, NULL );
+			const VkDescriptorSet uniformSet = VK_Exec_InteractionUniformSet();
+			const uint32_t dynamicOffset = (uint32_t)softUniformOffset;
+			vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+					stageLayout, 6, 1, &uniformSet, 1, &dynamicOffset );
+		} else if ( bumpyReflectStage ) {
 			vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
 					stageLayout, 1, 1, &bumpDescriptor, 0, NULL );
 			const VkDescriptorSet uniformSet = VK_Exec_InteractionUniformSet();
@@ -11147,6 +11725,10 @@ void VK_GuiExecutor_Draw3DView( const viewDef_t *viewDef ) {
 
 	backEnd.viewDef = (viewDef_t *)viewDef;
 
+	// r_showOverDraw swaps the view's surface list and materials before the
+	// walk, as RB_DrawView does ahead of RB_STD_DrawView
+	RB_ShowOverdraw();
+
 	VkCommandBuffer cmd = vkExec.cmd;
 	const int slot = vkExec.frameSlot;
 
@@ -11250,174 +11832,200 @@ void VK_GuiExecutor_Draw3DView( const viewDef_t *viewDef ) {
 	VkDescriptorSet depthFillBoundSet = VK_NULL_HANDLE;
 
 	// ---- pass 1: depth fill (RB_STD_FillDepthBuffer contract) ----
-	vkCmdSetDepthTestEnable( cmd, VK_TRUE );
-	vkCmdSetDepthWriteEnable( cmd, VK_TRUE );
-	vkCmdSetDepthCompareOp( cmd, VK_COMPARE_OP_LESS_OR_EQUAL );
-	vkCmdSetDepthBiasEnable( cmd, VK_FALSE );
-	// the GL fill runs under RB_BeginDrawingView's front-sided cull
-	vkCmdSetFrontFace( cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE );
-	vkCmdSetCullMode( cmd, viewDef->isMirror ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_FRONT_BIT );
+	// SSAO and the cel world ink want depth snapshots of part of the scene
+	// (RB_CaptureSSAOWorldDepthImage, RB_CaptureCelWorldDepthImage). Rather
+	// than a separate fill and clear, the fill draws those surfaces first
+	// and vk_PostProcess.cpp copies depth between the phases.
+	const int worldDepthCaptures = VK_PostProcess_WorldDepthCaptures( viewDef );
+	int fillPhaseDrawn[ 3 ] = { 0, 0, 0 };
+	for ( int fillPhase = worldDepthCaptures != 0 ? 0 : 2; fillPhase < 3; fillPhase++ ) {
+		vkCmdSetDepthTestEnable( cmd, VK_TRUE );
+		vkCmdSetDepthWriteEnable( cmd, VK_TRUE );
+		vkCmdSetDepthCompareOp( cmd, VK_COMPARE_OP_LESS_OR_EQUAL );
+		vkCmdSetDepthBiasEnable( cmd, VK_FALSE );
+		// the GL fill runs under RB_BeginDrawingView's front-sided cull
+		vkCmdSetFrontFace( cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE );
+		vkCmdSetCullMode( cmd, viewDef->isMirror ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_FRONT_BIT );
 
-	for ( int surfNum = 0; surfNum < numDrawSurfs; surfNum++ ) {
-		const drawSurf_t *drawSurf = drawSurfs[ surfNum ];
-		const idMaterial *shader = drawSurf->material;
-		const srfTriangles_t *tri = drawSurf->geo;
-		if ( shader == NULL || tri == NULL || !shader->IsDrawn() ) {
-			continue;
-		}
-		if ( tri->numIndexes <= 0 || tri->indexes == NULL ) {
-			continue;
-		}
-		if ( shader->Coverage() == MC_TRANSLUCENT ) {
-			continue;	// translucents neither write nor test here
-		}
-		if ( tri->ambientCache == NULL ) {
-			continue;
-		}
-		const float *regs = drawSurf->shaderRegisters;
-
-		// if all stages are conditioned off, skip
-		int stage;
-		const int stageCount = shader->GetNumStages();
-		for ( stage = 0; stage < stageCount; stage++ ) {
-			const shaderStage_t *pStage = shader->GetStage( stage );
-			if ( regs == NULL || regs[ pStage->conditionRegister ] != 0 ) {
-				break;
+		for ( int surfNum = 0; surfNum < numDrawSurfs; surfNum++ ) {
+			const drawSurf_t *drawSurf = drawSurfs[ surfNum ];
+			const idMaterial *shader = drawSurf->material;
+			const srfTriangles_t *tri = drawSurf->geo;
+			if ( shader == NULL || tri == NULL || !shader->IsDrawn() ) {
+				continue;
 			}
-		}
-		if ( stage == stageCount ) {
-			continue;
-		}
-
-		if ( !VK_Exec_BindTriGeometry( cmd, slot, tri ) ) {
-			continue;
-		}
-		VK_Exec_SetSurfScissor( cmd, viewDef, drawSurf, fbHeight );
-
-		// space change: rebuild the MVP (depth hacks included) and the
-		// weapon depth-range window
-		if ( drawSurf->space != currentSpace ) {
-			currentSpace = drawSurf->space;
-			VK_BuildSurfMVP( viewDef, drawSurf, mvp );
-			const bool wantWeaponRange = drawSurf->space->weaponDepthHack;
-			if ( wantWeaponRange != weaponDepthRange ) {
-				weaponDepthRange = wantWeaponRange;
-				viewport.maxDepth = wantWeaponRange ? 0.5f : 1.0f;
-				vkCmdSetViewport( cmd, 0, 1, &viewport );
+			if ( worldDepthCaptures != 0
+					&& VK_PostProcess_DepthFillPhase( drawSurf, worldDepthCaptures ) != fillPhase ) {
+				continue;
 			}
-		}
+			if ( tri->numIndexes <= 0 || tri->indexes == NULL ) {
+				continue;
+			}
+			if ( shader->Coverage() == MC_TRANSLUCENT ) {
+				continue;	// translucents neither write nor test here
+			}
+			if ( tri->ambientCache == NULL ) {
+				continue;
+			}
+			const float *regs = drawSurf->shaderRegisters;
+			// RB_T_FillDepthBuffer: alpha-tested stages of a perforated
+			// surface also mask per-sample coverage on an MSAA target, so
+			// the later EQUAL passes inherit the dithered edge
+			vkExec.alphaToCoverageSurface = VK_Exec_UseAlphaToCoverage( shader );
 
-		// polygon offset per material
-		if ( shader->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
-			vkCmdSetDepthBiasEnable( cmd, VK_TRUE );
-			vkCmdSetDepthBias( cmd, r_offsetUnits.GetFloat() * shader->GetPolygonOffset(), 0.0f, r_offsetFactor.GetFloat() );
-		}
-
-		// subviews down-modulate instead of drawing black
-		const bool isSubview = shader->GetSort() == SS_SUBVIEW;
-		vkGuiPushConstants_t push;
-		memcpy( push.mvp, mvp, sizeof( push.mvp ) );
-		push.stageColor[ 0 ] = push.stageColor[ 1 ] = push.stageColor[ 2 ] = isSubview ? 1.0f : 0.0f;
-		push.stageColor[ 3 ] = 1.0f;
-		push.texMatrixS[ 0 ] = 1.0f; push.texMatrixS[ 1 ] = 0.0f; push.texMatrixS[ 2 ] = 0.0f; push.texMatrixS[ 3 ] = 0.0f;
-		push.texMatrixT[ 0 ] = 0.0f; push.texMatrixT[ 1 ] = 1.0f; push.texMatrixT[ 2 ] = 0.0f; push.texMatrixT[ 3 ] = 0.0f;
-		push.params[ 0 ] = 0.0f;	// SVC_IGNORE
-		push.params[ 1 ] = 0.0f;	// alpha test off (per-stage below)
-		push.params[ 2 ] = 0.0f;
-		push.params[ 3 ] = 0.0f;	// no texmatrix
-
-		const int fillBlendBits = isSubview ? ( GLS_SRCBLEND_DST_COLOR | GLS_DSTBLEND_ZERO ) : 0;
-
-		bool drawSolid = shader->Coverage() == MC_OPAQUE;
-
-		if ( shader->Coverage() == MC_PERFORATED ) {
-			// alpha-tested stages punch holes; if none draws, fall back solid
-			bool didDraw = false;
+			// if all stages are conditioned off, skip
+			int stage;
+			const int stageCount = shader->GetNumStages();
 			for ( stage = 0; stage < stageCount; stage++ ) {
 				const shaderStage_t *pStage = shader->GetStage( stage );
-				if ( !pStage->hasAlphaTest ) {
-					continue;
+				if ( regs == NULL || regs[ pStage->conditionRegister ] != 0 ) {
+					break;
 				}
-				if ( regs != NULL && regs[ pStage->conditionRegister ] == 0 ) {
-					continue;
+			}
+			if ( stage == stageCount ) {
+				continue;
+			}
+
+			if ( !VK_Exec_BindTriGeometry( cmd, slot, tri ) ) {
+				continue;
+			}
+			fillPhaseDrawn[ fillPhase ]++;
+			VK_Exec_SetSurfScissor( cmd, viewDef, drawSurf, fbHeight );
+
+			// space change: rebuild the MVP (depth hacks included) and the
+			// weapon depth-range window
+			if ( drawSurf->space != currentSpace ) {
+				currentSpace = drawSurf->space;
+				VK_BuildSurfMVP( viewDef, drawSurf, mvp );
+				const bool wantWeaponRange = drawSurf->space->weaponDepthHack;
+				if ( wantWeaponRange != weaponDepthRange ) {
+					weaponDepthRange = wantWeaponRange;
+					viewport.maxDepth = wantWeaponRange ? 0.5f : 1.0f;
+					vkCmdSetViewport( cmd, 0, 1, &viewport );
 				}
-				didDraw = true;
-				const float stageAlpha = regs != NULL ? regs[ pStage->color.registers[ 3 ] ] : 1.0f;
-				if ( stageAlpha <= 0.0f ) {
-					continue;
-				}
-				if ( pStage->texture.image == NULL || pStage->texture.texgen != TG_EXPLICIT ) {
-					continue;
-				}
-				VkDescriptorSet stageDescriptor = VK_GuiExecutor_GetImageDescriptor( pStage->texture.image->GetDeviceHandle() );
-				if ( stageDescriptor == VK_NULL_HANDLE ) {
-					continue;
-				}
-				// per-stage polygon offset (RB_PrepareStageTexturing contract)
-				const bool stagePolygonOffset = pStage->privatePolygonOffset != 0.0f;
-				if ( stagePolygonOffset ) {
-					vkCmdSetDepthBiasEnable( cmd, VK_TRUE );
-					vkCmdSetDepthBias( cmd, r_offsetUnits.GetFloat() * pStage->privatePolygonOffset, 0.0f, r_offsetFactor.GetFloat() );
-				}
-				push.stageColor[ 3 ] = stageAlpha;
-				push.params[ 1 ] = VK_Exec_AlphaTestModeValue( pStage );
-				push.params[ 2 ] = regs != NULL ? regs[ pStage->alphaTestRegister ] : 0.5f;
-				VK_Exec_SetPushTextureMatrix( pStage, regs, push );
-				VkPipeline pipeline = VK_GuiExecutor_GetPipeline( fillBlendBits );
-				if ( pipeline == VK_NULL_HANDLE ) {
-					continue;
-				}
-				if ( pipeline != depthFillBoundPipeline ) {
-					vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline );
-					depthFillBoundPipeline = pipeline;
-				}
-				if ( stageDescriptor != depthFillBoundSet ) {
-					vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkExec.pipelineLayout, 0, 1, &stageDescriptor, 0, NULL );
-					depthFillBoundSet = stageDescriptor;
-				}
-				vkCmdPushConstants( cmd, vkExec.pipelineLayout,
-						VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof( push ), &push );
-				VK_Device_CountDrawIndexed( (int)( tri->numIndexes ), (int)( tri->numVerts ) );
-				vkCmdDrawIndexed( cmd, (uint32_t)tri->numIndexes, 1, 0, 0, 0 );
-				if ( stagePolygonOffset ) {
-					if ( shader->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
-						vkCmdSetDepthBias( cmd, r_offsetUnits.GetFloat() * shader->GetPolygonOffset(), 0.0f, r_offsetFactor.GetFloat() );
-					} else {
-						vkCmdSetDepthBiasEnable( cmd, VK_FALSE );
+			}
+
+			// polygon offset per material
+			if ( shader->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
+				vkCmdSetDepthBiasEnable( cmd, VK_TRUE );
+				vkCmdSetDepthBias( cmd, r_offsetUnits.GetFloat() * shader->GetPolygonOffset(), 0.0f, r_offsetFactor.GetFloat() );
+			}
+
+			// subviews down-modulate instead of drawing black
+			const bool isSubview = shader->GetSort() == SS_SUBVIEW;
+			vkGuiPushConstants_t push;
+			memcpy( push.mvp, mvp, sizeof( push.mvp ) );
+			push.stageColor[ 0 ] = push.stageColor[ 1 ] = push.stageColor[ 2 ] = isSubview ? 1.0f : 0.0f;
+			push.stageColor[ 3 ] = 1.0f;
+			push.texMatrixS[ 0 ] = 1.0f; push.texMatrixS[ 1 ] = 0.0f; push.texMatrixS[ 2 ] = 0.0f; push.texMatrixS[ 3 ] = 0.0f;
+			push.texMatrixT[ 0 ] = 0.0f; push.texMatrixT[ 1 ] = 1.0f; push.texMatrixT[ 2 ] = 0.0f; push.texMatrixT[ 3 ] = 0.0f;
+			push.params[ 0 ] = 0.0f;	// SVC_IGNORE
+			push.params[ 1 ] = 0.0f;	// alpha test off (per-stage below)
+			push.params[ 2 ] = 0.0f;
+			push.params[ 3 ] = 0.0f;	// no texmatrix
+
+			const int fillBlendBits = isSubview ? ( GLS_SRCBLEND_DST_COLOR | GLS_DSTBLEND_ZERO ) : 0;
+
+			bool drawSolid = shader->Coverage() == MC_OPAQUE;
+
+			if ( shader->Coverage() == MC_PERFORATED ) {
+				// alpha-tested stages punch holes; if none draws, fall back solid
+				bool didDraw = false;
+				for ( stage = 0; stage < stageCount; stage++ ) {
+					const shaderStage_t *pStage = shader->GetStage( stage );
+					if ( !pStage->hasAlphaTest ) {
+						continue;
 					}
+					if ( regs != NULL && regs[ pStage->conditionRegister ] == 0 ) {
+						continue;
+					}
+					didDraw = true;
+					const float stageAlpha = regs != NULL ? regs[ pStage->color.registers[ 3 ] ] : 1.0f;
+					if ( stageAlpha <= 0.0f ) {
+						continue;
+					}
+					if ( pStage->texture.image == NULL || pStage->texture.texgen != TG_EXPLICIT ) {
+						continue;
+					}
+					VkDescriptorSet stageDescriptor = VK_GuiExecutor_GetImageDescriptor( pStage->texture.image->GetDeviceHandle() );
+					if ( stageDescriptor == VK_NULL_HANDLE ) {
+						continue;
+					}
+					// per-stage polygon offset (RB_PrepareStageTexturing contract)
+					const bool stagePolygonOffset = pStage->privatePolygonOffset != 0.0f;
+					if ( stagePolygonOffset ) {
+						vkCmdSetDepthBiasEnable( cmd, VK_TRUE );
+						vkCmdSetDepthBias( cmd, r_offsetUnits.GetFloat() * pStage->privatePolygonOffset, 0.0f, r_offsetFactor.GetFloat() );
+					}
+					push.stageColor[ 3 ] = stageAlpha;
+					push.params[ 1 ] = VK_Exec_AlphaTestModeValue( pStage );
+					push.params[ 2 ] = regs != NULL ? regs[ pStage->alphaTestRegister ] : 0.5f;
+					VK_Exec_SetPushTextureMatrix( pStage, regs, push );
+					VkPipeline pipeline = VK_GuiExecutor_GetPipeline( fillBlendBits );
+					if ( pipeline == VK_NULL_HANDLE ) {
+						continue;
+					}
+					if ( pipeline != depthFillBoundPipeline ) {
+						vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline );
+						depthFillBoundPipeline = pipeline;
+					}
+					if ( stageDescriptor != depthFillBoundSet ) {
+						vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkExec.pipelineLayout, 0, 1, &stageDescriptor, 0, NULL );
+						depthFillBoundSet = stageDescriptor;
+					}
+					vkCmdPushConstants( cmd, vkExec.pipelineLayout,
+							VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof( push ), &push );
+					VK_Device_CountDrawIndexed( (int)( tri->numIndexes ), (int)( tri->numVerts ) );
+					vkCmdDrawIndexed( cmd, (uint32_t)tri->numIndexes, 1, 0, 0, 0 );
+					if ( stagePolygonOffset ) {
+						if ( shader->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
+							vkCmdSetDepthBias( cmd, r_offsetUnits.GetFloat() * shader->GetPolygonOffset(), 0.0f, r_offsetFactor.GetFloat() );
+						} else {
+							vkCmdSetDepthBiasEnable( cmd, VK_FALSE );
+						}
+					}
+					// restore solid-fill push defaults for the next stage
+					push.stageColor[ 3 ] = 1.0f;
+					push.params[ 1 ] = 0.0f;
+					push.params[ 2 ] = 0.0f;
+					push.params[ 3 ] = 0.0f;
 				}
-				// restore solid-fill push defaults for the next stage
-				push.stageColor[ 3 ] = 1.0f;
-				push.params[ 1 ] = 0.0f;
-				push.params[ 2 ] = 0.0f;
-				push.params[ 3 ] = 0.0f;
+				if ( !didDraw ) {
+					drawSolid = true;
+				}
 			}
-			if ( !didDraw ) {
-				drawSolid = true;
+
+			if ( drawSolid ) {
+				VkDescriptorSet whiteDescriptor = VK_GuiExecutor_GetImageDescriptor( globalImages->whiteImage->GetDeviceHandle() );
+				VkPipeline pipeline = VK_GuiExecutor_GetPipeline( fillBlendBits );
+				if ( whiteDescriptor != VK_NULL_HANDLE && pipeline != VK_NULL_HANDLE ) {
+					if ( pipeline != depthFillBoundPipeline ) {
+						vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline );
+						depthFillBoundPipeline = pipeline;
+					}
+					if ( whiteDescriptor != depthFillBoundSet ) {
+						vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkExec.pipelineLayout, 0, 1, &whiteDescriptor, 0, NULL );
+						depthFillBoundSet = whiteDescriptor;
+					}
+					vkCmdPushConstants( cmd, vkExec.pipelineLayout,
+							VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof( push ), &push );
+					VK_Device_CountDrawIndexed( (int)( tri->numIndexes ), (int)( tri->numVerts ) );
+					vkCmdDrawIndexed( cmd, (uint32_t)tri->numIndexes, 1, 0, 0, 0 );
+				}
+			}
+
+			if ( shader->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
+				vkCmdSetDepthBiasEnable( cmd, VK_FALSE );
 			}
 		}
-
-		if ( drawSolid ) {
-			VkDescriptorSet whiteDescriptor = VK_GuiExecutor_GetImageDescriptor( globalImages->whiteImage->GetDeviceHandle() );
-			VkPipeline pipeline = VK_GuiExecutor_GetPipeline( fillBlendBits );
-			if ( whiteDescriptor != VK_NULL_HANDLE && pipeline != VK_NULL_HANDLE ) {
-				if ( pipeline != depthFillBoundPipeline ) {
-					vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline );
-					depthFillBoundPipeline = pipeline;
-				}
-				if ( whiteDescriptor != depthFillBoundSet ) {
-					vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkExec.pipelineLayout, 0, 1, &whiteDescriptor, 0, NULL );
-					depthFillBoundSet = whiteDescriptor;
-				}
-				vkCmdPushConstants( cmd, vkExec.pipelineLayout,
-						VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof( push ), &push );
-				VK_Device_CountDrawIndexed( (int)( tri->numIndexes ), (int)( tri->numVerts ) );
-				vkCmdDrawIndexed( cmd, (uint32_t)tri->numIndexes, 1, 0, 0, 0 );
-			}
-		}
-
-		if ( shader->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
-			vkCmdSetDepthBiasEnable( cmd, VK_FALSE );
+		vkExec.alphaToCoverageSurface = false;
+		if ( fillPhase < 2 ) {
+			// the copy restarts rendering at the 2D baseline; the next phase
+			// re-latches the fill state, the space and the bound objects
+			VK_PostProcess_CaptureWorldDepth( viewDef, fillPhase, worldDepthCaptures, fillPhaseDrawn );
+			currentSpace = NULL;
+			depthFillBoundPipeline = VK_NULL_HANDLE;
+			depthFillBoundSet = VK_NULL_HANDLE;
 		}
 	}
 
@@ -11499,6 +12107,12 @@ void VK_GuiExecutor_Draw3DView( const viewDef_t *viewDef ) {
 		// space/depth-range state and exits at maxDepth 1.0 with depth
 		// bias off; restart the walk baseline like the interaction pass.
 		if ( pass == 1 ) {
+			// ---- light grid, player visibility effects, cel shells ----
+			// RB_STD_DrawView draws them between the pre-fog material
+			// passes and the fog (vk_SceneEffects.cpp)
+			if ( VK_SceneEffects_DrawPreFog( viewDef, processed ) ) {
+				backEnd.currentRenderCopied = false;
+			}
 			const bool sharedFogBlendOwned =
 				!sceneScaleState.active && r_rendererSharedWorldFogBlend.GetBool()
 				&& VK_ClassicFogBlend_Preflight( viewDef );
@@ -11510,6 +12124,18 @@ void VK_GuiExecutor_Draw3DView( const viewDef_t *viewDef ) {
 			// Fog changes the framebuffer after any earlier lazy capture.
 			backEnd.currentRenderCopied = false;
 			backEnd.currentDepthCopied = false;
+			currentSpace = NULL;
+			weaponDepthRange = false;
+			viewport.maxDepth = 1.0f;
+			vkCmdSetViewport( cmd, 0, 1, &viewport );
+		}
+		// ---- SSAO, motion blur, bloom/tone map, cel world ink ----
+		// RB_STD_DrawView runs them after the post-fog passes and before
+		// the SS_POST_PROCESS surfaces, whatever r_skipAmbient says. They
+		// draw through their own viewports, and the post surfaces must
+		// capture the result rather than an earlier _currentRender.
+		if ( pass == 2 && VK_PostProcess_DrawSceneEffects( viewDef ) ) {
+			backEnd.currentRenderCopied = false;
 			currentSpace = NULL;
 			weaponDepthRange = false;
 			viewport.maxDepth = 1.0f;
@@ -11658,7 +12284,11 @@ void VK_GuiExecutor_Draw3DView( const viewDef_t *viewDef ) {
 				}
 
 				vkCmdSetDepthTestEnable( cmd, VK_TRUE );
+				// RB_STD_T_RenderShaderPasses brackets every ambient stage
+				// of a perforated surface with alpha-to-coverage
+				vkExec.alphaToCoverageSurface = VK_Exec_UseAlphaToCoverage( shader );
 				VK_Exec_DrawAmbientStages( viewDef, drawSurf, tri, mvp, true );
+				vkExec.alphaToCoverageSurface = false;
 
 				if ( shader->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
 					vkCmdSetDepthBiasEnable( cmd, VK_FALSE );
@@ -11693,6 +12323,12 @@ void VK_GuiExecutor_Draw3DView( const viewDef_t *viewDef ) {
 	// stream. Consume its Raven controller state only after the complete scene
 	// is available, while the world depth attachment is still intact.
 	VK_Exec_DrawRVSpecialEffects( viewDef );
+
+	// RB_STD_DrawView closes the world with the underwater view and then the
+	// debug tools, both over the finished scene (vk_PostProcess.cpp,
+	// vk_DebugTools.cpp)
+	VK_PostProcess_DrawUnderwater( viewDef );
+	VK_DebugTools_DrawView( viewDef );
 
 	// leave 2D-friendly state for a following HUD view
 	if ( weaponDepthRange ) {

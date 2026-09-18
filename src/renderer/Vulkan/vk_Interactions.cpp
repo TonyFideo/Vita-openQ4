@@ -60,6 +60,7 @@
 
 #include "../tr_local.h"
 #include "../Model_local.h"
+#include "../CelShading.h"
 #include "../ClassicInteractionDomain.h"
 #include "../ClassicFogBlendDomain.h"
 #include "../MaterialResourceTable.h"
@@ -144,8 +145,8 @@ typedef struct vkInteractionPush_s {
 	float			d[ 4 ];
 } vkInteractionPush_t;
 
-// std140 mirror of the set-6 InteractionBlock (15 vec4 = 240 bytes,
-// inside the 256B ring slice)
+// std140 mirror of the set-6 InteractionBlock (16 vec4 = 256 bytes, the
+// whole ring slice)
 typedef struct vkInteractionBlock_s {
 	float			localLightOrigin[ 4 ];
 	float			localViewOrigin[ 4 ];
@@ -162,6 +163,7 @@ typedef struct vkInteractionBlock_s {
 	float			diffuseColor[ 4 ];
 	float			specularColor[ 4 ];
 	float			flatDiffuseParams[ 4 ];
+	float			celParams[ 4 ];		// RB_SetCelInteractionUniform; zero = no banding
 } vkInteractionBlock_t;
 
 // std140 mirror of the projected set-7 ShadowBlock (29 vec4 = 464 bytes in
@@ -216,8 +218,8 @@ static_assert( sizeof( vkShadowBlock_t ) == 480,
 		"projected shadow std140 block must remain 30 vec4s" );
 static_assert( sizeof( vkPointShadowBlock_t ) == 128,
 		"point shadow std140 block must remain 8 vec4s" );
-static_assert( sizeof( vkInteractionBlock_t ) == 240,
-		"interaction std140 block must remain 15 vec4s" );
+static_assert( sizeof( vkInteractionBlock_t ) == 256,
+		"interaction std140 block must remain 16 vec4s" );
 static_assert( sizeof( vkShadowBlock_t ) <= 512 &&
 		sizeof( vkPointShadowBlock_t ) <= 512,
 		"set-7 shadow blocks must fit the fixed 512-byte descriptor range" );
@@ -2124,6 +2126,13 @@ static void VK_SetDrawInteraction( const shaderStage_t *surfaceStage, const floa
 	}
 }
 
+// for the light-grid pass (vk_SceneEffects.cpp), which picks its albedo the
+// same way
+void VK_Interactions_SetDrawInteraction( const shaderStage_t *surfaceStage, const float *surfaceRegs,
+		idImage **image, idVec4 matrix[2], float color[4] ) {
+	VK_SetDrawInteraction( surfaceStage, surfaceRegs, image, matrix, color );
+}
+
 /*
 ====================
 VK_PackedPBRInteraction
@@ -2332,6 +2341,12 @@ static void VK_DrawSingleInteractionMode( const drawInteraction_t *din,
 	memcpy( block.diffuseColor, din->diffuseColor.ToFloatPtr(), sizeof( block.diffuseColor ) );
 	memcpy( block.specularColor, din->specularColor.ToFloatPtr(), sizeof( block.specularColor ) );
 	memcpy( block.flatDiffuseParams, din->flatDiffuseParams.ToFloatPtr(), sizeof( block.flatDiffuseParams ) );
+	// cel banding is decided per surface (RB_SetCelInteractionUniform)
+	const bool celBanded = din->surf != NULL && R_CelShadingSurfaceActive( din->surf );
+	block.celParams[ 0 ] = celBanded ? 1.0f : 0.0f;
+	block.celParams[ 1 ] = (float)R_CelBandCount();
+	block.celParams[ 2 ] = celBanded && r_celShadingSpecular.GetBool() ? 1.0f : 0.0f;
+	block.celParams[ 3 ] = celBanded ? R_CelBandSoftness() : 0.0f;
 
 	const int uboOffset = VK_Exec_InteractionUniformAlloc( &block, sizeof( block ) );
 	if ( uboOffset < 0 ) {

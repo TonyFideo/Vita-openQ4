@@ -152,9 +152,8 @@ crossing, and can still hit geometry or actors inside the pool. A moving project
 for local bubbles while it is submerged. A hitscan shot draws a one-shot bubble wake over only the
 part of the ray inside the volume, even when both its muzzle and eventual hit are in air.
 
-The effect needs the OpenGL renderer. On Vulkan — which supports only a fixed set of material
-programs, not arbitrary shaders — the game falls back to a flat colour wash so you still know you
-are under something. Setting `r_underwater 0` gives you the same fallback everywhere.
+OpenGL and Vulkan both draw the effect. Setting `r_underwater 0` replaces it with a flat colour
+wash, so you still know you are under something.
 
 ## A liquid volume without a brush
 

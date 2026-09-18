@@ -130,16 +130,19 @@ with the supported OpenGL renderer and the experimental Vulkan renderer.
 
 openQ4 renders with **OpenGL by default on every platform**, and OpenGL is the
 only release-supported renderer. A **Vulkan renderer is included as an
-experimental opt-in**. It draws the stock game: world and model materials,
-including the stock heat-haze, glass, water, and other program effects,
-interaction lighting, stencil and mapped shadows, fog, decals, GUIs, and
-cinematics. On the development machine (an NVIDIA RTX 4060 laptop on Windows)
-it runs clean under the Vulkan validation layers, and in the recorded runs
-there it was faster than OpenGL. It stays experimental because the features
-listed under [What Vulkan does not do yet](#what-vulkan-does-not-do-yet) have
-no Vulkan version, it has been tried on very few GPUs and drivers, and no
-automated test runs it on every change. OpenGL remains the recommended renderer
-for normal play.
+experimental opt-in**. It draws the stock game with OpenGL's effects: world
+and model materials, including the stock heat-haze, glass, water, and other
+program effects, interaction lighting, baked light grids, stencil and mapped
+shadows, fog, decals, soft particles, GUIs, and cinematics, plus brightness
+and gamma, MSAA alpha-to-coverage, the classic post-processing chain, cel
+shading, the underwater view, multiplayer player outlines, and the `r_show*`
+debug views. On the development machine (an NVIDIA RTX 4060 laptop on
+Windows) it runs clean under the Vulkan validation layers. Runs recorded there
+before soft particles and alpha-to-coverage reached Vulkan had it faster than
+OpenGL; it has not been timed since. It stays experimental because it has been
+tried on very few GPUs and drivers, no automated test runs it on every change,
+and the gaps under [What Vulkan does not do yet](#what-vulkan-does-not-do-yet)
+remain. OpenGL remains the recommended renderer for normal play.
 
 | Setting | Default | What it does |
 |---|---:|---|
@@ -180,28 +183,19 @@ Notes:
 
 ### What Vulkan does not do yet
 
-These OpenGL features have no Vulkan version yet. Their settings are accepted
-but have no effect on Vulkan, usually without any warning:
-
-- **Brightness and gamma** (`r_brightness`, `r_gamma`, and the brightness
-  slider in Settings).
-- **Baked light grids** (`r_useLightGrid`). openQ4 ships them for 49
-  multiplayer maps and `game/airdefense2`; on Vulkan those maps lose that baked
-  indirect light.
-- **Soft particles** (`r_softParticles`). Particles keep hard edges where they
-  cross walls and floors.
-- **MSAA alpha-to-coverage** (`r_msaaAlphaToCoverage`), so grates, fences, and
-  foliage keep jagged edges with multisampling on.
-- The **classic post-processing chain**: SSAO, bloom, HDR tone mapping and
-  auto-exposure, motion blur, and the CRT effect. SMAA, temporal AA, and the
-  screen-space lighting previews do work on Vulkan.
-- **Multiplayer player outlines, rim lighting, and bright skins**, and **cel
-  shading**.
-- Most `r_show*` **debug views** and debug drawing from game code. The
-  shadow-map debug tools do work.
 - **Custom material programs.** The stock ARB and GLSL program families are
   implemented; any other program, such as a mod's own shader, is skipped and
   logged.
+- **HDR auto-exposure and the float scene target** (`r_hdrAutoExposure`,
+  `r_hdrSceneTarget`). OpenGL only uses them with its opt-in modern executor,
+  which has no Vulkan version. The classic post-processing chain, which both
+  renderers use by default, ignores them on either.
+- **Pixel readbacks in the debug views.** A Vulkan frame cannot stop halfway
+  to read pixels back, so the overdraw averages that `r_showLightCount 3` and
+  `r_showShadowCount 2` to `4` print arrive a frame or two late, and
+  `r_showIntensity` and `r_showDepth` recolour a copy of the view instead.
+  `r_showDepth` shows depth as grey, where OpenGL writes the raw depth bits as
+  colours.
 
 ### Vulkan on macOS (through MoltenVK)
 

@@ -55,6 +55,10 @@ bool	VK_Image_MakeDepthCopyTarget( idImage *image, int width, int height,
 // a multisampled scene target before the format-converting feedback blit.
 vkImageEntry_t *VK_Image_AcquireResolveScratch( int width, int height,
 			VkFormat format );
+// Single-sample depth attachment in the source's exact format, the resolve
+// target for a multisampled depth capture.
+vkImageEntry_t *VK_Image_AcquireDepthResolveScratch( int width, int height,
+			VkFormat format );
 void	VK_Image_ShutdownAll( void );
 
 #endif /* !__VK_IMAGE_H__ */

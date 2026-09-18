@@ -356,6 +356,130 @@ static void VK_Image_ReleaseResolveScratch( bool deferred ) {
 	memset( &vkResolveScratch, 0, sizeof( vkResolveScratch ) );
 }
 
+/*
+====================
+VK_Image_AcquireDepthResolveScratch
+
+The depth counterpart of the resolve scratch. A multisampled depth attachment
+cannot be blitted or copied into single-sample storage; it has to be resolved
+by a render pass (VK_Exec_ResolveDepthImage), so this image is a depth
+attachment in the source's exact format, and the source of the flipped blit
+into the capture after that. The resolve leaves it shader-readable, hence
+SAMPLED.
+====================
+*/
+static vkImageEntry_t vkDepthResolveScratch;
+
+static void VK_Image_ReleaseDepthResolveScratch( bool deferred ) {
+	if ( vkDepthResolveScratch.image != VK_NULL_HANDLE ) {
+		if ( deferred ) {
+			VK_Device_DeferDestroy( vkDepthResolveScratch.image,
+					vkDepthResolveScratch.attachmentView, VK_NULL_HANDLE,
+					vkDepthResolveScratch.allocation );
+		} else {
+			if ( vkDepthResolveScratch.attachmentView != VK_NULL_HANDLE ) {
+				vkDestroyImageView( vkCtx.device, vkDepthResolveScratch.attachmentView, NULL );
+			}
+			if ( vkCtx.allocator != NULL ) {
+				vmaDestroyImage( vkCtx.allocator, vkDepthResolveScratch.image,
+						vkDepthResolveScratch.allocation );
+			}
+		}
+	}
+	memset( &vkDepthResolveScratch, 0, sizeof( vkDepthResolveScratch ) );
+}
+
+vkImageEntry_t *VK_Image_AcquireDepthResolveScratch( int width, int height,
+		VkFormat format ) {
+	if ( !vkCtx.initialized || width <= 0 || height <= 0
+			|| format == VK_FORMAT_UNDEFINED ) {
+		return NULL;
+	}
+	if ( vkDepthResolveScratch.image != VK_NULL_HANDLE
+			&& vkDepthResolveScratch.width == width
+			&& vkDepthResolveScratch.height == height
+			&& vkDepthResolveScratch.format == format ) {
+		return &vkDepthResolveScratch;
+	}
+	VK_Image_ReleaseDepthResolveScratch( true );
+
+	const VkImageUsageFlags usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
+			| VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+	const bool hasStencil = format == VK_FORMAT_D16_UNORM_S8_UINT
+			|| format == VK_FORMAT_D24_UNORM_S8_UINT
+			|| format == VK_FORMAT_D32_SFLOAT_S8_UINT;
+
+	VkImageCreateInfo ici;
+	memset( &ici, 0, sizeof( ici ) );
+	ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+	ici.imageType = VK_IMAGE_TYPE_2D;
+	ici.format = format;
+	ici.extent.width = (uint32_t)width;
+	ici.extent.height = (uint32_t)height;
+	ici.extent.depth = 1;
+	ici.mipLevels = 1;
+	ici.arrayLayers = 1;
+	ici.samples = VK_SAMPLE_COUNT_1_BIT;
+	ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+	ici.usage = usage;
+	ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+	VmaAllocationCreateInfo vaci;
+	memset( &vaci, 0, sizeof( vaci ) );
+	vaci.usage = VMA_MEMORY_USAGE_AUTO;
+
+	VkImage newImage = VK_NULL_HANDLE;
+	VmaAllocation newAllocation = NULL;
+	if ( vmaCreateImage( vkCtx.allocator, &ici, &vaci,
+			&newImage, &newAllocation, NULL ) != VK_SUCCESS ) {
+		static bool warnedCreate = false;
+		if ( !warnedCreate ) {
+			warnedCreate = true;
+			common->Warning( "Vulkan: depth resolve scratch creation failed (%dx%d fmt %d)",
+					width, height, (int)format );
+		}
+		memset( &vkDepthResolveScratch, 0, sizeof( vkDepthResolveScratch ) );
+		return NULL;
+	}
+
+	VkImageViewCreateInfo vci;
+	memset( &vci, 0, sizeof( vci ) );
+	vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+	vci.image = newImage;
+	vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+	vci.format = format;
+	vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT
+			| ( hasStencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0 );
+	vci.subresourceRange.levelCount = 1;
+	vci.subresourceRange.layerCount = 1;
+	VkImageView attachmentView = VK_NULL_HANDLE;
+	if ( vkCreateImageView( vkCtx.device, &vci, NULL, &attachmentView ) != VK_SUCCESS ) {
+		vmaDestroyImage( vkCtx.allocator, newImage, newAllocation );
+		memset( &vkDepthResolveScratch, 0, sizeof( vkDepthResolveScratch ) );
+		return NULL;
+	}
+
+	vkDepthResolveScratch.image = newImage;
+	vkDepthResolveScratch.allocation = newAllocation;
+	vkDepthResolveScratch.view = VK_NULL_HANDLE;
+	vkDepthResolveScratch.attachmentView = attachmentView;
+	vkDepthResolveScratch.sampler = VK_NULL_HANDLE;
+	vkDepthResolveScratch.format = format;
+	vkDepthResolveScratch.usage = usage;
+	vkDepthResolveScratch.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+	vkDepthResolveScratch.layout = VK_IMAGE_LAYOUT_UNDEFINED;
+	vkDepthResolveScratch.samples = VK_SAMPLE_COUNT_1_BIT;
+	vkDepthResolveScratch.width = width;
+	vkDepthResolveScratch.height = height;
+	vkDepthResolveScratch.numMips = 1;
+	vkDepthResolveScratch.numLayers = 1;
+	vkDepthResolveScratch.isCube = false;
+	vkDepthResolveScratch.everUploaded = false;
+	vkDepthResolveScratch.inUse = false;
+	vkDepthResolveScratch.generation = 0;
+	return &vkDepthResolveScratch;
+}
+
 vkImageEntry_t *VK_Image_AcquireResolveScratch( int width, int height,
 		VkFormat format ) {
 	if ( !vkCtx.initialized || width <= 0 || height <= 0
@@ -453,6 +577,7 @@ void VK_Image_ShutdownAll( void ) {
 		memset( &vkImages[ i ], 0, sizeof( vkImages[ i ] ) );
 	}
 	VK_Image_ReleaseResolveScratch( false );
+	VK_Image_ReleaseDepthResolveScratch( false );
 	for ( int i = 0; i < vkNumSamplers; i++ ) {
 		vkDestroySampler( vkCtx.device, vkSamplers[ i ], NULL );
 	}

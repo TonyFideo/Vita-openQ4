@@ -94,7 +94,95 @@ SHADERS = [
     REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "fog.frag",
     REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "blend_light.vert",
     REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "blend_light.frag",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "soft_particle.frag",
 ]
+
+# The full-screen post passes (vk_PostProcess.cpp) embed their own header, so
+# only that translation unit carries their SPIR-V.
+POST_COMMITTED = REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "post_shaders_spv.h"
+POST_GUARD = "__VK_POST_SHADERS_SPV_H__"
+POST_SHADERS = [
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "post_fullscreen.vert",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "post_color_mapping.frag",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "post_crt.frag",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "post_ssao.frag",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "post_bloom_extract.frag",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "post_bloom_downsample.frag",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "post_bloom_blur.frag",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "post_bloom_composite.frag",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "post_motionblur.frag",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "post_motionvectors.vert",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "post_motionvectors.frag",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "post_celoutline.frag",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "post_underwater.frag",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "post_debug_view.frag",
+]
+
+# The scene overlays (vk_SceneEffects.cpp): light grid, player visibility
+# effects and cel outline shells.
+SCENE_COMMITTED = REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "scene_shaders_spv.h"
+SCENE_GUARD = "__VK_SCENE_SHADERS_SPV_H__"
+SCENE_SHADERS = [
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "lightgrid_indirect.vert",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "lightgrid_indirect.frag",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "player_outline.vert",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "player_outline.frag",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "player_rimlight.vert",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "player_rimlight.frag",
+]
+
+# The debug tools' fixed-function emulation (vk_DebugTools.cpp).
+DEBUG_COMMITTED = REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "debug_shaders_spv.h"
+DEBUG_GUARD = "__VK_DEBUG_SHADERS_SPV_H__"
+DEBUG_SHADERS = [
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "debug_draw.vert",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "debug_draw.frag",
+    REPO_ROOT / "src" / "renderer" / "Vulkan" / "shaders" / "debug_draw_textured.frag",
+]
+
+# Headers embedded by a single translation unit each, with their own guards.
+EXTRA_HEADERS = [
+    ( POST_COMMITTED, POST_SHADERS, POST_GUARD ),
+    ( SCENE_COMMITTED, SCENE_SHADERS, SCENE_GUARD ),
+    ( DEBUG_COMMITTED, DEBUG_SHADERS, DEBUG_GUARD ),
+]
+
+
+def check_header(committed: pathlib.Path, shaders: list[pathlib.Path], guard: str | None = None) -> bool:
+    if not committed.is_file():
+        print(f"vk_shader_header_pin: missing committed header {committed}", file=sys.stderr)
+        return False
+
+    with tempfile.TemporaryDirectory() as tmp:
+        regenerated = pathlib.Path(tmp) / committed.name
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(GENERATOR),
+                "--header-out",
+                str(regenerated),
+                *( ["--guard", guard] if guard else [] ),
+                *[str(s) for s in shaders],
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            print(f"vk_shader_header_pin: regeneration failed:\n{result.stdout}\n{result.stderr}", file=sys.stderr)
+            return False
+        # EOL-insensitive: a fresh checkout can materialize the committed
+        # header with LF while the generator writes platform line endings
+        if regenerated.read_bytes().replace(b"\r\n", b"\n") != committed.read_bytes().replace(b"\r\n", b"\n"):
+            shader_args = " ".join(s.relative_to(REPO_ROOT).as_posix() for s in shaders)
+            guard_arg = f"--guard {guard} " if guard else ""
+            print(
+                "vk_shader_header_pin: committed header is stale — regenerate with:\n"
+                f"  python tools/build/spirv_to_header.py {guard_arg}--header-out {committed.relative_to(REPO_ROOT).as_posix()} "
+                f"{shader_args}",
+                file=sys.stderr,
+            )
+            return False
+    return True
 
 
 def main() -> int:
@@ -105,37 +193,11 @@ def main() -> int:
         print("vk_shader_header_pin: skipped (glslangValidator not available)")
         return 0
 
-    if not COMMITTED.is_file():
-        print(f"vk_shader_header_pin: missing committed header {COMMITTED}", file=sys.stderr)
+    ok = check_header(COMMITTED, SHADERS)
+    for committed, shaders, guard in EXTRA_HEADERS:
+        ok = check_header(committed, shaders, guard) and ok
+    if not ok:
         return 1
-
-    with tempfile.TemporaryDirectory() as tmp:
-        regenerated = pathlib.Path(tmp) / "gui_shaders_spv.h"
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(GENERATOR),
-                "--header-out",
-                str(regenerated),
-                *[str(s) for s in SHADERS],
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            print(f"vk_shader_header_pin: regeneration failed:\n{result.stdout}\n{result.stderr}", file=sys.stderr)
-            return 1
-        # EOL-insensitive: a fresh checkout can materialize the committed
-        # header with LF while the generator writes platform line endings
-        if regenerated.read_bytes().replace(b"\r\n", b"\n") != COMMITTED.read_bytes().replace(b"\r\n", b"\n"):
-            shader_args = " ".join(s.relative_to(REPO_ROOT).as_posix() for s in SHADERS)
-            print(
-                "vk_shader_header_pin: committed header is stale — regenerate with:\n"
-                "  python tools/build/spirv_to_header.py --header-out src/renderer/Vulkan/shaders/gui_shaders_spv.h "
-                f"{shader_args}",
-                file=sys.stderr,
-            )
-            return 1
 
     print("vk_shader_header_pin: ok")
     return 0

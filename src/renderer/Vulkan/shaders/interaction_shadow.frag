@@ -46,6 +46,9 @@ layout(set = 6, binding = 0, std140) uniform InteractionBlock {
     vec4 diffuseColor;
     vec4 specularColor;
     vec4 flatDiffuseParams;
+    // cel banding (RB_SetCelInteractionUniform): x enabled, y band count,
+    // z hard specular, w softness; zero when the surface is not banded
+    vec4 celParams;
 } inter;
 
 layout(set = 7, binding = 1, std140) uniform ShadowBlock {
@@ -667,6 +670,58 @@ vec4 ShadowDebugOutput() {
     return vec4(invalidColor, 1.0);
 }
 
+// ---------------------------------------------------------------------------
+// Cel banding, from glprogs/material_interaction.fs and the shadow interaction
+// programs. inter.celParams is ( bandsEnabled, bandCount, hardSpecular,
+// softness ); R_CelQuantizeUnitValue is the CPU copy of the ladder.
+// ---------------------------------------------------------------------------
+
+float CelSteps() {
+    return max(inter.celParams.y - 1.0, 1.0);
+}
+
+// Places a 0..1 value on the band ladder; softness widens every boundary into
+// a smoothstep centred where the hard step would land.
+float CelLadder(float value) {
+    float steps = CelSteps();
+    float scaled = value * steps;
+
+    float softness = clamp(inter.celParams.w, 0.0, 1.0);
+    if (softness <= 0.0) {
+        return floor(scaled + 0.5) / steps;
+    }
+
+    float lower = floor(scaled);
+    float halfWidth = softness * 0.5;
+    float blend = smoothstep(0.5 - halfWidth, 0.5 + halfWidth, scaled - lower);
+
+    return (lower + blend) / steps;
+}
+
+// Quantizes a light contribution without shifting its hue: the brightest
+// channel picks the band. Black and overbright pass through untouched.
+vec3 CelQuantizeLight(vec3 light) {
+    if (inter.celParams.x <= 0.5) {
+        return light;
+    }
+
+    float peak = max(max(light.r, light.g), light.b);
+    if (peak <= 0.0 || peak >= 1.0) {
+        return light;
+    }
+
+    return light * (CelLadder(peak) / peak);
+}
+
+// Collapses the specular falloff into flat plateaus on the same ladder.
+float CelSpecularTerm(float term) {
+    if (inter.celParams.x <= 0.5 || inter.celParams.z <= 0.5) {
+        return term;
+    }
+
+    return CelLadder(clamp(term, 0.0, 1.0));
+}
+
 void main() {
     if (shadow.pcssParams.w > 0.5) {
         gShadowDepthGradients = vec4(
@@ -726,7 +781,9 @@ void main() {
     vec3 halfAngle = SafeNormalize(vHalfAngleVector);
     float specularDot = clamp(dot(halfAngle, localNormal), 0.0, 1.0);
     float specularTerm = texture(specularTableMap, vec2(specularDot, 0.5)).r * 2.0;
+    specularTerm = CelSpecularTerm(specularTerm * 0.5) * 2.0;
     vec3 specular = texture(specularMap, specularTexCoord).rgb * inter.specularColor.rgb * specularTerm;
 
+    light = CelQuantizeLight(light);
     outColor = vec4((diffuse + specular) * light * vVertexColor, 0.0);
 }

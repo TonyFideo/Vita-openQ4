@@ -1,0 +1,1833 @@
+/*
+===============================================================================
+	Vulkan full-screen post passes.
+
+	These are the Vulkan versions of OpenGL post passes that live in
+	draw_common.cpp, which the renderer-vk module does not build.
+
+	Back-buffer passes: RB_SwapBuffers (tr_backend.cpp) finishes every OpenGL
+	frame by running RB_ApplyCRTToBackBuffer and then
+	RB_ApplyColorMappingsToBackBuffer over the whole back buffer, HUD and
+	menus included, and screenshots read the result. The Vulkan backend
+	draws straight into the swapchain image, so each pass copies that image
+	out with VK_Exec_CopyRender and draws the copy back through a full-screen
+	shader. vk_Backend.cpp runs them from the RC_SWAP_BUFFERS handler, before
+	the frame is presented or read back.
+
+	Scene passes: RB_STD_DrawView runs SSAO, motion blur, bloom with the HDR
+	tone map, and the cel world ink over the main 3D view after the post-fog
+	material passes and before the SS_POST_PROCESS surfaces.
+	VK_GuiExecutor_Draw3DView calls VK_PostProcess_DrawSceneEffects at the
+	same point. Each pass copies the scene out of whatever target the view is
+	drawing into (the swapchain, the game's own render texture or the scaled
+	scene target) and draws the result back over the view rectangle. The
+	intermediate targets (bloom levels, motion vectors) are RGBA16F like
+	OpenGL's. Vulkan never renders the scene itself into a float target, so
+	the chain sees colour already clamped to 0..1, as OpenGL does whenever the
+	game binds its own RGBA8 scene target.
+
+	Orientation: every sampled image is stored bottom-up like an OpenGL
+	texture (VK_Exec_CopyRender flips its captures, and the intermediate
+	targets are drawn with a positive-height viewport). Passes that draw into
+	the scene use a negative-height viewport. Either way the full-screen
+	vertex shader's fragUV is OpenGL's texture coordinate, so the shaders
+	keep the OpenGL math unchanged. The back-buffer passes predate this and
+	flip in the shader instead.
+
+	Every pass uses the interaction pipeline layout: single-sampler sets 0-5
+	plus the dynamic uniform slice on set 6.
+===============================================================================
+*/
+
+#ifdef OPENQ4_RENDERER_VK_MODULE
+
+#include "../../idlib/precompiled.h"
+#pragma hdrstop
+
+#include "../tr_local.h"
+#include "../CelShading.h"
+#include "../ScenePackets.h"
+
+#undef snprintf
+#undef vsnprintf
+#include <cstdio>
+#include <cstring>
+#include "volk.h"
+
+#include "VulkanDevice.h"
+#include "vk_ExecutorHooks.h"
+#include "shaders/post_shaders_spv.h"
+
+extern idCVar r_brightness;
+extern idCVar r_gamma;
+extern idCVar r_skipPostProcess;
+extern idCVar r_crt;
+extern idCVar r_crtAmount;
+extern idCVar r_crtScanlineStrength;
+extern idCVar r_crtMaskStrength;
+extern idCVar r_crtCurvature;
+extern idCVar r_crtChromatic;
+extern idCVar r_ssao;
+extern idCVar r_ssaoRadius;
+extern idCVar r_ssaoBias;
+extern idCVar r_ssaoIntensity;
+extern idCVar r_ssaoPower;
+extern idCVar r_ssaoMaxDistance;
+extern idCVar r_ssaoSamples;
+extern idCVar r_ssaoDebug;
+extern idCVar r_bloom;
+extern idCVar r_bloomThreshold;
+extern idCVar r_bloomSoftKnee;
+extern idCVar r_bloomIntensity;
+extern idCVar r_bloomRadius;
+extern idCVar r_bloomMipCount;
+extern idCVar r_hdrToneMap;
+extern idCVar r_hdrExposure;
+extern idCVar r_hdrWhitePoint;
+extern idCVar r_hdrLift;
+extern idCVar r_hdrPostGamma;
+extern idCVar r_hdrGain;
+extern idCVar r_hdrVibrance;
+extern idCVar r_hdrSaturation;
+extern idCVar r_hdrContrast;
+extern idCVar r_hdrHighlightDesaturation;
+extern idCVar r_hdrGamutCompression;
+extern idCVar r_hdrDebugView;
+extern idCVar r_motionBlur;
+extern idCVar r_motionBlurStrength;
+extern idCVar r_motionBlurMaxPixels;
+extern idCVar r_motionBlurSamples;
+extern idCVar r_motionBlurDebug;
+extern idCVar r_motionBlurObjectVectors;
+extern idCVar r_jitter;
+extern idCVar r_useScissor;
+extern idCVar r_celShadingWorldDebug;
+extern idCVar r_underwater;
+extern idCVar r_underwaterWarp;
+extern idCVar r_underwaterBlur;
+extern idCVar r_underwaterEdgeSoften;
+extern idCVar r_underwaterCaustics;
+extern idCVar r_underwaterBloom;
+extern idCVar r_underwaterAberration;
+extern idCVar r_underwaterParticles;
+extern idCVar r_underwaterVisibility;
+
+// pipeline cache keys for VK_Exec_PostPipeline / VK_Exec_ExtraPipeline.
+// vk_SceneEffects.cpp and vk_DebugTools.cpp use 32 and up.
+enum vkPostPassKind_t {
+	VK_POST_COLOR_MAPPING = 1,
+	VK_POST_CRT,
+	VK_POST_SSAO,
+	VK_POST_BLOOM_EXTRACT,
+	VK_POST_BLOOM_DOWNSAMPLE,
+	VK_POST_BLOOM_BLUR,
+	VK_POST_BLOOM_COMPOSITE,
+	VK_POST_MOTION_BLUR,
+	VK_POST_MOTION_VECTORS,
+	VK_POST_CEL_OUTLINE,
+	VK_POST_UNDERWATER,
+	VK_POST_DEBUG_VIEW
+};
+
+// scene shader modules, created the first time a pass needs one
+enum vkPostSceneModule_t {
+	VK_POST_MODULE_SSAO,
+	VK_POST_MODULE_BLOOM_EXTRACT,
+	VK_POST_MODULE_BLOOM_DOWNSAMPLE,
+	VK_POST_MODULE_BLOOM_BLUR,
+	VK_POST_MODULE_BLOOM_COMPOSITE,
+	VK_POST_MODULE_MOTION_BLUR,
+	VK_POST_MODULE_MOTION_VECTORS_VERT,
+	VK_POST_MODULE_MOTION_VECTORS_FRAG,
+	VK_POST_MODULE_CEL_OUTLINE,
+	VK_POST_MODULE_UNDERWATER,
+	VK_POST_MODULE_DEBUG_VIEW,
+	VK_POST_SCENE_MODULE_COUNT
+};
+
+typedef struct vkPostModuleSource_s {
+	const unsigned char *	code;
+	unsigned int			size;
+	const char *			name;
+} vkPostModuleSource_t;
+
+static const vkPostModuleSource_t vkPostSceneModuleSources[ VK_POST_SCENE_MODULE_COUNT ] = {
+	{ vk_post_ssao_frag_spv, vk_post_ssao_frag_spv_size, "post SSAO fragment" },
+	{ vk_post_bloom_extract_frag_spv, vk_post_bloom_extract_frag_spv_size, "post bloom extract fragment" },
+	{ vk_post_bloom_downsample_frag_spv, vk_post_bloom_downsample_frag_spv_size, "post bloom downsample fragment" },
+	{ vk_post_bloom_blur_frag_spv, vk_post_bloom_blur_frag_spv_size, "post bloom blur fragment" },
+	{ vk_post_bloom_composite_frag_spv, vk_post_bloom_composite_frag_spv_size, "post bloom composite fragment" },
+	{ vk_post_motionblur_frag_spv, vk_post_motionblur_frag_spv_size, "post motion blur fragment" },
+	{ vk_post_motionvectors_vert_spv, vk_post_motionvectors_vert_spv_size, "post motion vector vertex" },
+	{ vk_post_motionvectors_frag_spv, vk_post_motionvectors_frag_spv_size, "post motion vector fragment" },
+	{ vk_post_celoutline_frag_spv, vk_post_celoutline_frag_spv_size, "post cel outline fragment" },
+	{ vk_post_underwater_frag_spv, vk_post_underwater_frag_spv_size, "post underwater fragment" },
+	{ vk_post_debug_view_frag_spv, vk_post_debug_view_frag_spv_size, "post debug view fragment" }
+};
+
+// RB_BLOOM_MAX_LEVELS and RB_BLOOM_BASE_WEIGHTS (draw_common.cpp)
+static const int VK_POST_BLOOM_MAX_LEVELS = 5;
+static const float VK_POST_BLOOM_BASE_WEIGHTS[ VK_POST_BLOOM_MAX_LEVELS ] = {
+	0.34f, 0.24f, 0.17f, 0.14f, 0.11f
+};
+
+// rbMotionBlurViewState_t (draw_common.cpp)
+typedef struct vkPostMotionViewState_s {
+	const idRenderWorldLocal *	renderWorld;
+	idStr						mapName;
+	int							videoRestartCount;
+	int							viewportWidth;
+	int							viewportHeight;
+	int							renderTime;
+	float						fovX;
+	float						fovY;
+	idVec3						viewOrigin;
+	idVec3						viewAxis[ 3 ];
+	float						reconstructInfo[ 4 ];
+	float						projectInfo[ 4 ];
+	float						depthProjection[ 2 ];
+	float						projectionMatrix[ 16 ];
+	float						worldModelViewMatrix[ 16 ];
+} vkPostMotionViewState_t;
+
+typedef struct vkPostMotionEntityHistory_s {
+	int							entityIndex;
+	float						modelMatrix[ 16 ];
+} vkPostMotionEntityHistory_t;
+
+// World-depth snapshot bits for VK_PostProcess_WorldDepthCaptures
+static const int VK_POST_CAPTURE_CEL_WORLD = 1 << 0;
+static const int VK_POST_CAPTURE_SSAO_WORLD = 1 << 1;
+
+typedef struct vkPostSceneState_s {
+	VkShaderModule		modules[ VK_POST_SCENE_MODULE_COUNT ];
+	bool				moduleFailed[ VK_POST_SCENE_MODULE_COUNT ];
+
+	idImage *			sceneCopy;			// the scene each pass reads, RGBA16F
+	idImage *			finalDepth;			// depth after the post-fog passes
+	int					finalDepthFrame;
+	int					finalDepthView;
+
+	idImage *			ssaoWorldDepth;		// RB_CaptureSSAOWorldDepthImage
+	int					ssaoWorldDepthFrame;
+	int					ssaoWorldDepthWidth;
+	int					ssaoWorldDepthHeight;
+	idImage *			celWorldDepth;		// RB_CaptureCelWorldDepthImage
+	int					celWorldDepthFrame;
+	int					celWorldDepthWidth;
+	int					celWorldDepthHeight;
+
+	idImage *			bloomImages[ VK_POST_BLOOM_MAX_LEVELS ][ 2 ];
+	idRenderTexture *	bloomTargets[ VK_POST_BLOOM_MAX_LEVELS ][ 2 ];
+
+	idImage *			motionVectorImage;
+	idRenderTexture *	motionVectorTarget;
+	bool				motionVectorValid;
+	bool				motionHistoryValid;
+	int					viewSerial;			// counts VK_PostProcess_DrawSceneEffects calls
+} vkPostSceneState_t;
+
+static vkPostSceneState_t vkPostScene;
+// why the last scene pass gave up, for the one-time warning
+static const char *vkPostFailReason = NULL;
+static vkPostMotionViewState_t vkPostMotionHistory;
+static idList<vkPostMotionEntityHistory_t> vkPostMotionEntityHistory;
+static idList<vkPostMotionEntityHistory_t> vkPostMotionNextEntityHistory;
+
+typedef struct vkPostState_s {
+	VkShaderModule	fullscreenVert;
+	VkShaderModule	colorMappingFrag;
+	VkShaderModule	crtFrag;
+	bool			modulesFailed;	// creation failed once; do not retry every frame
+	idImage *		backBufferCopy;
+} vkPostState_t;
+
+static vkPostState_t vkPost;
+
+// std140 layout of ColorMappingBlock in post_color_mapping.frag
+typedef struct vkPostColorMappingBlock_s {
+	float	params[ 4 ];	// x: brightness, y: gamma
+} vkPostColorMappingBlock_t;
+
+// std140 layout of CRTBlock in post_crt.frag
+typedef struct vkPostCRTBlock_s {
+	float	texel[ 4 ];		// x: 1/width, y: 1/height, z: framebuffer height, w: timeSeconds
+	float	crt[ 4 ];		// x: amount, y: scanline strength, z: mask strength, w: curvature
+	float	chroma[ 4 ];	// x: chromatic aberration
+} vkPostCRTBlock_t;
+
+static VkShaderModule VK_Post_CreateModule( const unsigned char *code, unsigned int size,
+		const char *name ) {
+	VkShaderModuleCreateInfo smci;
+	memset( &smci, 0, sizeof( smci ) );
+	smci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+	smci.codeSize = size;
+	smci.pCode = (const uint32_t *)code;
+	VkShaderModule module = VK_NULL_HANDLE;
+	if ( vkCreateShaderModule( vkCtx.device, &smci, NULL, &module ) != VK_SUCCESS ) {
+		common->Warning( "Vulkan: %s shader module creation failed", name );
+		return VK_NULL_HANDLE;
+	}
+	return module;
+}
+
+static bool VK_Post_EnsureModules( void ) {
+	if ( vkPost.fullscreenVert != VK_NULL_HANDLE && vkPost.colorMappingFrag != VK_NULL_HANDLE
+			&& vkPost.crtFrag != VK_NULL_HANDLE ) {
+		return true;
+	}
+	if ( vkPost.modulesFailed || vkCtx.device == VK_NULL_HANDLE ) {
+		return false;
+	}
+	if ( vkPost.fullscreenVert == VK_NULL_HANDLE ) {
+		vkPost.fullscreenVert = VK_Post_CreateModule( vk_post_fullscreen_vert_spv,
+				vk_post_fullscreen_vert_spv_size, "post full-screen vertex" );
+	}
+	if ( vkPost.colorMappingFrag == VK_NULL_HANDLE ) {
+		vkPost.colorMappingFrag = VK_Post_CreateModule( vk_post_color_mapping_frag_spv,
+				vk_post_color_mapping_frag_spv_size, "post colour mapping fragment" );
+	}
+	if ( vkPost.crtFrag == VK_NULL_HANDLE ) {
+		vkPost.crtFrag = VK_Post_CreateModule( vk_post_crt_frag_spv,
+				vk_post_crt_frag_spv_size, "post CRT fragment" );
+	}
+	if ( vkPost.fullscreenVert == VK_NULL_HANDLE || vkPost.colorMappingFrag == VK_NULL_HANDLE
+			|| vkPost.crtFrag == VK_NULL_HANDLE ) {
+		vkPost.modulesFailed = true;
+		return false;
+	}
+	return true;
+}
+
+static void VK_Post_DestroyModule( VkShaderModule &module ) {
+	if ( module != VK_NULL_HANDLE && vkCtx.device != VK_NULL_HANDLE ) {
+		vkDestroyShaderModule( vkCtx.device, module, NULL );
+	}
+	module = VK_NULL_HANDLE;
+}
+
+void VK_SceneEffects_Shutdown( void );
+void VK_DebugTools_Shutdown( void );
+
+static void VK_Post_ResetMotionBlurHistory( void ) {
+	vkPostScene.motionHistoryValid = false;
+	vkPostScene.motionVectorValid = false;
+	vkPostMotionEntityHistory.Clear();
+	vkPostMotionNextEntityHistory.Clear();
+}
+
+/*
+====================
+VK_PostProcess_Shutdown
+
+Called first thing in VK_GuiExecutor_Shutdown. The images belong to the
+image manager, which frees them on its own; the render textures are ours.
+====================
+*/
+void VK_PostProcess_Shutdown( void ) {
+	VK_SceneEffects_Shutdown();
+	VK_DebugTools_Shutdown();
+	VK_Post_DestroyModule( vkPost.fullscreenVert );
+	VK_Post_DestroyModule( vkPost.colorMappingFrag );
+	VK_Post_DestroyModule( vkPost.crtFrag );
+	memset( &vkPost, 0, sizeof( vkPost ) );
+
+	for ( int i = 0; i < VK_POST_SCENE_MODULE_COUNT; i++ ) {
+		VK_Post_DestroyModule( vkPostScene.modules[ i ] );
+	}
+	for ( int level = 0; level < VK_POST_BLOOM_MAX_LEVELS; level++ ) {
+		for ( int pingPong = 0; pingPong < 2; pingPong++ ) {
+			delete vkPostScene.bloomTargets[ level ][ pingPong ];
+		}
+	}
+	delete vkPostScene.motionVectorTarget;
+	memset( &vkPostScene, 0, sizeof( vkPostScene ) );
+	vkPostScene.finalDepthFrame = -1;
+	vkPostScene.ssaoWorldDepthFrame = -1;
+	vkPostScene.celWorldDepthFrame = -1;
+	VK_Post_ResetMotionBlurHistory();
+}
+
+// Swapchain-sized RGBA8 copy the back-buffer passes sample. It is separate
+// from _currentRender because the 3D views capture that at their own
+// viewport size, and sharing it would resize it twice a frame.
+static void VK_Post_BackBufferCopyImage( idImage *image ) {
+	idImageOpts opts;
+	opts.textureType = TT_2D;
+	opts.format = FMT_RGBA8;
+	opts.width = 32;
+	opts.height = 32;
+	opts.numLevels = 1;
+	image->AllocImage( opts, TF_LINEAR, TR_CLAMP );
+}
+
+static idImage *VK_Post_BackBufferCopy( void ) {
+	if ( vkPost.backBufferCopy == NULL && globalImages != NULL ) {
+		vkPost.backBufferCopy = globalImages->ImageFromFunction( "_vkBackBufferCopy",
+				VK_Post_BackBufferCopyImage );
+	}
+	return vkPost.backBufferCopy;
+}
+
+/*
+====================
+VK_Post_DrawFullscreen
+
+Draws the covering triangle into the active target with every
+depth/stencil test off. Image sets bind to sets 0..numSets-1 and the uniform
+slice to set 6.
+====================
+*/
+static bool VK_Post_DrawFullscreen( VkPipeline pipeline, const VkDescriptorSet *imageSets,
+		int numSets, int uniformOffset ) {
+	VkCommandBuffer cmd = VK_Exec_ActiveCmd();
+	if ( cmd == VK_NULL_HANDLE || pipeline == VK_NULL_HANDLE || uniformOffset < 0
+			|| !VK_Exec_MainRenderingScopeOpen() ) {
+		return false;
+	}
+	for ( int i = 0; i < numSets; i++ ) {
+		if ( imageSets[ i ] == VK_NULL_HANDLE ) {
+			return false;
+		}
+	}
+	const int width = VK_Exec_ActiveFramebufferWidth();
+	const int height = VK_Exec_ActiveFramebufferHeight();
+	VkViewport viewport;
+	memset( &viewport, 0, sizeof( viewport ) );
+	viewport.width = (float)width;
+	viewport.height = (float)height;
+	viewport.maxDepth = 1.0f;
+	VkRect2D scissor;
+	memset( &scissor, 0, sizeof( scissor ) );
+	scissor.extent.width = (uint32_t)width;
+	scissor.extent.height = (uint32_t)height;
+	vkCmdSetViewport( cmd, 0, 1, &viewport );
+	vkCmdSetScissor( cmd, 0, 1, &scissor );
+	vkCmdSetDepthTestEnable( cmd, VK_FALSE );
+	vkCmdSetDepthWriteEnable( cmd, VK_FALSE );
+	vkCmdSetDepthCompareOp( cmd, VK_COMPARE_OP_ALWAYS );
+	vkCmdSetCullMode( cmd, VK_CULL_MODE_NONE );
+	vkCmdSetFrontFace( cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE );
+	vkCmdSetDepthBiasEnable( cmd, VK_FALSE );
+	vkCmdSetStencilTestEnable( cmd, VK_FALSE );
+	if ( vkCtx.depthBoundsSupported ) {
+		vkCmdSetDepthBoundsTestEnable( cmd, VK_FALSE );
+	}
+	const VkPipelineLayout layout = VK_Exec_InteractionPipelineLayout();
+	vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline );
+	if ( numSets > 0 ) {
+		vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout,
+				0, (uint32_t)numSets, imageSets, 0, NULL );
+	}
+	const VkDescriptorSet uniformSet = VK_Exec_InteractionUniformSet();
+	const uint32_t dynamicOffset = (uint32_t)uniformOffset;
+	vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout,
+			6, 1, &uniformSet, 1, &dynamicOffset );
+	vkCmdDraw( cmd, 3, 1, 0, 0 );
+	return true;
+}
+
+// Copies the finished swapchain image into the back-buffer copy and returns
+// the copy's descriptor, ready to sample.
+static VkDescriptorSet VK_Post_CaptureBackBuffer( void ) {
+	idImage *copy = VK_Post_BackBufferCopy();
+	if ( copy == NULL || !VK_Exec_SetRenderTarget( NULL ) ) {
+		return VK_NULL_HANDLE;
+	}
+	const int width = VK_Exec_ActiveFramebufferWidth();
+	const int height = VK_Exec_ActiveFramebufferHeight();
+	if ( width <= 0 || height <= 0
+			|| !VK_Exec_CopyRender( copy, 0, 0, width, height, 0, false ) ) {
+		return VK_NULL_HANDLE;
+	}
+	VK_Exec_TransitionImageForSampling( copy );
+	return VK_Exec_ImageDescriptor( copy->GetDeviceHandle(), true );
+}
+
+static bool VK_Post_ColorMappingsAreNeutral( float brightness, float gamma ) {
+	return idMath::Fabs( brightness - 1.0f ) <= 0.0001f
+		&& idMath::Fabs( gamma - 1.0f ) <= 0.0001f;
+}
+
+static bool VK_Post_DrawColorMapping( float brightness, float gamma ) {
+	const VkDescriptorSet sceneSet = VK_Post_CaptureBackBuffer();
+	if ( sceneSet == VK_NULL_HANDLE ) {
+		return false;
+	}
+	vkPostColorMappingBlock_t block;
+	memset( &block, 0, sizeof( block ) );
+	block.params[ 0 ] = brightness;
+	block.params[ 1 ] = gamma;
+	const int uniformOffset = VK_Exec_InteractionUniformAlloc( &block, sizeof( block ) );
+	const VkPipeline pipeline = VK_Exec_PostPipeline( VK_POST_COLOR_MAPPING,
+			vkPost.fullscreenVert, vkPost.colorMappingFrag, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO );
+	return VK_Post_DrawFullscreen( pipeline, &sceneSet, 1, uniformOffset );
+}
+
+// RB_ApplyCRTToBackBuffer: same clamps and frame-based clock as OpenGL.
+static float VK_Post_CRTAmount( void ) {
+	return idMath::ClampFloat( 0.0f, 1.0f, r_crtAmount.GetFloat() );
+}
+
+static bool VK_Post_DrawCRT( void ) {
+	const VkDescriptorSet sceneSet = VK_Post_CaptureBackBuffer();
+	if ( sceneSet == VK_NULL_HANDLE ) {
+		return false;
+	}
+	const int width = VK_Exec_ActiveFramebufferWidth();
+	const int height = VK_Exec_ActiveFramebufferHeight();
+	vkPostCRTBlock_t block;
+	memset( &block, 0, sizeof( block ) );
+	block.texel[ 0 ] = 1.0f / (float)width;
+	block.texel[ 1 ] = 1.0f / (float)height;
+	block.texel[ 2 ] = (float)height;
+	block.texel[ 3 ] = (float)backEnd.frameCount * ( 1.0f / 60.0f );
+	block.crt[ 0 ] = VK_Post_CRTAmount();
+	block.crt[ 1 ] = idMath::ClampFloat( 0.0f, 1.0f, r_crtScanlineStrength.GetFloat() );
+	block.crt[ 2 ] = idMath::ClampFloat( 0.0f, 1.0f, r_crtMaskStrength.GetFloat() );
+	block.crt[ 3 ] = idMath::ClampFloat( 0.0f, 0.25f, r_crtCurvature.GetFloat() );
+	block.chroma[ 0 ] = idMath::ClampFloat( 0.0f, 0.35f, r_crtChromatic.GetFloat() );
+	const int uniformOffset = VK_Exec_InteractionUniformAlloc( &block, sizeof( block ) );
+	const VkPipeline pipeline = VK_Exec_PostPipeline( VK_POST_CRT,
+			vkPost.fullscreenVert, vkPost.crtFrag, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO );
+	return VK_Post_DrawFullscreen( pipeline, &sceneSet, 1, uniformOffset );
+}
+
+/*
+====================
+VK_PostProcess_ApplyBackBuffer
+
+The Vulkan counterpart of the tail of RB_SwapBuffers: CRT, then the
+r_brightness/r_gamma mapping, over the finished frame.
+====================
+*/
+void VK_PostProcess_ApplyBackBuffer( void ) {
+	if ( !VK_GuiExecutor_FrameIsOpen() ) {
+		return;
+	}
+	const bool crt = !r_skipPostProcess.GetBool() && r_crt.GetBool()
+			&& VK_Post_CRTAmount() > 0.001f;
+	const float brightness = idMath::ClampFloat( 0.0f, 16.0f, r_brightness.GetFloat() );
+	const float gamma = Max( r_gamma.GetFloat(), 0.001f );
+	const bool colorMapping = !VK_Post_ColorMappingsAreNeutral( brightness, gamma );
+	if ( ( !crt && !colorMapping ) || !VK_Post_EnsureModules() ) {
+		return;
+	}
+	if ( crt && !VK_Post_DrawCRT() ) {
+		static bool crtWarned = false;
+		if ( !crtWarned ) {
+			common->Warning( "Vulkan: r_crt pass could not run this frame" );
+			crtWarned = true;
+		}
+	}
+	if ( colorMapping && !VK_Post_DrawColorMapping( brightness, gamma ) ) {
+		static bool warned = false;
+		if ( !warned ) {
+			common->Warning( "Vulkan: r_brightness/r_gamma pass could not run this frame" );
+			warned = true;
+		}
+	}
+}
+
+/*
+===============================================================================
+
+	Scene passes
+
+===============================================================================
+*/
+
+static VkShaderModule VK_Post_SceneModule( int which ) {
+	if ( which < 0 || which >= VK_POST_SCENE_MODULE_COUNT ) {
+		return VK_NULL_HANDLE;
+	}
+	if ( vkPostScene.modules[ which ] != VK_NULL_HANDLE ) {
+		return vkPostScene.modules[ which ];
+	}
+	if ( vkPostScene.moduleFailed[ which ] || vkCtx.device == VK_NULL_HANDLE ) {
+		return VK_NULL_HANDLE;
+	}
+	const vkPostModuleSource_t &source = vkPostSceneModuleSources[ which ];
+	vkPostScene.modules[ which ] = VK_Post_CreateModule( source.code, source.size, source.name );
+	if ( vkPostScene.modules[ which ] == VK_NULL_HANDLE ) {
+		vkPostScene.moduleFailed[ which ] = true;
+	}
+	return vkPostScene.modules[ which ];
+}
+
+// RB_IsMainScenePostProcessView (draw_common.cpp)
+static bool VK_Post_IsMainSceneView( const viewDef_t *viewDef ) {
+	if ( viewDef == NULL || viewDef->viewEntitys == NULL ) {
+		return false;
+	}
+	if ( ( viewDef->renderFlags & RF_PORTAL_SKY ) != 0 ) {
+		return false;
+	}
+	if ( viewDef->isSubview || viewDef->superView != NULL
+			|| viewDef->subviewSurface != NULL || viewDef->renderView.viewID < 0 ) {
+		return false;
+	}
+	if ( viewDef->renderWorld != NULL && viewDef->renderWorld->mapName.Length() == 0 ) {
+		return false;
+	}
+	return !viewDef->isXraySubview;
+}
+
+static int VK_Post_ViewWidth( const viewDef_t *viewDef ) {
+	return viewDef->viewport.x2 - viewDef->viewport.x1 + 1;
+}
+
+static int VK_Post_ViewHeight( const viewDef_t *viewDef ) {
+	return viewDef->viewport.y2 - viewDef->viewport.y1 + 1;
+}
+
+// RB_SSAORequestedForCurrentView
+static bool VK_Post_SSAORequested( const viewDef_t *viewDef ) {
+	return !r_skipPostProcess.GetBool() && r_ssao.GetBool()
+		&& VK_Post_IsMainSceneView( viewDef )
+		&& r_ssaoRadius.GetFloat() > 0.0f && r_ssaoIntensity.GetFloat() > 0.0f;
+}
+
+// RB_PostProcessBloomRequested
+static bool VK_Post_BloomRequested( void ) {
+	return r_bloom.GetBool() && r_bloomIntensity.GetFloat() > 0.0001f;
+}
+
+// the gate at the top of RB_STD_Bloom: the composite also carries the tone map
+static bool VK_Post_BloomPassRequested( const viewDef_t *viewDef ) {
+	return !r_skipPostProcess.GetBool() && VK_Post_IsMainSceneView( viewDef )
+		&& ( VK_Post_BloomRequested() || r_hdrToneMap.GetBool()
+			|| idMath::ClampInt( 0, 2, r_hdrDebugView.GetInteger() ) > 0 );
+}
+
+// RB_CelWorldOutlineRequestedForCurrentView
+static bool VK_Post_CelInkRequested( const viewDef_t *viewDef ) {
+	return !r_skipPostProcess.GetBool() && R_CelWorldOutlineEnabled()
+		&& VK_Post_IsMainSceneView( viewDef );
+}
+
+// RB_MaterialIsSkyForSSAODepth
+static bool VK_Post_MaterialIsSky( const idMaterial *material ) {
+	if ( material == NULL ) {
+		return false;
+	}
+	if ( material->IsPortalSky() || material->GetSort() == SS_PORTAL_SKY ) {
+		return true;
+	}
+	const texgen_t texgen = material->Texgen();
+	return texgen == TG_SKYBOX_CUBE || texgen == TG_WOBBLESKY_CUBE;
+}
+
+// RB_SSAOWorldDepthSurfFilter
+static bool VK_Post_SSAOWorldDepthSurf( const drawSurf_t *surf ) {
+	if ( surf == NULL || surf->space == NULL || surf->geo == NULL || surf->material == NULL ) {
+		return false;
+	}
+	if ( ( surf->dsFlags & DSF_BSE_EFFECT ) != 0 ) {
+		return false;
+	}
+	if ( surf->space->weaponDepthHack || surf->space->modelDepthHack != 0.0f ) {
+		return false;
+	}
+	const idMaterial *material = surf->material;
+	if ( !material->IsDrawn() || material->Coverage() == MC_TRANSLUCENT ) {
+		return false;
+	}
+	if ( material->GetSort() >= SS_POST_PROCESS || material->GetSort() == SS_SUBVIEW ) {
+		return false;
+	}
+	if ( material->HasGui() || material->SuppressInSubview() || VK_Post_MaterialIsSky( material ) ) {
+		return false;
+	}
+	const idRenderEntityLocal *entityDef = surf->space->entityDef;
+	if ( entityDef == NULL ) {
+		return true;
+	}
+	const renderEntity_t &renderEntity = entityDef->parms;
+	return renderEntity.remoteRenderView == NULL
+		&& renderEntity.allowSurfaceInViewID == 0
+		&& renderEntity.weaponDepthHackInViewID == 0
+		&& renderEntity.modelDepthHack == 0.0f;
+}
+
+// RB_CelWorldDepthSurfFilter
+static bool VK_Post_CelWorldDepthSurf( const drawSurf_t *surf ) {
+	if ( surf == NULL || surf->space == NULL || surf->geo == NULL || surf->material == NULL ) {
+		return false;
+	}
+	if ( ( surf->dsFlags & DSF_BSE_EFFECT ) != 0 || !R_CelSurfaceIsWorld( surf ) ) {
+		return false;
+	}
+	const idMaterial *material = surf->material;
+	if ( !material->IsDrawn() || material->Coverage() == MC_TRANSLUCENT ) {
+		return false;
+	}
+	if ( material->GetSort() >= SS_POST_PROCESS || material->GetSort() == SS_SUBVIEW ) {
+		return false;
+	}
+	return !material->HasGui() && !material->SuppressInSubview()
+		&& !VK_Post_MaterialIsSky( material );
+}
+
+static void VK_Post_FloatColorImage( idImage *image ) {
+	idImageOpts opts;
+	opts.textureType = TT_2D;
+	opts.format = FMT_RGBA16F;
+	opts.width = 32;
+	opts.height = 32;
+	opts.numLevels = 1;
+	image->AllocImage( opts, TF_LINEAR, TR_CLAMP );
+}
+
+static void VK_Post_DepthImage( idImage *image ) {
+	idImageOpts opts;
+	opts.textureType = TT_2D;
+	opts.format = FMT_DEPTH;
+	opts.width = 32;
+	opts.height = 32;
+	opts.numLevels = 1;
+	image->AllocImage( opts, TF_NEAREST, TR_CLAMP );
+}
+
+static idImage *VK_Post_EnsureImage( idImage *&image, const char *name, void ( *generator )( idImage *image ) ) {
+	if ( image == NULL && globalImages != NULL ) {
+		image = globalImages->ImageFromFunction( name, generator );
+	}
+	return image;
+}
+
+// Copies the view rectangle of the active target into the scene copy.
+static idImage *VK_Post_CaptureScene( const viewDef_t *viewDef ) {
+	idImage *image = VK_Post_EnsureImage( vkPostScene.sceneCopy, "_vkPostScene", VK_Post_FloatColorImage );
+	if ( image == NULL || !VK_Exec_CopyRender( image, viewDef->viewport.x1, viewDef->viewport.y1,
+			VK_Post_ViewWidth( viewDef ), VK_Post_ViewHeight( viewDef ), 0, false ) ) {
+		return NULL;
+	}
+	return image;
+}
+
+static bool VK_Post_CaptureDepth( idImage *image, const viewDef_t *viewDef ) {
+	return image != NULL && VK_Exec_CopyRender( image, viewDef->viewport.x1, viewDef->viewport.y1,
+			VK_Post_ViewWidth( viewDef ), VK_Post_ViewHeight( viewDef ), 0, true );
+}
+
+// The finished depth of this view, captured once per VK_PostProcess_DrawSceneEffects call.
+static idImage *VK_Post_FinalDepth( const viewDef_t *viewDef ) {
+	idImage *image = VK_Post_EnsureImage( vkPostScene.finalDepth, "_vkPostFinalDepth", VK_Post_DepthImage );
+	if ( image == NULL ) {
+		return NULL;
+	}
+	if ( vkPostScene.finalDepthFrame == backEnd.frameCount
+			&& vkPostScene.finalDepthView == vkPostScene.viewSerial ) {
+		return image;
+	}
+	if ( !VK_Post_CaptureDepth( image, viewDef ) ) {
+		return NULL;
+	}
+	vkPostScene.finalDepthFrame = backEnd.frameCount;
+	vkPostScene.finalDepthView = vkPostScene.viewSerial;
+	return image;
+}
+
+static VkDescriptorSet VK_Post_Descriptor( idImage *image ) {
+	return image != NULL ? VK_Exec_ImageDescriptor( image->GetDeviceHandle(), true ) : VK_NULL_HANDLE;
+}
+
+static void VK_Post_ResetDrawState( VkCommandBuffer cmd ) {
+	vkCmdSetDepthTestEnable( cmd, VK_FALSE );
+	vkCmdSetDepthWriteEnable( cmd, VK_FALSE );
+	vkCmdSetDepthCompareOp( cmd, VK_COMPARE_OP_ALWAYS );
+	vkCmdSetCullMode( cmd, VK_CULL_MODE_NONE );
+	vkCmdSetFrontFace( cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE );
+	vkCmdSetDepthBiasEnable( cmd, VK_FALSE );
+	vkCmdSetStencilTestEnable( cmd, VK_FALSE );
+	if ( vkCtx.depthBoundsSupported ) {
+		vkCmdSetDepthBoundsTestEnable( cmd, VK_FALSE );
+	}
+}
+
+static void VK_Post_BindAndDraw( VkCommandBuffer cmd, VkPipeline pipeline,
+		const VkDescriptorSet *imageSets, int numSets, int uniformOffset ) {
+	const VkPipelineLayout layout = VK_Exec_InteractionPipelineLayout();
+	vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline );
+	if ( numSets > 0 ) {
+		vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout,
+				0, (uint32_t)numSets, imageSets, 0, NULL );
+	}
+	const VkDescriptorSet uniformSet = VK_Exec_InteractionUniformSet();
+	const uint32_t dynamicOffset = (uint32_t)uniformOffset;
+	vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout,
+			6, 1, &uniformSet, 1, &dynamicOffset );
+	vkCmdDraw( cmd, 3, 1, 0, 0 );
+}
+
+static bool VK_Post_SetsReady( VkPipeline pipeline, const VkDescriptorSet *imageSets,
+		int numSets, int uniformOffset ) {
+	if ( pipeline == VK_NULL_HANDLE || uniformOffset < 0 || !VK_Exec_MainRenderingScopeOpen() ) {
+		return false;
+	}
+	for ( int i = 0; i < numSets; i++ ) {
+		if ( imageSets[ i ] == VK_NULL_HANDLE ) {
+			return false;
+		}
+	}
+	return true;
+}
+
+/*
+====================
+VK_Post_DrawSceneRect
+
+Draws the covering triangle over the view rectangle of the scene target,
+scissored to the view scissor (RB_BeginFullscreenPostProcessPass). The
+negative-height viewport puts fragUV (0,0) at the bottom-left, OpenGL's
+texture origin.
+====================
+*/
+static bool VK_Post_DrawSceneRect( const viewDef_t *viewDef, VkPipeline pipeline,
+		const VkDescriptorSet *imageSets, int numSets, int uniformOffset ) {
+	VkCommandBuffer cmd = VK_Exec_ActiveCmd();
+	if ( cmd == VK_NULL_HANDLE || !VK_Post_SetsReady( pipeline, imageSets, numSets, uniformOffset ) ) {
+		return false;
+	}
+	const int fbHeight = VK_Exec_ActiveFramebufferHeight();
+	VkViewport viewport;
+	memset( &viewport, 0, sizeof( viewport ) );
+	viewport.x = (float)viewDef->viewport.x1;
+	viewport.y = (float)( fbHeight - viewDef->viewport.y1 );
+	viewport.width = (float)VK_Post_ViewWidth( viewDef );
+	viewport.height = -(float)VK_Post_ViewHeight( viewDef );
+	viewport.maxDepth = 1.0f;
+	vkCmdSetViewport( cmd, 0, 1, &viewport );
+	VK_Exec_SetViewScissor( cmd, viewDef, fbHeight );
+	VK_Post_ResetDrawState( cmd );
+	VK_Post_BindAndDraw( cmd, pipeline, imageSets, numSets, uniformOffset );
+	return true;
+}
+
+// Fills the whole active intermediate target; positive viewport, so the rows
+// come out bottom-up like the captures.
+static bool VK_Post_DrawTarget( VkPipeline pipeline, const VkDescriptorSet *imageSets,
+		int numSets, int uniformOffset ) {
+	return VK_Post_DrawFullscreen( pipeline, imageSets, numSets, uniformOffset );
+}
+
+static bool VK_Post_ProjectionUsable( const viewDef_t *viewDef ) {
+	return idMath::Fabs( viewDef->projectionMatrix[ 0 ] ) > 0.00001f
+		&& idMath::Fabs( viewDef->projectionMatrix[ 5 ] ) > 0.00001f;
+}
+
+static void VK_Post_ProjectionInfo( const viewDef_t *viewDef, float out[ 4 ] ) {
+	out[ 0 ] = 1.0f / viewDef->projectionMatrix[ 0 ];
+	out[ 1 ] = 1.0f / viewDef->projectionMatrix[ 5 ];
+	out[ 2 ] = viewDef->projectionMatrix[ 8 ];
+	out[ 3 ] = viewDef->projectionMatrix[ 9 ];
+}
+
+/*
+====================
+World-depth snapshots
+
+OpenGL's RB_CaptureSSAOWorldDepthImage and RB_CaptureCelWorldDepthImage each
+draw a filtered depth-only fill, copy depth and clear again before the real
+prepass. Depth writes are order independent, so the Vulkan prepass orders its
+surfaces instead: the ones the cel filter keeps, a copy, the rest of the SSAO
+filter's, a copy, then everything else. The cel filter keeps world surfaces
+only, which the SSAO filter also keeps.
+====================
+*/
+int VK_PostProcess_WorldDepthCaptures( const viewDef_t *viewDef ) {
+	vkPostScene.ssaoWorldDepthFrame = -1;
+	vkPostScene.celWorldDepthFrame = -1;
+	int captures = 0;
+	if ( VK_Post_CelInkRequested( viewDef ) ) {
+		captures |= VK_POST_CAPTURE_CEL_WORLD;
+	}
+	if ( VK_Post_SSAORequested( viewDef ) ) {
+		captures |= VK_POST_CAPTURE_SSAO_WORLD;
+	}
+	return captures;
+}
+
+int VK_PostProcess_DepthFillPhase( const drawSurf_t *surf, int captures ) {
+	if ( ( captures & VK_POST_CAPTURE_CEL_WORLD ) != 0 && VK_Post_CelWorldDepthSurf( surf ) ) {
+		return 0;
+	}
+	if ( ( captures & VK_POST_CAPTURE_SSAO_WORLD ) != 0 && VK_Post_SSAOWorldDepthSurf( surf ) ) {
+		return 1;
+	}
+	return 2;
+}
+
+// Runs after prepass phase 0 or 1. phaseDrawn counts the surfaces each phase
+// drew; the copy restarts rendering, so the caller re-establishes its state.
+void VK_PostProcess_CaptureWorldDepth( const viewDef_t *viewDef, int fillPhase, int captures,
+		const int phaseDrawn[ 3 ] ) {
+	const int width = VK_Post_ViewWidth( viewDef );
+	const int height = VK_Post_ViewHeight( viewDef );
+	if ( fillPhase == 0 && ( captures & VK_POST_CAPTURE_CEL_WORLD ) != 0 && phaseDrawn[ 0 ] > 0 ) {
+		idImage *image = VK_Post_EnsureImage( vkPostScene.celWorldDepth, "_vkCelWorldDepth", VK_Post_DepthImage );
+		if ( VK_Post_CaptureDepth( image, viewDef ) ) {
+			vkPostScene.celWorldDepthFrame = backEnd.frameCount;
+			vkPostScene.celWorldDepthWidth = width;
+			vkPostScene.celWorldDepthHeight = height;
+		}
+	} else if ( fillPhase == 0 && ( captures & VK_POST_CAPTURE_CEL_WORLD ) != 0
+			&& r_celShadingWorldDebug.GetBool() ) {
+		common->Printf( "cel world outline skipped: no world surfaces passed the depth snapshot filter\n" );
+	}
+	if ( fillPhase == 1 && ( captures & VK_POST_CAPTURE_SSAO_WORLD ) != 0
+			&& phaseDrawn[ 0 ] + phaseDrawn[ 1 ] > 0 ) {
+		idImage *image = VK_Post_EnsureImage( vkPostScene.ssaoWorldDepth, "_vkSSAOWorldDepth", VK_Post_DepthImage );
+		if ( VK_Post_CaptureDepth( image, viewDef ) ) {
+			vkPostScene.ssaoWorldDepthFrame = backEnd.frameCount;
+			vkPostScene.ssaoWorldDepthWidth = width;
+			vkPostScene.ssaoWorldDepthHeight = height;
+		}
+	}
+}
+
+// ---- SSAO (RB_STD_SSAO) ----
+
+// std140 layout of SSAOBlock in post_ssao.frag
+typedef struct vkPostSSAOBlock_s {
+	float	texInfo[ 4 ];
+	float	projection[ 4 ];
+	float	depthInfo[ 4 ];
+	float	params[ 4 ];
+	float	params2[ 4 ];
+} vkPostSSAOBlock_t;
+
+static bool VK_Post_DrawSSAO( const viewDef_t *viewDef ) {
+	const VkShaderModule fragModule = VK_Post_SceneModule( VK_POST_MODULE_SSAO );
+	if ( fragModule == VK_NULL_HANDLE || !VK_Post_ProjectionUsable( viewDef ) ) {
+		vkPostFailReason = "no shader module or unusable projection";
+		return false;
+	}
+	const int width = VK_Post_ViewWidth( viewDef );
+	const int height = VK_Post_ViewHeight( viewDef );
+	idImage *finalDepth = VK_Post_FinalDepth( viewDef );
+	if ( finalDepth == NULL ) {
+		vkPostFailReason = "the depth copy failed";
+		return false;
+	}
+	idImage *scene = VK_Post_CaptureScene( viewDef );
+	if ( scene == NULL ) {
+		vkPostFailReason = "the scene copy failed";
+		return false;
+	}
+	// the world-only snapshot when the prepass took one at this size,
+	// otherwise the finished depth, like OpenGL's _currentDepth fallback
+	idImage *worldDepth = finalDepth;
+	if ( vkPostScene.ssaoWorldDepthFrame == backEnd.frameCount && vkPostScene.ssaoWorldDepth != NULL
+			&& vkPostScene.ssaoWorldDepthWidth == width && vkPostScene.ssaoWorldDepthHeight == height ) {
+		worldDepth = vkPostScene.ssaoWorldDepth;
+	}
+
+	vkPostSSAOBlock_t block;
+	memset( &block, 0, sizeof( block ) );
+	block.texInfo[ 0 ] = 1.0f / (float)width;
+	block.texInfo[ 1 ] = 1.0f / (float)height;
+	block.texInfo[ 2 ] = 0.5f * (float)height * idMath::Fabs( viewDef->projectionMatrix[ 5 ] );
+	block.texInfo[ 3 ] = r_ssaoDebug.GetBool() ? 1.0f : 0.0f;
+	VK_Post_ProjectionInfo( viewDef, block.projection );
+	block.depthInfo[ 0 ] = viewDef->projectionMatrix[ 10 ];
+	block.depthInfo[ 1 ] = viewDef->projectionMatrix[ 14 ];
+	block.params[ 0 ] = r_ssaoRadius.GetFloat();
+	block.params[ 1 ] = r_ssaoBias.GetFloat();
+	block.params[ 2 ] = r_ssaoIntensity.GetFloat();
+	block.params[ 3 ] = r_ssaoPower.GetFloat();
+	block.params2[ 0 ] = r_ssaoMaxDistance.GetFloat();
+	block.params2[ 1 ] = (float)idMath::ClampInt( 4, 32, r_ssaoSamples.GetInteger() );
+
+	const VkDescriptorSet sets[ 3 ] = {
+		VK_Post_Descriptor( scene ), VK_Post_Descriptor( worldDepth ), VK_Post_Descriptor( finalDepth )
+	};
+	const int uniformOffset = VK_Exec_InteractionUniformAlloc( &block, sizeof( block ) );
+	const VkPipeline pipeline = VK_Exec_PostPipeline( VK_POST_SSAO, vkPost.fullscreenVert, fragModule,
+			GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO );
+	return VK_Post_DrawSceneRect( viewDef, pipeline, sets, 3, uniformOffset );
+}
+
+// ---- motion blur (RB_STD_MotionBlur) ----
+
+// RB_IsMainMotionBlurView
+static bool VK_Post_IsMainMotionBlurView( const viewDef_t *viewDef ) {
+	return VK_Post_IsMainSceneView( viewDef ) && !viewDef->isSubview
+		&& viewDef->superView == NULL && viewDef->renderView.viewID >= 0;
+}
+
+// RB_BuildMotionBlurViewState
+static bool VK_Post_BuildMotionViewState( const viewDef_t *viewDef, vkPostMotionViewState_t &state,
+		int viewportWidth, int viewportHeight ) {
+	const float projX = viewDef->projectionMatrix[ 0 ];
+	const float projY = viewDef->projectionMatrix[ 5 ];
+	if ( idMath::Fabs( projX ) <= 0.00001f || idMath::Fabs( projY ) <= 0.00001f ) {
+		return false;
+	}
+	state.renderWorld = viewDef->renderWorld;
+	state.mapName.Clear();
+	if ( state.renderWorld != NULL ) {
+		state.mapName = state.renderWorld->mapName;
+	}
+	state.videoRestartCount = tr.videoRestartCount;
+	state.viewportWidth = viewportWidth;
+	state.viewportHeight = viewportHeight;
+	state.renderTime = viewDef->renderView.time;
+	state.fovX = viewDef->renderView.fov_x;
+	state.fovY = viewDef->renderView.fov_y;
+	state.viewOrigin = viewDef->renderView.vieworg;
+	state.viewAxis[ 0 ] = viewDef->renderView.viewaxis[ 0 ];
+	state.viewAxis[ 1 ] = viewDef->renderView.viewaxis[ 1 ];
+	state.viewAxis[ 2 ] = viewDef->renderView.viewaxis[ 2 ];
+	state.reconstructInfo[ 0 ] = 1.0f / projX;
+	state.reconstructInfo[ 1 ] = 1.0f / projY;
+	state.reconstructInfo[ 2 ] = viewDef->projectionMatrix[ 8 ];
+	state.reconstructInfo[ 3 ] = viewDef->projectionMatrix[ 9 ];
+	state.projectInfo[ 0 ] = projX;
+	state.projectInfo[ 1 ] = projY;
+	state.projectInfo[ 2 ] = viewDef->projectionMatrix[ 8 ];
+	state.projectInfo[ 3 ] = viewDef->projectionMatrix[ 9 ];
+	state.depthProjection[ 0 ] = viewDef->projectionMatrix[ 10 ];
+	state.depthProjection[ 1 ] = viewDef->projectionMatrix[ 14 ];
+	memcpy( state.projectionMatrix, viewDef->projectionMatrix, sizeof( state.projectionMatrix ) );
+	memcpy( state.worldModelViewMatrix, viewDef->worldSpace.modelViewMatrix, sizeof( state.worldModelViewMatrix ) );
+	return true;
+}
+
+// RB_MotionBlurProjectionChanged
+static bool VK_Post_MotionProjectionChanged( const vkPostMotionViewState_t &current,
+		const vkPostMotionViewState_t &previous ) {
+	if ( idMath::Fabs( current.fovX - previous.fovX ) > 0.01f || idMath::Fabs( current.fovY - previous.fovY ) > 0.01f ) {
+		return true;
+	}
+	for ( int i = 0; i < 4; i++ ) {
+		if ( idMath::Fabs( current.projectInfo[ i ] - previous.projectInfo[ i ] ) > 0.0001f ) {
+			return true;
+		}
+	}
+	for ( int i = 0; i < 2; i++ ) {
+		if ( idMath::Fabs( current.depthProjection[ i ] - previous.depthProjection[ i ] ) > 0.0001f ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// RB_MotionBlurCameraMovedEnough
+static bool VK_Post_MotionCameraMovedEnough( const vkPostMotionViewState_t &current,
+		const vkPostMotionViewState_t &previous ) {
+	if ( ( current.viewOrigin - previous.viewOrigin ).LengthSqr() >= Square( 0.10f ) ) {
+		return true;
+	}
+	const float axisEpsilonSqr = Square( 0.00075f );
+	for ( int i = 0; i < 3; i++ ) {
+		if ( ( current.viewAxis[ i ] - previous.viewAxis[ i ] ).LengthSqr() >= axisEpsilonSqr ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// RB_MotionBlurHistoryUsable
+static bool VK_Post_MotionHistoryUsable( const vkPostMotionViewState_t &current,
+		const vkPostMotionViewState_t &previous, bool allowStillCameraObjectVectors ) {
+	if ( !vkPostScene.motionHistoryValid || r_jitter.GetBool() ) {
+		return false;
+	}
+	if ( current.videoRestartCount != previous.videoRestartCount ) {
+		return false;
+	}
+	if ( current.renderWorld != previous.renderWorld || current.mapName.Icmp( previous.mapName ) != 0 ) {
+		return false;
+	}
+	if ( current.viewportWidth != previous.viewportWidth || current.viewportHeight != previous.viewportHeight ) {
+		return false;
+	}
+	if ( current.renderTime <= previous.renderTime || current.renderTime - previous.renderTime > 100 ) {
+		return false;
+	}
+	if ( !allowStillCameraObjectVectors && !VK_Post_MotionCameraMovedEnough( current, previous ) ) {
+		return false;
+	}
+	if ( ( current.viewOrigin - previous.viewOrigin ).LengthSqr() > Square( 512.0f ) ) {
+		return false;
+	}
+	return !VK_Post_MotionProjectionChanged( current, previous );
+}
+
+static bool VK_Post_FindMotionEntityHistory( int entityIndex, float previousModelMatrix[ 16 ] ) {
+	for ( int i = 0; i < vkPostMotionEntityHistory.Num(); i++ ) {
+		if ( vkPostMotionEntityHistory[ i ].entityIndex == entityIndex ) {
+			memcpy( previousModelMatrix, vkPostMotionEntityHistory[ i ].modelMatrix, sizeof( float ) * 16 );
+			return true;
+		}
+	}
+	return false;
+}
+
+// RB_UpdateMotionBlurEntityHistory: the first eligible surface of each entity
+static void VK_Post_UpdateMotionEntityHistory( const viewDef_t *viewDef ) {
+	vkPostMotionNextEntityHistory.Clear();
+	for ( int i = 0; i < viewDef->numDrawSurfs; i++ ) {
+		const drawSurf_t *surf = viewDef->drawSurfs[ i ];
+		if ( !R_ScenePackets_TemporalRigidMotionEligible( surf ) ) {
+			continue;
+		}
+		const int entityIndex = surf->space->entityDef->index;
+		bool known = false;
+		for ( int j = 0; j < vkPostMotionNextEntityHistory.Num(); j++ ) {
+			if ( vkPostMotionNextEntityHistory[ j ].entityIndex == entityIndex ) {
+				known = true;
+				break;
+			}
+		}
+		if ( known ) {
+			continue;
+		}
+		vkPostMotionEntityHistory_t &entry = vkPostMotionNextEntityHistory.Alloc();
+		entry.entityIndex = entityIndex;
+		memcpy( entry.modelMatrix, surf->space->modelMatrix, sizeof( entry.modelMatrix ) );
+	}
+	vkPostMotionEntityHistory.Swap( vkPostMotionNextEntityHistory );
+	vkPostMotionNextEntityHistory.Clear();
+}
+
+static bool VK_Post_EnsureColorTarget( idImage *&image, idRenderTexture *&target, const char *name,
+		int width, int height, textureFilter_t filter, const char *label ) {
+	if ( width <= 0 || height <= 0 ) {
+		return false;
+	}
+	if ( image == NULL ) {
+		idImageOpts opts;
+		opts.textureType = TT_2D;
+		opts.format = FMT_RGBA16F;
+		opts.width = width;
+		opts.height = height;
+		opts.numLevels = 1;
+		opts.numMSAASamples = 0;
+		opts.isPersistant = true;
+		image = globalImages->ScratchImage( name, &opts, filter, TR_CLAMP, TD_DEFAULT );
+		if ( image == NULL ) {
+			return false;
+		}
+	}
+	if ( target == NULL ) {
+		if ( image->GetUploadWidth() != width || image->GetUploadHeight() != height ) {
+			image->Resize( width, height );
+		}
+		target = tr.CreateRenderTexture( image, NULL );
+		if ( target != NULL ) {
+			target->SetDebugLabel( label );
+		}
+	} else if ( target->GetWidth() != width || target->GetHeight() != height ) {
+		(void)tr.ResizeRenderTexture( target, width, height );
+	}
+	return target != NULL && target->GetWidth() == width && target->GetHeight() == height;
+}
+
+typedef struct vkPostMotionVectorPush_s {
+	float	currentMvp[ 16 ];
+	float	previousMvp[ 16 ];
+} vkPostMotionVectorPush_t;
+
+/*
+====================
+VK_Post_RenderMotionVectors
+
+RB_RenderMotionVectorBuffer: rigid entities that were drawn last frame write
+their screen-space velocity, in pixels, into an RGBA16F target the size of
+the view. The target has no depth attachment; the shader compares against the
+finished depth instead. The positive-height viewport stores the rows
+bottom-up like OpenGL's, which reverses the winding, so the front face flips
+to keep the material cull.
+====================
+*/
+static bool VK_Post_RenderMotionVectors( const viewDef_t *viewDef, const vkPostMotionViewState_t &previous,
+		idImage *depthImage, idRenderTexture *sceneTarget ) {
+	const int width = VK_Post_ViewWidth( viewDef );
+	const int height = VK_Post_ViewHeight( viewDef );
+	const VkShaderModule vertModule = VK_Post_SceneModule( VK_POST_MODULE_MOTION_VECTORS_VERT );
+	const VkShaderModule fragModule = VK_Post_SceneModule( VK_POST_MODULE_MOTION_VECTORS_FRAG );
+	const VkDescriptorSet depthSet = VK_Post_Descriptor( depthImage );
+	if ( vertModule == VK_NULL_HANDLE || fragModule == VK_NULL_HANDLE || depthSet == VK_NULL_HANDLE
+			|| !VK_Post_EnsureColorTarget( vkPostScene.motionVectorImage, vkPostScene.motionVectorTarget,
+				"_vkMotionVector", width, height, TF_NEAREST, "Vulkan motion vectors" ) ) {
+		return false;
+	}
+	if ( !VK_Exec_SetRenderTarget( vkPostScene.motionVectorTarget ) ) {
+		VK_Exec_SetRenderTarget( sceneTarget );
+		return false;
+	}
+	const float clearColor[ 4 ] = { 0.0f, 0.0f, 0.0f, 0.0f };
+	VK_Exec_ClearRenderTarget( true, false, 1.0f, clearColor );
+
+	VkCommandBuffer cmd = VK_Exec_ActiveCmd();
+	const VkPipeline pipeline = VK_Exec_ExtraPipeline( VK_POST_MOTION_VECTORS, vertModule, fragModule,
+			GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO, VK_EXTRA_VERTEX_POSITION, 0 );
+	float viewportSize[ 4 ] = { (float)width, (float)height, 0.0f, 0.0f };
+	const int uniformOffset = VK_Exec_InteractionUniformAlloc( viewportSize, sizeof( viewportSize ) );
+	bool drew = false;
+	if ( cmd != VK_NULL_HANDLE && pipeline != VK_NULL_HANDLE && uniformOffset >= 0
+			&& VK_Exec_MainRenderingScopeOpen() ) {
+		VkViewport viewport;
+		memset( &viewport, 0, sizeof( viewport ) );
+		viewport.width = (float)width;
+		viewport.height = (float)height;
+		viewport.maxDepth = 1.0f;
+		vkCmdSetViewport( cmd, 0, 1, &viewport );
+		VK_Post_ResetDrawState( cmd );
+		vkCmdSetFrontFace( cmd, VK_FRONT_FACE_CLOCKWISE );
+
+		const VkPipelineLayout layout = VK_Exec_InteractionPipelineLayout();
+		vkCmdBindPipeline( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline );
+		vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &depthSet, 0, NULL );
+		const VkDescriptorSet uniformSet = VK_Exec_InteractionUniformSet();
+		const uint32_t dynamicOffset = (uint32_t)uniformOffset;
+		vkCmdBindDescriptorSets( cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 6, 1, &uniformSet, 1, &dynamicOffset );
+
+		const int slot = VK_Exec_ActiveFrameSlot();
+		for ( int i = 0; i < viewDef->numDrawSurfs; i++ ) {
+			const drawSurf_t *surf = viewDef->drawSurfs[ i ];
+			if ( !R_ScenePackets_TemporalRigidMotionEligible( surf ) ) {
+				continue;
+			}
+			float previousModelMatrix[ 16 ];
+			if ( !VK_Post_FindMotionEntityHistory( surf->space->entityDef->index, previousModelMatrix ) ) {
+				continue;
+			}
+			const srfTriangles_t *tri = surf->geo;
+			if ( tri->ambientCache == NULL || tri->indexes == NULL
+					|| !VK_Exec_BindTriGeometry( cmd, slot, tri ) ) {
+				continue;
+			}
+
+			// per-surface scissor; the target is the view's size, so the rect
+			// needs no scaling, and bottom-up rows need no flip
+			VkRect2D scissor;
+			scissor.offset.x = 0;
+			scissor.offset.y = 0;
+			scissor.extent.width = (uint32_t)width;
+			scissor.extent.height = (uint32_t)height;
+			if ( r_useScissor.GetBool() && !surf->scissorRect.IsEmpty() ) {
+				const int x1 = idMath::ClampInt( 0, width - 1, surf->scissorRect.x1 );
+				const int y1 = idMath::ClampInt( 0, height - 1, surf->scissorRect.y1 );
+				const int x2 = idMath::ClampInt( x1 + 1, width, surf->scissorRect.x2 + 1 );
+				const int y2 = idMath::ClampInt( y1 + 1, height, surf->scissorRect.y2 + 1 );
+				scissor.offset.x = x1;
+				scissor.offset.y = y1;
+				scissor.extent.width = (uint32_t)( x2 - x1 );
+				scissor.extent.height = (uint32_t)( y2 - y1 );
+			}
+			vkCmdSetScissor( cmd, 0, 1, &scissor );
+
+			switch ( surf->material->GetCullType() ) {
+				case CT_TWO_SIDED:
+					vkCmdSetCullMode( cmd, VK_CULL_MODE_NONE );
+					break;
+				case CT_BACK_SIDED:
+					vkCmdSetCullMode( cmd, VK_CULL_MODE_BACK_BIT );
+					break;
+				default:
+					vkCmdSetCullMode( cmd, VK_CULL_MODE_FRONT_BIT );
+					break;
+			}
+
+			vkPostMotionVectorPush_t push;
+			VK_BuildSurfMVP( viewDef, surf, push.currentMvp );
+			float previousModelView[ 16 ];
+			myGlMultMatrix( previousModelMatrix, previous.worldModelViewMatrix, previousModelView );
+			myGlMultMatrix( previousModelView, previous.projectionMatrix, push.previousMvp );
+			vkCmdPushConstants( cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+					0, sizeof( push ), &push );
+			vkCmdDrawIndexed( cmd, (uint32_t)tri->numIndexes, 1, 0, 0, 0 );
+			drew = true;
+		}
+		vkCmdSetFrontFace( cmd, VK_FRONT_FACE_COUNTER_CLOCKWISE );
+	}
+	VK_Exec_SetRenderTarget( sceneTarget );
+	return drew;
+}
+
+// std140 layout of MotionBlurBlock in post_motionblur.frag
+typedef struct vkPostMotionBlurBlock_s {
+	float	texInfo[ 4 ];
+	float	currentReconstructInfo[ 4 ];
+	float	previousProjectInfo[ 4 ];
+	float	depthInfo[ 4 ];
+	float	currentViewOrigin[ 4 ];
+	float	currentViewAxis[ 3 ][ 4 ];
+	float	previousViewOrigin[ 4 ];
+	float	previousViewAxis[ 3 ][ 4 ];
+	float	motionBlurParams[ 4 ];
+	float	motionBlurObjectParams[ 4 ];
+} vkPostMotionBlurBlock_t;
+
+static void VK_Post_CopyVec3( float out[ 4 ], const idVec3 &value ) {
+	out[ 0 ] = value.x;
+	out[ 1 ] = value.y;
+	out[ 2 ] = value.z;
+	out[ 3 ] = 0.0f;
+}
+
+// Returns true when it drew into the scene.
+static bool VK_Post_MotionBlur( const viewDef_t *viewDef, idRenderTexture *sceneTarget ) {
+	if ( r_skipPostProcess.GetBool() || !r_motionBlur.GetBool() ) {
+		VK_Post_ResetMotionBlurHistory();
+		return false;
+	}
+	if ( !VK_Post_IsMainMotionBlurView( viewDef ) ) {
+		// like OpenGL, any other 3D view (portal sky, mirror, remote camera)
+		// drawn this frame costs the main view its history
+		if ( viewDef->viewEntitys != NULL ) {
+			VK_Post_ResetMotionBlurHistory();
+		}
+		return false;
+	}
+	if ( !r_motionBlurDebug.GetBool() && ( r_motionBlurStrength.GetFloat() <= 0.0f
+			|| r_motionBlurMaxPixels.GetFloat() <= 0.0f || r_motionBlurSamples.GetInteger() <= 0 ) ) {
+		VK_Post_ResetMotionBlurHistory();
+		return false;
+	}
+	const VkShaderModule fragModule = VK_Post_SceneModule( VK_POST_MODULE_MOTION_BLUR );
+	if ( r_jitter.GetBool() || fragModule == VK_NULL_HANDLE ) {
+		VK_Post_ResetMotionBlurHistory();
+		return false;
+	}
+	const int width = VK_Post_ViewWidth( viewDef );
+	const int height = VK_Post_ViewHeight( viewDef );
+	vkPostMotionViewState_t currentState;
+	if ( width <= 0 || height <= 0 || !VK_Post_BuildMotionViewState( viewDef, currentState, width, height ) ) {
+		VK_Post_ResetMotionBlurHistory();
+		return false;
+	}
+
+	const vkPostMotionViewState_t previousState = vkPostMotionHistory;
+	const bool objectVectorsRequested = r_motionBlurObjectVectors.GetBool();
+	const bool cameraMovedEnough = vkPostScene.motionHistoryValid
+		&& VK_Post_MotionCameraMovedEnough( currentState, previousState );
+	const bool historyUsable = VK_Post_MotionHistoryUsable( currentState, previousState, objectVectorsRequested );
+	vkPostMotionHistory = currentState;
+	vkPostScene.motionHistoryValid = true;
+	if ( !historyUsable ) {
+		vkPostScene.motionVectorValid = false;
+		VK_Post_UpdateMotionEntityHistory( viewDef );
+		return false;
+	}
+
+	idImage *depthImage = VK_Post_FinalDepth( viewDef );
+	idImage *scene = VK_Post_CaptureScene( viewDef );
+	if ( depthImage == NULL || scene == NULL ) {
+		VK_Post_ResetMotionBlurHistory();
+		return false;
+	}
+	vkPostScene.motionVectorValid = false;
+	if ( objectVectorsRequested ) {
+		vkPostScene.motionVectorValid = VK_Post_RenderMotionVectors( viewDef, previousState, depthImage, sceneTarget );
+	}
+	VK_Post_UpdateMotionEntityHistory( viewDef );
+	if ( VK_Exec_ActiveRenderTexture() != sceneTarget ) {
+		return false;
+	}
+
+	vkPostMotionBlurBlock_t block;
+	memset( &block, 0, sizeof( block ) );
+	block.texInfo[ 0 ] = 1.0f / (float)width;
+	block.texInfo[ 1 ] = 1.0f / (float)height;
+	block.texInfo[ 2 ] = (float)width;
+	block.texInfo[ 3 ] = (float)height;
+	memcpy( block.currentReconstructInfo, currentState.reconstructInfo, sizeof( block.currentReconstructInfo ) );
+	memcpy( block.previousProjectInfo, previousState.projectInfo, sizeof( block.previousProjectInfo ) );
+	block.depthInfo[ 0 ] = currentState.depthProjection[ 0 ];
+	block.depthInfo[ 1 ] = currentState.depthProjection[ 1 ];
+	VK_Post_CopyVec3( block.currentViewOrigin, currentState.viewOrigin );
+	VK_Post_CopyVec3( block.previousViewOrigin, previousState.viewOrigin );
+	for ( int i = 0; i < 3; i++ ) {
+		VK_Post_CopyVec3( block.currentViewAxis[ i ], currentState.viewAxis[ i ] );
+		VK_Post_CopyVec3( block.previousViewAxis[ i ], previousState.viewAxis[ i ] );
+	}
+	block.motionBlurParams[ 0 ] = idMath::ClampFloat( 0.0f, 2.0f, r_motionBlurStrength.GetFloat() );
+	block.motionBlurParams[ 1 ] = idMath::ClampFloat( 0.0f, 64.0f, r_motionBlurMaxPixels.GetFloat() );
+	block.motionBlurParams[ 2 ] = (float)idMath::ClampInt( 1, 16, r_motionBlurSamples.GetInteger() );
+	block.motionBlurParams[ 3 ] = r_motionBlurDebug.GetBool() ? 1.0f : 0.0f;
+	block.motionBlurObjectParams[ 0 ] = vkPostScene.motionVectorValid ? 1.0f : 0.0f;
+	block.motionBlurObjectParams[ 1 ] = cameraMovedEnough ? 1.0f : 0.0f;
+
+	idImage *velocity = vkPostScene.motionVectorValid ? vkPostScene.motionVectorImage : globalImages->blackImage;
+	const VkDescriptorSet sets[ 3 ] = {
+		VK_Post_Descriptor( scene ), VK_Post_Descriptor( depthImage ), VK_Post_Descriptor( velocity )
+	};
+	const int uniformOffset = VK_Exec_InteractionUniformAlloc( &block, sizeof( block ) );
+	const VkPipeline pipeline = VK_Exec_PostPipeline( VK_POST_MOTION_BLUR, vkPost.fullscreenVert, fragModule,
+			GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO );
+	return VK_Post_DrawSceneRect( viewDef, pipeline, sets, 3, uniformOffset );
+}
+
+// ---- bloom, tone map and grade (RB_STD_Bloom) ----
+
+typedef struct vkPostBloomBlurBlock_s {
+	float	params[ 4 ];
+	float	radius[ 4 ];
+} vkPostBloomBlurBlock_t;
+
+// std140 layout of BloomCompositeBlock in post_bloom_composite.frag
+typedef struct vkPostBloomCompositeBlock_s {
+	float	bloom[ 4 ];
+	float	exposure[ 4 ];
+	float	grade[ 4 ];
+	float	highlight[ 4 ];
+	float	weights[ 4 ];
+	float	weights2[ 4 ];
+} vkPostBloomCompositeBlock_t;
+
+// RB_GetBloomLevelSize: level 0 is the view, each next level halves, rounding up
+static void VK_Post_BloomLevelSize( int level, int viewWidth, int viewHeight, int &width, int &height ) {
+	width = viewWidth;
+	height = viewHeight;
+	for ( int i = 0; i < level; i++ ) {
+		width = Max( 1, ( width + 1 ) / 2 );
+		height = Max( 1, ( height + 1 ) / 2 );
+	}
+}
+
+static bool VK_Post_DrawBloomStep( idRenderTexture *target, int kind, int module, idImage *source,
+		const void *block, int blockBytes ) {
+	const VkShaderModule fragModule = VK_Post_SceneModule( module );
+	if ( fragModule == VK_NULL_HANDLE || !VK_Exec_SetRenderTarget( target ) ) {
+		return false;
+	}
+	const VkDescriptorSet sourceSet = VK_Post_Descriptor( source );
+	const int uniformOffset = VK_Exec_InteractionUniformAlloc( block, blockBytes );
+	const VkPipeline pipeline = VK_Exec_PostPipeline( kind, vkPost.fullscreenVert, fragModule,
+			GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO );
+	return VK_Post_SetsReady( pipeline, &sourceSet, 1, uniformOffset )
+		&& VK_Post_DrawTarget( pipeline, &sourceSet, 1, uniformOffset );
+}
+
+// Builds the bloom pyramid; each level ends blurred in its P0 image. Leaves
+// the last level's target bound; the caller restores the scene target.
+static bool VK_Post_BuildBloomPyramid( const viewDef_t *viewDef, idImage *scene, int levelCount ) {
+	const int viewWidth = VK_Post_ViewWidth( viewDef );
+	const int viewHeight = VK_Post_ViewHeight( viewDef );
+	const float bloomRadius = Max( r_bloomRadius.GetFloat(), 0.1f );
+	for ( int level = 0; level < levelCount; level++ ) {
+		int width, height;
+		VK_Post_BloomLevelSize( level, viewWidth, viewHeight, width, height );
+		for ( int pingPong = 0; pingPong < 2; pingPong++ ) {
+			if ( !VK_Post_EnsureColorTarget( vkPostScene.bloomImages[ level ][ pingPong ],
+					vkPostScene.bloomTargets[ level ][ pingPong ],
+					va( "_vkBloomL%dP%d", level, pingPong ), width, height, TF_LINEAR, "Vulkan bloom level" ) ) {
+				return false;
+			}
+		}
+		idRenderTexture *p0 = vkPostScene.bloomTargets[ level ][ 0 ];
+		idRenderTexture *p1 = vkPostScene.bloomTargets[ level ][ 1 ];
+		if ( level == 0 ) {
+			const float block[ 4 ] = {
+				1.0f / (float)viewWidth, 1.0f / (float)viewHeight,
+				r_bloomThreshold.GetFloat(), r_bloomSoftKnee.GetFloat()
+			};
+			if ( !VK_Post_DrawBloomStep( p0, VK_POST_BLOOM_EXTRACT, VK_POST_MODULE_BLOOM_EXTRACT,
+					scene, block, sizeof( block ) ) ) {
+				return false;
+			}
+		} else {
+			int previousWidth, previousHeight;
+			VK_Post_BloomLevelSize( level - 1, viewWidth, viewHeight, previousWidth, previousHeight );
+			const float block[ 4 ] = { 1.0f / (float)previousWidth, 1.0f / (float)previousHeight, 0.0f, 0.0f };
+			if ( !VK_Post_DrawBloomStep( p0, VK_POST_BLOOM_DOWNSAMPLE, VK_POST_MODULE_BLOOM_DOWNSAMPLE,
+					vkPostScene.bloomImages[ level - 1 ][ 0 ], block, sizeof( block ) ) ) {
+				return false;
+			}
+		}
+		vkPostBloomBlurBlock_t blur;
+		memset( &blur, 0, sizeof( blur ) );
+		blur.params[ 0 ] = 1.0f / (float)width;
+		blur.params[ 1 ] = 1.0f / (float)height;
+		blur.radius[ 0 ] = bloomRadius * ( 1.0f + 0.65f * (float)level );
+		blur.params[ 2 ] = 1.0f;
+		blur.params[ 3 ] = 0.0f;
+		if ( !VK_Post_DrawBloomStep( p1, VK_POST_BLOOM_BLUR, VK_POST_MODULE_BLOOM_BLUR,
+				vkPostScene.bloomImages[ level ][ 0 ], &blur, sizeof( blur ) ) ) {
+			return false;
+		}
+		blur.params[ 2 ] = 0.0f;
+		blur.params[ 3 ] = 1.0f;
+		if ( !VK_Post_DrawBloomStep( p0, VK_POST_BLOOM_BLUR, VK_POST_MODULE_BLOOM_BLUR,
+				vkPostScene.bloomImages[ level ][ 1 ], &blur, sizeof( blur ) ) ) {
+			return false;
+		}
+	}
+	return true;
+}
+
+static bool VK_Post_DrawBloom( const viewDef_t *viewDef, idRenderTexture *sceneTarget ) {
+	const VkShaderModule fragModule = VK_Post_SceneModule( VK_POST_MODULE_BLOOM_COMPOSITE );
+	if ( fragModule == VK_NULL_HANDLE ) {
+		return false;
+	}
+	idImage *scene = VK_Post_CaptureScene( viewDef );
+	if ( scene == NULL ) {
+		return false;
+	}
+	const bool bloomRequested = VK_Post_BloomRequested();
+	const int levelCount = idMath::ClampInt( 1, VK_POST_BLOOM_MAX_LEVELS, r_bloomMipCount.GetInteger() );
+	idImage *bloomImages[ VK_POST_BLOOM_MAX_LEVELS ];
+	float weights[ VK_POST_BLOOM_MAX_LEVELS ] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
+	for ( int i = 0; i < VK_POST_BLOOM_MAX_LEVELS; i++ ) {
+		bloomImages[ i ] = globalImages->blackImage;
+	}
+	bool bloomEnabled = false;
+	if ( bloomRequested ) {
+		bloomEnabled = VK_Post_BuildBloomPyramid( viewDef, scene, levelCount );
+		if ( bloomEnabled ) {
+			float weightSum = 0.0f;
+			for ( int level = 0; level < levelCount; level++ ) {
+				weightSum += VK_POST_BLOOM_BASE_WEIGHTS[ level ];
+			}
+			if ( weightSum <= 0.0f ) {
+				weightSum = 1.0f;
+			}
+			for ( int level = 0; level < levelCount; level++ ) {
+				bloomImages[ level ] = vkPostScene.bloomImages[ level ][ 0 ];
+				weights[ level ] = VK_POST_BLOOM_BASE_WEIGHTS[ level ] / weightSum;
+			}
+		}
+		if ( !VK_Exec_SetRenderTarget( sceneTarget ) ) {
+			return false;
+		}
+	}
+
+	vkPostBloomCompositeBlock_t block;
+	memset( &block, 0, sizeof( block ) );
+	block.bloom[ 0 ] = bloomRequested ? r_bloomIntensity.GetFloat() : 0.0f;
+	block.bloom[ 1 ] = bloomEnabled ? 1.0f : 0.0f;
+	block.bloom[ 2 ] = r_hdrToneMap.GetBool() ? 1.0f : 0.0f;
+	block.bloom[ 3 ] = (float)idMath::ClampInt( 0, 2, r_hdrDebugView.GetInteger() );
+	// auto exposure only runs on OpenGL's modern-visible path, never on the
+	// classic path this mirrors, so the adapted exposure is 1
+	block.exposure[ 0 ] = r_hdrExposure.GetFloat();
+	block.exposure[ 1 ] = r_hdrWhitePoint.GetFloat();
+	block.exposure[ 2 ] = r_hdrLift.GetFloat();
+	block.exposure[ 3 ] = r_hdrPostGamma.GetFloat();
+	block.grade[ 0 ] = r_hdrGain.GetFloat();
+	block.grade[ 1 ] = r_hdrVibrance.GetFloat();
+	block.grade[ 2 ] = r_hdrSaturation.GetFloat();
+	block.grade[ 3 ] = r_hdrContrast.GetFloat();
+	block.highlight[ 0 ] = r_hdrHighlightDesaturation.GetFloat();
+	block.highlight[ 1 ] = r_hdrGamutCompression.GetFloat();
+	for ( int i = 0; i < 4; i++ ) {
+		block.weights[ i ] = weights[ i ];
+	}
+	block.weights2[ 0 ] = weights[ 4 ];
+
+	VkDescriptorSet sets[ 1 + VK_POST_BLOOM_MAX_LEVELS ];
+	sets[ 0 ] = VK_Post_Descriptor( scene );
+	for ( int i = 0; i < VK_POST_BLOOM_MAX_LEVELS; i++ ) {
+		sets[ 1 + i ] = VK_Post_Descriptor( bloomImages[ i ] );
+	}
+	const int uniformOffset = VK_Exec_InteractionUniformAlloc( &block, sizeof( block ) );
+	const VkPipeline pipeline = VK_Exec_PostPipeline( VK_POST_BLOOM_COMPOSITE, vkPost.fullscreenVert,
+			fragModule, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO );
+	return VK_Post_DrawSceneRect( viewDef, pipeline, sets, 1 + VK_POST_BLOOM_MAX_LEVELS, uniformOffset );
+}
+
+// ---- cel world ink (RB_STD_CelWorldOutline) ----
+
+// std140 layout of CelOutlineBlock in post_celoutline.frag
+typedef struct vkPostCelOutlineBlock_s {
+	float	texInfo[ 4 ];
+	float	projection[ 4 ];
+	float	depthInfo[ 4 ];
+	float	celEdgeParams[ 4 ];
+	float	celOutlineColor[ 4 ];
+} vkPostCelOutlineBlock_t;
+
+static bool VK_Post_DrawCelInk( const viewDef_t *viewDef ) {
+	const int width = VK_Post_ViewWidth( viewDef );
+	const int height = VK_Post_ViewHeight( viewDef );
+	if ( vkPostScene.celWorldDepthFrame != backEnd.frameCount || vkPostScene.celWorldDepth == NULL
+			|| vkPostScene.celWorldDepthWidth != width || vkPostScene.celWorldDepthHeight != height ) {
+		if ( r_celShadingWorldDebug.GetBool() ) {
+			common->Printf( "cel world outline skipped: no world depth snapshot for this view\n" );
+		}
+		return false;
+	}
+	const VkShaderModule fragModule = VK_Post_SceneModule( VK_POST_MODULE_CEL_OUTLINE );
+	if ( fragModule == VK_NULL_HANDLE || !VK_Post_ProjectionUsable( viewDef ) ) {
+		return false;
+	}
+	idImage *sceneDepth = VK_Post_FinalDepth( viewDef );
+	idImage *scene = VK_Post_CaptureScene( viewDef );
+	if ( sceneDepth == NULL || scene == NULL ) {
+		return false;
+	}
+
+	vkPostCelOutlineBlock_t block;
+	memset( &block, 0, sizeof( block ) );
+	block.texInfo[ 0 ] = 1.0f / (float)width;
+	block.texInfo[ 1 ] = 1.0f / (float)height;
+	VK_Post_ProjectionInfo( viewDef, block.projection );
+	block.depthInfo[ 0 ] = viewDef->projectionMatrix[ 10 ];
+	block.depthInfo[ 1 ] = viewDef->projectionMatrix[ 14 ];
+	block.celEdgeParams[ 0 ] = R_CelWorldOutlineWidth();
+	block.celEdgeParams[ 1 ] = R_CelWorldOutlineDepthThreshold();
+	block.celEdgeParams[ 2 ] = R_CelWorldOutlineNormalThreshold();
+	block.celEdgeParams[ 3 ] = r_celShadingWorldDebug.GetBool() ? 1.0f : 0.0f;
+	idVec4 color;
+	R_CelWorldOutlineColor( color );
+	block.celOutlineColor[ 0 ] = color.x;
+	block.celOutlineColor[ 1 ] = color.y;
+	block.celOutlineColor[ 2 ] = color.z;
+	block.celOutlineColor[ 3 ] = color.w;
+
+	const VkDescriptorSet sets[ 3 ] = {
+		VK_Post_Descriptor( scene ), VK_Post_Descriptor( vkPostScene.celWorldDepth ), VK_Post_Descriptor( sceneDepth )
+	};
+	const int uniformOffset = VK_Exec_InteractionUniformAlloc( &block, sizeof( block ) );
+	const VkPipeline pipeline = VK_Exec_PostPipeline( VK_POST_CEL_OUTLINE, vkPost.fullscreenVert, fragModule,
+			GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO );
+	return VK_Post_DrawSceneRect( viewDef, pipeline, sets, 3, uniformOffset );
+}
+
+// one-shot bring-up evidence that a scene pass really drew
+static void VK_Post_LogFirstDraw( bool &logged, const char *pass, const char *detail ) {
+	if ( !logged ) {
+		logged = true;
+		common->Printf( "Vulkan: first %s pass drew%s\n", pass, detail );
+	}
+}
+
+static void VK_Post_WarnOnce( bool &warned, const char *pass ) {
+	if ( !warned ) {
+		warned = true;
+		common->Warning( "Vulkan: %s pass could not run (%s)", pass,
+			vkPostFailReason != NULL ? vkPostFailReason : "draw refused" );
+	}
+	vkPostFailReason = NULL;
+}
+
+/*
+====================
+VK_PostProcess_DrawSceneEffects
+
+RB_STD_DrawView steps 9-12 for one 3D view: SSAO, motion blur, bloom with the
+tone map, then the cel world ink. Called for every 3D view after the post-fog
+material passes; each pass gates itself on the main scene view. Returns true
+when anything drew, in which case the caller restores its viewport and
+treats _currentRender as stale.
+====================
+*/
+bool VK_PostProcess_DrawSceneEffects( const viewDef_t *viewDef ) {
+	if ( viewDef == NULL || viewDef->viewEntitys == NULL || !VK_GuiExecutor_FrameIsOpen() ) {
+		return false;
+	}
+	vkPostScene.viewSerial++;
+	const bool ssao = VK_Post_SSAORequested( viewDef );
+	const bool bloomPass = VK_Post_BloomPassRequested( viewDef );
+	const bool celInk = VK_Post_CelInkRequested( viewDef );
+	if ( !VK_Post_EnsureModules() ) {
+		VK_Post_ResetMotionBlurHistory();
+		return false;
+	}
+	if ( VK_Post_ViewWidth( viewDef ) <= 0 || VK_Post_ViewHeight( viewDef ) <= 0 ) {
+		return false;
+	}
+	idRenderTexture *sceneTarget = VK_Exec_ActiveRenderTexture();
+	bool drew = false;
+
+	static bool ssaoWarned = false;
+	static bool motionBlurWarned = false;
+	static bool bloomWarned = false;
+	static bool celWarned = false;
+	static bool ssaoLogged = false;
+	static bool motionBlurLogged = false;
+	static bool bloomLogged = false;
+	static bool celLogged = false;
+	if ( ssao ) {
+		if ( VK_Post_DrawSSAO( viewDef ) ) {
+			drew = true;
+			VK_Post_LogFirstDraw( ssaoLogged, "SSAO",
+				vkPostScene.ssaoWorldDepthFrame == backEnd.frameCount ? " (world depth snapshot)" : "" );
+		} else {
+			VK_Post_WarnOnce( ssaoWarned, "r_ssao" );
+		}
+	}
+	// the motion blur runs its history bookkeeping on every 3D view
+	if ( VK_Post_MotionBlur( viewDef, sceneTarget ) ) {
+		drew = true;
+		VK_Post_LogFirstDraw( motionBlurLogged, "motion blur",
+			vkPostScene.motionVectorValid ? " (with object vectors)" : " (camera only)" );
+	}
+	if ( VK_Exec_ActiveRenderTexture() != sceneTarget && !VK_Exec_SetRenderTarget( sceneTarget ) ) {
+		VK_Post_WarnOnce( motionBlurWarned, "r_motionBlur" );
+		return drew;
+	}
+	if ( bloomPass ) {
+		if ( VK_Post_DrawBloom( viewDef, sceneTarget ) ) {
+			drew = true;
+			VK_Post_LogFirstDraw( bloomLogged, "bloom/tone map", "" );
+		} else {
+			VK_Post_WarnOnce( bloomWarned, "r_bloom/r_hdrToneMap" );
+		}
+		if ( VK_Exec_ActiveRenderTexture() != sceneTarget && !VK_Exec_SetRenderTarget( sceneTarget ) ) {
+			return drew;
+		}
+	}
+	if ( celInk ) {
+		if ( VK_Post_DrawCelInk( viewDef ) ) {
+			drew = true;
+			VK_Post_LogFirstDraw( celLogged, "cel world outline", "" );
+		} else if ( vkPostScene.celWorldDepthFrame == backEnd.frameCount ) {
+			VK_Post_WarnOnce( celWarned, "r_celShadingWorld outline" );
+		}
+	}
+	return drew;
+}
+
+/*
+===============================================================================
+
+	Underwater view (RB_STD_Underwater)
+
+	A scene pass over the finished world, after the SS_POST_PROCESS surfaces
+	and before the HUD, confined to the main view. The game asks
+	RB_UnderwaterViewAvailable before handing over the state and draws a flat
+	wash itself when the answer is no.
+
+===============================================================================
+*/
+
+bool RB_UnderwaterViewAvailable( void ) {
+	if ( r_skipPostProcess.GetBool() || !r_underwater.GetBool() ) {
+		return false;
+	}
+	return vkCtx.device != VK_NULL_HANDLE && VK_Post_SceneModule( VK_POST_MODULE_UNDERWATER ) != VK_NULL_HANDLE;
+}
+
+// std140 layout of UnderwaterBlock in post_underwater.frag
+typedef struct vkPostUnderwaterBlock_s {
+	float	texInfo[ 4 ];
+	float	depthInfo[ 4 ];
+	float	tint[ 4 ];
+	float	fogParams[ 4 ];
+	float	effectParams0[ 4 ];
+	float	effectParams1[ 4 ];
+} vkPostUnderwaterBlock_t;
+
+bool VK_PostProcess_DrawUnderwater( const viewDef_t *viewDef ) {
+	const float amount = idMath::ClampFloat( 0.0f, 1.0f, tr.underwaterAmount );
+	if ( amount <= 0.001f || viewDef == NULL || !RB_UnderwaterViewAvailable()
+			|| !VK_Post_IsMainSceneView( viewDef ) || !VK_GuiExecutor_FrameIsOpen() ) {
+		return false;
+	}
+	const int width = VK_Post_ViewWidth( viewDef );
+	const int height = VK_Post_ViewHeight( viewDef );
+	if ( width <= 0 || height <= 0 || !VK_Post_EnsureModules() ) {
+		return false;
+	}
+	// the post-process surfaces may have drawn since the scene effects, so
+	// take depth afresh; without it the shader treats everything as mid-range
+	vkPostScene.finalDepthFrame = -1;
+	idImage *depthImage = VK_Post_FinalDepth( viewDef );
+	idImage *scene = VK_Post_CaptureScene( viewDef );
+	if ( scene == NULL ) {
+		return false;
+	}
+
+	vkPostUnderwaterBlock_t block;
+	memset( &block, 0, sizeof( block ) );
+	block.texInfo[ 0 ] = 1.0f / (float)width;
+	block.texInfo[ 1 ] = 1.0f / (float)height;
+	block.texInfo[ 2 ] = 1.0f;		// the capture is exactly the view's size
+	block.texInfo[ 3 ] = 1.0f;
+	block.depthInfo[ 0 ] = viewDef->projectionMatrix[ 10 ];
+	block.depthInfo[ 1 ] = viewDef->projectionMatrix[ 14 ];
+	block.depthInfo[ 2 ] = amount;
+	block.depthInfo[ 3 ] = (float)backEnd.frameCount * ( 1.0f / 60.0f );
+	block.tint[ 0 ] = idMath::ClampFloat( 0.0f, 1.0f, tr.underwaterTint.x );
+	block.tint[ 1 ] = idMath::ClampFloat( 0.0f, 1.0f, tr.underwaterTint.y );
+	block.tint[ 2 ] = idMath::ClampFloat( 0.0f, 1.0f, tr.underwaterTint.z );
+	block.fogParams[ 0 ] = Max( 1.0f, tr.underwaterFogDistance * Max( 0.01f, r_underwaterVisibility.GetFloat() ) );
+	block.fogParams[ 1 ] = depthImage != NULL ? 1.0f : 0.0f;
+	block.fogParams[ 2 ] = (float)width / (float)height;
+	block.effectParams0[ 0 ] = idMath::ClampFloat( 0.0f, 4.0f, r_underwaterWarp.GetFloat() ) * 0.0035f;
+	block.effectParams0[ 1 ] = idMath::ClampFloat( 0.0f, 4.0f, r_underwaterBlur.GetFloat() );
+	block.effectParams0[ 2 ] = idMath::ClampFloat( 0.0f, 2.0f, r_underwaterEdgeSoften.GetFloat() );
+	block.effectParams0[ 3 ] = idMath::ClampFloat( 0.0f, 0.5f, r_underwaterCaustics.GetFloat() );
+	block.effectParams1[ 0 ] = idMath::ClampFloat( 0.0f, 4.0f, r_underwaterBloom.GetFloat() );
+	block.effectParams1[ 1 ] = idMath::ClampFloat( 0.0f, 4.0f, r_underwaterAberration.GetFloat() );
+	block.effectParams1[ 2 ] = idMath::ClampFloat( 0.0f, 2.0f, r_underwaterParticles.GetFloat() );
+
+	const VkDescriptorSet sets[ 2 ] = {
+		VK_Post_Descriptor( scene ), VK_Post_Descriptor( depthImage != NULL ? depthImage : scene )
+	};
+	const int uniformOffset = VK_Exec_InteractionUniformAlloc( &block, sizeof( block ) );
+	const VkPipeline pipeline = VK_Exec_PostPipeline( VK_POST_UNDERWATER, vkPost.fullscreenVert,
+			VK_Post_SceneModule( VK_POST_MODULE_UNDERWATER ), GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO );
+	if ( !VK_Post_DrawSceneRect( viewDef, pipeline, sets, 2, uniformOffset ) ) {
+		static bool warned = false;
+		VK_Post_WarnOnce( warned, "underwater view" );
+		return false;
+	}
+	static bool logged = false;
+	VK_Post_LogFirstDraw( logged, "underwater view", "" );
+	backEnd.currentRenderCopied = false;
+	return true;
+}
+
+/*
+===============================================================================
+
+	r_showIntensity and r_showDepth
+
+	vk_DebugTools.cpp's RB_ShowIntensity and RB_ShowDepthBuffer. OpenGL reads
+	the frame back with glReadPixels, recolours it on the CPU and draws it
+	again with glDrawPixels; here post_debug_view.frag does the same mapping
+	over a copy of the view.
+
+===============================================================================
+*/
+
+// std140 layout of DebugViewBlock in post_debug_view.frag
+typedef struct vkPostDebugViewBlock_s {
+	float	params[ 4 ];	// x: 0 intensity, 1 depth
+} vkPostDebugViewBlock_t;
+
+bool VK_PostProcess_DrawDebugView( const viewDef_t *viewDef, int mode ) {
+	if ( viewDef == NULL || !VK_GuiExecutor_FrameIsOpen() || !VK_Post_EnsureModules() ) {
+		return false;
+	}
+	const VkShaderModule fragModule = VK_Post_SceneModule( VK_POST_MODULE_DEBUG_VIEW );
+	if ( fragModule == VK_NULL_HANDLE ) {
+		return false;
+	}
+	idImage *source = NULL;
+	if ( mode == 1 ) {
+		// always afresh: the debug tools draw after the scene effects' capture
+		vkPostScene.finalDepthFrame = -1;
+		source = VK_Post_FinalDepth( viewDef );
+	} else {
+		source = VK_Post_CaptureScene( viewDef );
+	}
+	if ( source == NULL ) {
+		return false;
+	}
+
+	vkPostDebugViewBlock_t block;
+	memset( &block, 0, sizeof( block ) );
+	block.params[ 0 ] = mode == 1 ? 1.0f : 0.0f;
+	const VkDescriptorSet sets[ 1 ] = { VK_Post_Descriptor( source ) };
+	const int uniformOffset = VK_Exec_InteractionUniformAlloc( &block, sizeof( block ) );
+	const VkPipeline pipeline = VK_Exec_PostPipeline( VK_POST_DEBUG_VIEW, vkPost.fullscreenVert,
+			fragModule, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO );
+	if ( !VK_Post_DrawSceneRect( viewDef, pipeline, sets, 1, uniformOffset ) ) {
+		static bool warned = false;
+		VK_Post_WarnOnce( warned, mode == 1 ? "depth debug view" : "intensity debug view" );
+		return false;
+	}
+	backEnd.currentRenderCopied = false;
+	return true;
+}
+
+#endif /* OPENQ4_RENDERER_VK_MODULE */

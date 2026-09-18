@@ -2255,6 +2255,19 @@ void RB_ShowDestinationAlpha( void );
 void RB_ShowOverdraw( void );
 void RB_RenderDebugTools( drawSurf_t **drawSurfs, int numDrawSurfs );
 void RB_ShutdownDebugTools( void );
+
+// Image binds in the debug tools (tr_rendertools.cpp, tr_trace.cpp). The
+// Vulkan module draws those tools through a fixed-function emulation
+// (Vulkan/vk_DebugTools.cpp) that has to see which image is bound; OpenGL
+// binds it as usual.
+#if defined( OPENQ4_RENDERER_VK_MODULE )
+void VK_DebugGL_BindImage( idImage *image );
+#define RB_BindDebugImage( image )	VK_DebugGL_BindImage( image )
+#define RB_BindNullDebugImage()		VK_DebugGL_BindImage( NULL )
+#else
+#define RB_BindDebugImage( image )	( image )->Bind()
+#define RB_BindNullDebugImage()		globalImages->BindNull()
+#endif
 void RB_ShutdownScenePostProcess( void );
 void RB_ApplyColorMappingsToBackBuffer( void );
 
