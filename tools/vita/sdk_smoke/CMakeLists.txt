@@ -26,6 +26,18 @@ target_include_directories(openq4_vita_idlib_probe PRIVATE
 
 target_compile_features(openq4_vita_idlib_probe PRIVATE cxx_std_20)
 
+add_library(openq4_vita_precompiled_probe STATIC
+  idlib_math_probe.cpp
+)
+
+target_compile_options(openq4_vita_precompiled_probe PRIVATE
+  -fsigned-char
+  -DVITA=1
+  -Wall
+  -Wextra
+)
+
+target_compile_features(openq4_vita_precompiled_probe PRIVATE cxx_std_20)
 add_executable(vita_sdk_smoke
   main.cpp
   platform_probe.cpp
