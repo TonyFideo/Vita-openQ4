@@ -29,6 +29,8 @@ jobs:
     container: vitasdk/vitasdk:latest
     env:
       VITASDK: /usr/local/vitasdk
+      OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}/../openQ4-game
+      OPENQ4_GAMELIBS_SHA: 8f411dbc38efcb0f5f63b1c300ab220beb73808c
 
     steps:
       - name: Partial sparse checkout
@@ -52,6 +54,20 @@ jobs:
           git checkout --detach FETCH_HEAD
           git rev-parse HEAD
 
+      - name: Fetch and stage pinned openQ4-game sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "${OPENQ4_GAMELIBS_REPO}"
+          git init "${OPENQ4_GAMELIBS_REPO}"
+          git -C "${OPENQ4_GAMELIBS_REPO}" remote add origin https://github.com/themuffinator/openQ4-game.git
+          git -C "${OPENQ4_GAMELIBS_REPO}" fetch --depth 1 --filter=blob:none origin "${OPENQ4_GAMELIBS_SHA}"
+          git -C "${OPENQ4_GAMELIBS_REPO}" checkout --detach FETCH_HEAD
+          test "$(git -C "${OPENQ4_GAMELIBS_REPO}" rev-parse HEAD)" = "${OPENQ4_GAMELIBS_SHA}"
+          python3 tools/build/stage_gamelibs.py \
+            "${GITHUB_WORKSPACE}" \
+            "${OPENQ4_GAMELIBS_REPO}" \
+            "${GITHUB_WORKSPACE}/.tmp/gamelibs_stage"
       - name: Verify VitaSDK toolchain
         shell: bash
         run: |
