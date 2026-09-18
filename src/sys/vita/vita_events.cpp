@@ -15,7 +15,6 @@ sysEvent_t Sys_GetEvent( void ) {
 	sysEvent_t event;
 	memset( &event, 0, sizeof( event ) );
 	event.evType = SE_NONE;
-	event.evTime = Sys_Milliseconds();
 	return event;
 }
 
