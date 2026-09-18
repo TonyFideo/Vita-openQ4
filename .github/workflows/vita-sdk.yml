@@ -1,0 +1,76 @@
+name: VitaSDK Smoke
+
+on:
+  push:
+    branches:
+      - vita-port
+    paths:
+      - .github/workflows/vita-sdk.yml
+      - tools/vita/**
+  pull_request:
+    paths:
+      - .github/workflows/vita-sdk.yml
+      - tools/vita/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sdk-smoke:
+    name: VitaSDK toolchain smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container: vitasdk/vitasdk:latest
+    env:
+      VITASDK: /usr/local/vitasdk
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Verify VitaSDK toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "$VITASDK"
+          test -x "$VITASDK/bin/arm-vita-eabi-gcc"
+          test -x "$VITASDK/bin/arm-vita-eabi-g++"
+          test -f "$VITASDK/share/vita.toolchain.cmake"
+          test -f "$VITASDK/share/vita.cmake"
+          echo "VITASDK=$VITASDK"
+          arm-vita-eabi-gcc --version | head -n 1
+          arm-vita-eabi-g++ --version | head -n 1
+          cmake --version | head -n 1
+
+      - name: Configure C++20 Vita smoke target
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S tools/vita/sdk_smoke -B build/vita-sdk-smoke \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$VITASDK/share/vita.toolchain.cmake"
+
+      - name: Build ELF and SELF
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build build/vita-sdk-smoke --parallel 2
+
+      - name: Validate Vita artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f build/vita-sdk-smoke/vita_sdk_smoke
+          test -f build/vita-sdk-smoke/vita_sdk_smoke.self
+          arm-vita-eabi-readelf -h build/vita-sdk-smoke/vita_sdk_smoke
+          ls -lh build/vita-sdk-smoke/vita_sdk_smoke build/vita-sdk-smoke/vita_sdk_smoke.self
+
+      - name: Upload smoke artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vita-sdk-smoke
+          path: |
+            build/vita-sdk-smoke/vita_sdk_smoke
+            build/vita-sdk-smoke/vita_sdk_smoke.self
+          if-no-files-found: error
