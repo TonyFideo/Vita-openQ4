@@ -7,6 +7,8 @@ on:
     paths:
       - .github/workflows/vita-sdk.yml
       - tools/vita/**
+      - meson.build
+      - meson.build
   pull_request:
     paths:
       - .github/workflows/vita-sdk.yml
@@ -43,6 +45,31 @@ jobs:
           arm-vita-eabi-g++ --version | head -n 1
           cmake --version | head -n 1
 
+      - name: Install Meson bring-up dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt-get update -qq
+          apt-get install -y --no-install-recommends python3-pip ninja-build
+          python3 -m pip install --break-system-packages "meson>=1.6,<2"
+          meson --version
+
+      - name: Configure openQ4 for Vita ARMv7
+        shell: bash
+        run: |
+          set -euo pipefail
+          meson setup build/vita-config . \
+            --cross-file tools/vita/meson-vita.ini \
+            --backend ninja \
+            --buildtype release \
+            -Dplatform_backend=native \
+            -Dbuild_engine=false \
+            -Dbuild_games=false \
+            -Dbuild_game_sp=false \
+            -Dbuild_game_mp=false \
+            -Dbuild_renderer_gl=false \
+            -Dbuild_renderer_vk=false \
+            -Duse_pch=false
       - name: Configure C++20 Vita smoke target
         shell: bash
         run: |
