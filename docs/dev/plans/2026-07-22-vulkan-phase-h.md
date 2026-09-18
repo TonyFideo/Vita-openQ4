@@ -2,6 +2,10 @@
 
 Status: recon complete (docs/dev/plans/phase-h-recon/ — READ THOSE FIRST);
 H1 staged.
+Status update (2026-09-18): H1, H2, and H4 have landed in the code
+(render-texture commands, readback, captures, MSAA resolve). H3 (gamma and
+brightness) and H5 (post chain) have not, nor have alpha-to-coverage and soft
+particles.
 Parent: [2026-07-16-vulkan-renderer.md](2026-07-16-vulkan-renderer.md) Phase H;
 Phase G record: [2026-07-20-vulkan-phase-g.md](2026-07-20-vulkan-phase-g.md).
 Milestone: preset-reachable rendering (MSAA 2x + SMAA via the game RT path)

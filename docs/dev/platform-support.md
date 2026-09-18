@@ -36,6 +36,8 @@ What the tiers mean:
 
 The real-hardware evidence here is community reporting on GitHub issues, not the accepted signoff archives the first-class gates require. Reports from other channels can move a target once they are recorded in the matching evidence document.
 
+Renderer backends are tiered separately from platforms. OpenGL is the supported renderer on every platform. The Vulkan renderer is experimental on every platform, macOS included; the "Vulkan renderer" row of [the engine capability matrix](engine-capability-matrix.md) records why, and [Display Settings](../user/display-settings.md#what-vulkan-does-not-do-yet) lists the OpenGL features it does not have yet.
+
 ## Current Baseline (v0.13.x release line)
 
 - Published releases are currently on the `v0.13.x` line. The version in `meson.build` is the release floor consumed by the release-version helper (see `BUILDING.md`); builds that do not pin `version_base_override` raise that floor to the newest published `v*` tag, so a development build reports the release line it was branched from rather than a version that never shipped.

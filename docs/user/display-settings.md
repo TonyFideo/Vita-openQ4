@@ -128,16 +128,23 @@ with the supported OpenGL renderer and the experimental Vulkan renderer.
 
 ## Renderer Backend (OpenGL default; Vulkan is experimental)
 
-openQ4 ships with an **OpenGL renderer as the default and only supported
-backend** on every platform. A **Vulkan renderer is included but is
-experimental and opt-in** — it is under active development, not feature-complete
-or performance-validated, and can show visual artifacts or instability. Do not
-use it for normal play; OpenGL remains the recommended renderer.
+openQ4 renders with **OpenGL by default on every platform**, and OpenGL is the
+only release-supported renderer. A **Vulkan renderer is included as an
+experimental opt-in**. It draws the stock game: world and model materials,
+including the stock heat-haze, glass, water, and other program effects,
+interaction lighting, stencil and mapped shadows, fog, decals, GUIs, and
+cinematics. On the development machine (an NVIDIA RTX 4060 laptop on Windows)
+it runs clean under the Vulkan validation layers, and in the recorded runs
+there it was faster than OpenGL. It stays experimental because the features
+listed under [What Vulkan does not do yet](#what-vulkan-does-not-do-yet) have
+no Vulkan version, it has been tried on very few GPUs and drivers, and no
+automated test runs it on every change. OpenGL remains the recommended renderer
+for normal play.
 
 | Setting | Default | What it does |
 |---|---:|---|
 | `r_renderApi` | `gl` | Renderer backend: `gl` (default, supported) or `vulkan` (**experimental**). `best` resolves to `gl` until the Vulkan backend clears its promotion evidence and sign-off. Takes effect on **engine restart**, not `vid_restart`. |
-| `r_actualRenderApi` | (read-only) | Reports the backend that actually initialized. If a Vulkan request fails, the engine **falls back to OpenGL** and this reports `gl`. |
+| `r_actualRenderApi` | (read-only) | Reports the backend that actually initialized. If the Vulkan renderer module cannot be loaded, the engine **falls back to OpenGL** and this reports `gl`. |
 
 ### All `r_renderApi` values
 
@@ -154,13 +161,42 @@ Notes:
 
 - The `vulkan` selection is archived to your config and applied at the next
   engine start; restart openQ4 fully (not just `vid_restart`) to switch.
-- If Vulkan cannot initialize (no compatible driver/GPU, or a module error),
-  openQ4 logs a warning and renders with OpenGL so you are never left with a
-  black screen. Check `r_actualRenderApi` or `gfxInfo` to see the active
-  backend.
-- Experimental status means known issues are expected; please only file
-  Vulkan-specific reports with `openq4.log` and `gfxInfo`, and note that it is
-  not yet a release-supported path.
+- If the Vulkan renderer module is missing or cannot be loaded, openQ4 logs a
+  warning and renders with OpenGL. Check `r_actualRenderApi` or `gfxInfo` to
+  see the active backend.
+- If the module loads but your driver or GPU cannot start Vulkan (no Vulkan
+  driver, a GPU below the renderer's Vulkan 1.3 feature floor, or a device or
+  window creation failure), openQ4 currently **stops with "Vulkan renderer
+  device initialization failed"** instead of switching to OpenGL. Because
+  `r_renderApi` is saved in your config, every launch stops the same way until
+  you start openQ4 once with `+set r_renderApi gl`.
+- Vulkan reports are welcome. Check the list below first, then include
+  `openq4.log`, `gfxInfo`, and your GPU and driver version.
+
+### What Vulkan does not do yet
+
+These OpenGL features have no Vulkan version yet. Their settings are accepted
+but have no effect on Vulkan, usually without any warning:
+
+- **Brightness and gamma** (`r_brightness`, `r_gamma`, and the brightness
+  slider in Settings).
+- **Baked light grids** (`r_useLightGrid`). openQ4 ships them for 49
+  multiplayer maps and `game/airdefense2`; on Vulkan those maps lose that baked
+  indirect light.
+- **Soft particles** (`r_softParticles`). Particles keep hard edges where they
+  cross walls and floors.
+- **MSAA alpha-to-coverage** (`r_msaaAlphaToCoverage`), so grates, fences, and
+  foliage keep jagged edges with multisampling on.
+- The **classic post-processing chain**: SSAO, bloom, HDR tone mapping and
+  auto-exposure, motion blur, and the CRT effect. SMAA, temporal AA, and the
+  screen-space lighting previews do work on Vulkan.
+- **Multiplayer player outlines, rim lighting, and bright skins**, and **cel
+  shading**.
+- Most `r_show*` **debug views** and debug drawing from game code. The
+  shadow-map debug tools do work.
+- **Custom material programs.** The stock ARB and GLSL program families are
+  implemented; any other program, such as a mod's own shader, is skipped and
+  logged.
 
 ### Vulkan on macOS (through MoltenVK)
 
@@ -183,11 +219,14 @@ does not replace or remove the OpenGL renderer.
   all plausible.
 - **To go back:** run `r_renderApi gl` and restart. The setting is saved to your
   config, so it stays on OpenGL after that.
-- **If it cannot start**, you do not need to do anything. openQ4 logs the
-  reason and renders with OpenGL instead, so a failed attempt never leaves you
-  without a picture. Common reasons on a Mac are a GPU that does not meet the
-  renderer's Vulkan 1.3 feature floor, or a package whose bundled translation
-  layer is missing or was stripped by a copy.
+- **If it cannot start**, openQ4 currently stops with "Vulkan renderer device
+  initialization failed" instead of switching to OpenGL, and because the setting
+  is saved it stops the same way on every launch. Start it once with
+  `+set r_renderApi gl` to go back, for example from Terminal with
+  `/Applications/openQ4.app/Contents/MacOS/openQ4 +set r_renderApi gl`. Common
+  reasons on a Mac are a GPU that does not meet the renderer's Vulkan 1.3
+  feature floor, or a package whose bundled translation layer is missing or was
+  stripped by a copy.
 - When reporting a macOS Vulkan problem, include `openq4.log` (it records which
   translation-layer library was loaded), the `gfxInfo` output, and your Mac
   model and macOS version.

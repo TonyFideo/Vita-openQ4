@@ -3,6 +3,8 @@
 Date: 2026-07-16
 Status: Phase A module/bootstrap scaffolding in progress; GL remains the shipping default renderer throughout
 
+Status update (2026-09-18): Phases A through G have landed, except Phase G's light-grid pass. Phase H is partial: render-texture commands, captures, readback, and MSAA resolve exist, but the gamma pass (H3), the post chain (H5), alpha-to-coverage, and soft particles do not. Phases I and J are open, and none of the promotion evidence in this plan exists yet. A Vulkan device-initialization failure is fatal rather than a fallback to GL. Vulkan remains experimental; the player-facing gap list is in `docs/user/display-settings.md`.
+
 ## Scope and architectural conclusion
 
 openQ4 gains a fully native Vulkan renderer as a user-selectable alternative to OpenGL. Renderers become dynamic modules loaded next to the executable, selected by a new `r_renderApi` cvar, with a fail-closed fallback ladder that always lands on the proven GL path. The Vulkan backend must ultimately reach full functional parity with the OpenGL renderer across every user-visible rendering feature, and it is designed from the start around modern low-overhead Vulkan (1.3 core: dynamic rendering, synchronization2, timeline semaphores; VMA memory management; bindless descriptors; persisted pipeline cache) rather than a port of GL idioms.

@@ -2,6 +2,8 @@
 
 Status: recon complete (docs/dev/plans/phase-g-recon/ — READ THOSE FIRST);
 G1 staged.
+Status update (2026-09-18): G1, G2, and F3 landed (see the landed record
+below); G3 stayed an audit, and Vulkan still has no light-grid pass.
 Parent: [2026-07-16-vulkan-renderer.md](2026-07-16-vulkan-renderer.md) Phase G;
 Phase F record: [2026-07-19-vulkan-phase-f.md](2026-07-19-vulkan-phase-f.md).
 Milestone: retail-default shadows (r_shadows 1, r_useShadowMap 0) render on

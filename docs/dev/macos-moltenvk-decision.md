@@ -80,15 +80,18 @@ What that inherits today, per the phase records under `docs/dev/plans/`:
   skybox (Phase E).
 - Interaction lighting and shadow maps, including the clustered light binning
   and the shared shadow planner (Phase F).
-- Stencil shadows, fog and blend lights, and light-grid indirect diffuse
-  (Phase G), with the 2026-07-24 stock shadow-path closure covering point,
+- Stencil shadows and fog and blend lights (Phase G; its light-grid pass was
+  deferred, and Vulkan still has none), with the 2026-07-24 stock shadow-path
+  closure covering point,
   projected, parallel, and global lights across static, animated, packed MD5R,
   two-sided, and perforated/hashed-alpha casters.
 - The stock material-program families: the environment, monochrome, and
   heat-haze ARB families; the displacement, depth/blur, ghost, sniper, multiply,
   MedLabs, and AL GLSL families; and guide-driven parallax, custom lighting,
   water, and refractive glass.
-- Post-process, MSAA with alpha-to-coverage, and SMAA (Phase H).
+- Render-texture commands, captures, readback, MSAA resolve, and SMAA
+  (Phase H). The gamma pass, the classic post chain, and MSAA
+  alpha-to-coverage have no Vulkan version yet (corrected 2026-09-18).
 
 What is still open is also inherited, not macOS-specific: Phase I long-tail
 coverage and the Phase J optimization and promotion evidence. Vulkan remains
@@ -253,8 +256,12 @@ macOS caveats:
 
 The fail-closed ladder in `src/renderer/RendererModule.cpp` is the mechanism,
 and it is the same one Windows and Linux use. `R_RendererModule_BuildFallbackLadder`
-places the requested API first and always terminates on GL, so every failure
-class lands on the proven OpenGL renderer with its own safe-mode retry loop.
+places the requested API first and always terminates on GL, so every
+module-loading failure lands on the proven OpenGL renderer with its own
+safe-mode retry loop. The ladder ends once a module is active: a failure in the
+Vulkan device bring-up that follows calls
+`FatalError( "Vulkan renderer device initialization failed" )` instead. This
+section claimed otherwise until 2026-09-18; issue #96 shows the real behavior.
 
 Failure classes, each of which warns, records a fallback reason, and continues:
 
@@ -266,7 +273,9 @@ Failure classes, each of which warns, records a fallback reason, and continues:
 | No `GetRenderAPI` entry point | `missing GetRenderAPI entry point` |
 | Export rejected, or diagnostics-only bring-up export | logged with `falling back to OpenGL. Use rendererVkProbe to inspect it.` |
 
-macOS-specific failure classes that resolve through the same ladder:
+macOS-specific failure classes. The first three happen in device bring-up,
+after the module is already active, so they do not reach the ladder: each logs
+its reason and then stops the engine with the fatal error above.
 
 - `libMoltenVK.dylib` missing from the bundle, so `VK_Device_InitLoader` finds no
   loader and `volkInitialize()` fails.
@@ -277,6 +286,9 @@ macOS-specific failure classes that resolve through the same ladder:
   ceiling. Both fail closed with a readable message rather than faulting on a
   null volk pointer during the first frame.
 - A pipeline that fails MSL translation or Metal compilation at creation time.
+  This one is not a startup failure: pipeline creation logs
+  `Vulkan: pipeline creation failed`, and the draw then reuses another
+  cached pipeline or is skipped.
 
 Module search is restricted to trusted roots — the executable directory, the
 platform module root (`openQ4.app/Contents/Frameworks` on macOS), and the
@@ -286,8 +298,9 @@ or mod content.
 Rollback:
 
 - **User rollback:** set `r_renderApi gl` and restart the engine. Because the
-  cvar is `CVAR_ARCHIVE`, this persists. A user who cannot reach the console is
-  already covered — an initialization failure returns them to OpenGL by itself.
+  cvar is `CVAR_ARCHIVE`, this persists. A failed Vulkan start is not rolled
+  back automatically: the archived `vulkan` value stops every launch until the
+  user starts once with `+set r_renderApi gl`.
 - **Project rollback:** configure macOS packages with
   `-Dbuild_renderer_vk=false`. The module is not built or staged, module path
   resolution fails, and the ladder returns to OpenGL. The module and the
@@ -296,8 +309,9 @@ Rollback:
   withdraw the option. It is a configure-flag change: no source change, no
   default change, no user action.
 - **Damaged user copy:** if a user's package loses `libMoltenVK.dylib` (a
-  partial copy, a stripped archive), `r_renderApi vulkan` fails at loader init
-  and falls back to OpenGL with a logged reason rather than failing to start.
+  partial copy, a stripped archive), `r_renderApi vulkan` fails at loader
+  init, logs the reason, and stops with `Vulkan renderer device initialization
+  failed` (issue #96). It does not fall back to OpenGL.
 - **No rollback is needed for the default renderer**, because the default never
   moved. That is the core safety property of this decision.
 
@@ -539,7 +553,9 @@ Required:
 - Say that OpenGL remains the default and recommended renderer on macOS.
 - Say that Vulkan on macOS is opt-in and experimental, and that macOS support
   itself is a preview for Apple Silicon/arm64.
-- Say that an initialization failure falls back to OpenGL.
+- Say what happens when Vulkan cannot start: a missing module falls back to
+  OpenGL, but a missing translation layer or an unsuitable GPU stops openQ4
+  with an error until `r_renderApi` is set back to `gl`.
 - Keep the two existing macOS package variants named `OpenGL` and `Metal
   bridge`, and keep the Metal bridge described as a bridge around the OpenGL
   renderer, not a native Metal renderer.
