@@ -1367,6 +1367,11 @@ bool idFile_Permanent::Sync( void ) {
 	}
 #if defined( _WIN32 )
 	return _commit( _fileno( o ) ) == 0;
+#elif defined( __vita__ ) || defined( VITA )
+	// VitaSDK's newlib FILE does not expose fileno(). fflush() above has
+	// already committed the stdio buffer to the underlying Vita I/O layer.
+	// A descriptor-native idFile backend can use sceIoSyncByFd later.
+	return true;
 #else
 	return fsync( fileno( o ) ) == 0;
 #endif
