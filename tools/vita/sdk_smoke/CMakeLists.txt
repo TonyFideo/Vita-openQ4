@@ -28,6 +28,7 @@ target_compile_features(openq4_vita_idlib_probe PRIVATE cxx_std_20)
 
 add_executable(vita_sdk_smoke
   main.cpp
+  platform_probe.cpp
 )
 
 target_compile_options(vita_sdk_smoke PRIVATE
