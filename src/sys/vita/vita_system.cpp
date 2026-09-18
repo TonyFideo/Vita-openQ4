@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -27,8 +28,8 @@ int vitaLastMilliseconds = 0;
 
 static int Vita_BytesToMegabytes( uint64_t bytes ) {
 	const uint64_t megabytes = bytes >> 20;
-	return megabytes > static_cast<uint64_t>( idMath::INT_MAX )
-		? idMath::INT_MAX
+	return megabytes > static_cast<uint64_t>( INT_MAX )
+		? INT_MAX
 		: static_cast<int>( megabytes );
 }
 
@@ -36,7 +37,9 @@ static void Vita_CopyPath( char *destination, int destinationSize, const char *s
 	if ( destination == NULL || destinationSize <= 0 ) {
 		return;
 	}
-	idStr::Copynz( destination, source != NULL ? source : "", destinationSize );
+	const char *safeSource = source != NULL ? source : "";
+	sceClibStrncpy( destination, safeSource, static_cast<SceSize>( destinationSize - 1 ) );
+	destination[destinationSize - 1] = '\0';
 }
 
 }
@@ -67,7 +70,7 @@ void Sys_Error( const char *error, ... ) {
 
 	va_list args;
 	va_start( args, error );
-	idStr::vsnPrintf( text, sizeof( text ), error != NULL ? error : "Unknown error", args );
+	sceClibVsnprintf( text, sizeof( text ), error != NULL ? error : "Unknown error", args );
 	va_end( args );
 	text[sizeof( text ) - 1] = '\0';
 
