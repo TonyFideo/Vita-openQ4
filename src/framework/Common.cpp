@@ -35,6 +35,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "../render_geo/RenderGeometry.h"
 #include "../renderer/RendererModule.h"
 #include "ArenaCampaign.h"
+#include "CVarCompletionSnapshot.h"
 #include "GameModuleDiagnostics.h"
 #include "RenderDoc.h"
 #include "ParallelJobSystem.h"
@@ -822,6 +823,7 @@ static idStr Common_BuildPlatformProfileConfigName( const char *profileName ) {
 	idStrList					errorList;
 
 	intptr_t					gameDLL;
+	idCVarCompletionSnapshot	gameModuleCompletions;	// captured when gameDLL loaded
 	bool						gameShutdownCalled;
 	bool						gameShutdownAfterDeclsCalled;
 
@@ -6268,6 +6270,23 @@ const char *Com_GameModuleLoadPhaseSignalName( void ) {
 
 /*
 =================
+Com_UnloadGameModuleBinary
+
+Every game module unload goes through here. GetGameAPI registers the module's
+static cvars, which points the value completion of each one it declares into
+the module, the ones it shares with the engine and the renderer included
+(CVarCompletionSnapshot.h). ShutdownAfterDecls clears only the CVAR_GAME ones,
+so first put back the callbacks captured when the module was loaded.
+=================
+*/
+static void Com_UnloadGameModuleBinary( intptr_t handle, idCVarCompletionSnapshot &completions ) {
+	completions.Restore();
+	completions.Clear();
+	Sys_DLL_Unload( handle );
+}
+
+/*
+=================
 idCommonLocal::LoadGameDLL
 =================
 */
@@ -6334,11 +6353,13 @@ void idCommonLocal::LoadGameDLL( void ) {
 		common->FatalError( "couldn't load game dynamic library '%s'", selectedModuleBinary );
 		return;
 	}
+	// before GetGameAPI registers the module's cvars; spent by the unload
+	gameModuleCompletions.Capture();
 
 	Com_SetGameModuleLoadPhase( GAME_MODULE_PHASE_RESOLVE_ENTRY_POINT );
 	GetGameAPI = (GetGameAPI_t) Sys_DLL_GetProcAddress( gameDLL, "GetGameAPI" );
 	if ( !GetGameAPI ) {
-		Sys_DLL_Unload( gameDLL );
+		Com_UnloadGameModuleBinary( gameDLL, gameModuleCompletions );
 		gameDLL = NULL;
 		common->FatalError( "couldn't find game DLL API" );
 		return;
@@ -6363,7 +6384,7 @@ void idCommonLocal::LoadGameDLL( void ) {
 	Com_SetGameModuleLoadPhase( GAME_MODULE_PHASE_CALL_GET_GAME_API );
 	const gameExport_t *gameExportPtr = GetGameAPI( &gameImport );
 	if ( gameExportPtr == NULL ) {
-		Sys_DLL_Unload( gameDLL );
+		Com_UnloadGameModuleBinary( gameDLL, gameModuleCompletions );
 		gameDLL = NULL;
 		common->FatalError(
 			"game module '%s' returned no export table from GetGameAPI",
@@ -6374,7 +6395,7 @@ void idCommonLocal::LoadGameDLL( void ) {
 
 	Com_SetGameModuleLoadPhase( GAME_MODULE_PHASE_VERIFY_API_VERSION );
 	if ( gameExport.version != GAME_API_VERSION ) {
-		Sys_DLL_Unload( gameDLL );
+		Com_UnloadGameModuleBinary( gameDLL, gameModuleCompletions );
 		gameDLL = NULL;
 		common->FatalError( "wrong game DLL API version" );
 		return;
@@ -6408,7 +6429,7 @@ void idCommonLocal::UnloadGameDLL( void ) {
 
 	Com_SetGameModuleLoadPhase( GAME_MODULE_PHASE_BINARY_UNLOAD );
 	if ( gameDLL ) {
-		Sys_DLL_Unload( gameDLL );
+		Com_UnloadGameModuleBinary( gameDLL, gameModuleCompletions );
 		gameDLL = NULL;
 	}
 	game = NULL;

@@ -12,16 +12,22 @@
 	The idCmdSystem::ArgCompletion_* helpers are inline, so every binary has
 	its own copy, and registering a static cvar points its value completion at
 	the declaring binary's copy. That includes the cvars a module shares with
-	the engine or another module, so a renderer module's GetRenderAPI takes
-	over every callback it declares. Once the module is unloaded they point at
-	unmapped code, and the console calls a cvar's completion while its name
-	and a space are typed.
+	the engine or another module, so a renderer module's GetRenderAPI and a
+	game module's GetGameAPI take over every callback they declare. Once the
+	module is unloaded they point at unmapped code, and the console calls a
+	cvar's completion while its name and a space are typed.
 
 	Capture before a module registers its cvars and Restore before it is
 	unloaded. Restore gives every cvar the callback it had at Capture, and
 	clears it on cvars that had none then, the module's own among them. A
 	snapshot that was never captured restores nothing, rather than clearing
 	every callback.
+
+	Restore puts back callbacks that point into every module that was loaded
+	at Capture, so those have to outlive it: unload modules in the reverse
+	order they were loaded. The game module loads after the renderer module
+	and is unloaded while it is still loaded, and rendererVkProbe restores
+	its own snapshot before it returns.
 
 ===============================================================================
 */
