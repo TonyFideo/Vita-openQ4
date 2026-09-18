@@ -171,6 +171,8 @@ jobs:
             tools/tests/map_entity_strings.py \
             tools/tests/weapon_wheel_time_scale.py \
             tools/tests/weapon_zoom_view_alignment.py \
+            tools/tests/windows_dedicated_server_smoke.py \
+            tools/tests/windows_dedicated_server_smoke_contract.py \
             tools/tests/macos_apple_gl21_arb2_corridor.py \
             tools/tests/macos_dedicated_server_smoke.py \
             tools/tests/macos_dedicated_server_smoke_contract.py \
@@ -352,6 +354,7 @@ jobs:
           python tools/tests/map_entity_strings.py
           python tools/tests/weapon_wheel_time_scale.py
           python tools/tests/weapon_zoom_view_alignment.py
+          python tools/tests/windows_dedicated_server_smoke_contract.py
           python tools/tests/macos_apple_gl21_arb2_corridor.py
           python tools/tests/macos_dedicated_server_smoke_contract.py
           python tools/tests/macos_evidence_plumbing.py
@@ -519,6 +522,22 @@ jobs:
           Write-Host "Selected validation profile: pr"
           powershell -NoProfile -ExecutionPolicy Bypass -File tools/validation/validate_pr.ps1 --fail-on-dirty
 
+      - name: Run Windows x64 dedicated server smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python tools/tests/windows_dedicated_server_smoke.py --arch x64 --output-root .tmp/windows-dedicated-smoke/x64
+
+      - name: Publish Windows x64 dedicated server smoke
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: commit-windows-x64-dedicated-smoke
+          path: .tmp/windows-dedicated-smoke/x64
+          if-no-files-found: warn
+          retention-days: 14
+          include-hidden-files: true
+
       - name: Run focused input-safety static analysis
         shell: pwsh
         run: |
@@ -654,6 +673,80 @@ jobs:
         with:
           name: commit-linux-arm64-renderer-validation
           path: .tmp/renderer-validation
+          if-no-files-found: warn
+          retention-days: 14
+          include-hidden-files: true
+
+  windows-arm64:
+    name: Windows ARM64 Commit Validation
+    runs-on: windows-11-arm
+    needs: script-smoke
+    timeout-minutes: 90
+    env:
+      OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}/../openQ4-game
+      OPENQ4_VS_TARGET_ARCH: arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Fetch openQ4-game
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          git init "$env:OPENQ4_GAMELIBS_REPO"
+          git -C "$env:OPENQ4_GAMELIBS_REPO" remote add origin https://github.com/themuffinator/openQ4-game.git
+          git -C "$env:OPENQ4_GAMELIBS_REPO" fetch --depth 1 origin "$env:OPENQ4_GAMELIBS_SHA"
+          git -C "$env:OPENQ4_GAMELIBS_REPO" checkout --detach "$env:OPENQ4_GAMELIBS_SHA"
+          if ( ( git -C "$env:OPENQ4_GAMELIBS_REPO" rev-parse HEAD ).Trim() -ne $env:OPENQ4_GAMELIBS_SHA ) {
+            throw "openQ4-game checkout did not resolve to $env:OPENQ4_GAMELIBS_SHA"
+          }
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.x"
+
+      - name: Install Meson and Ninja
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -m pip install --upgrade pip
+          python -m pip install meson ninja
+
+      - name: Prepare OpenAL Soft (Windows ARM64)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $outputRoot = Join-Path $env:GITHUB_WORKSPACE ".tmp/openal-soft-arm64"
+          powershell -ExecutionPolicy Bypass -File tools/build/prepare_windows_openal.ps1 -Architecture "arm64" -OutputRoot $outputRoot
+          "OPENQ4_OPENAL_ROOT=$outputRoot" >> $env:GITHUB_ENV
+
+      # See the Windows ARM64 push job: the arm64 link needs the OpenAL package
+      # prepared above, and the runner is called directly so the path argument
+      # reaches it whole.
+      - name: Run selected validation profile
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "Selected validation profile: pr"
+          python tools/validation/openq4_validate.py pr --fail-on-dirty "--extra-setup-arg=-Dopenal_root_override=$env:OPENQ4_OPENAL_ROOT"
+
+      - name: Run Windows ARM64 dedicated server smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python tools/tests/windows_dedicated_server_smoke.py --arch arm64 --output-root .tmp/windows-dedicated-smoke/arm64
+
+      - name: Publish Windows ARM64 dedicated server smoke
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: commit-windows-arm64-dedicated-smoke
+          path: .tmp/windows-dedicated-smoke/arm64
           if-no-files-found: warn
           retention-days: 14
           include-hidden-files: true

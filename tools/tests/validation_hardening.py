@@ -671,6 +671,7 @@ def validate_validation_wiring() -> None:
         "linux_dedicated_stock_map_smoke.py",
         "linux_wayland_stock_sp_smoke.py",
         "macos_dedicated_server_smoke.py",
+        "windows_dedicated_server_smoke.py",
         "renderer_gameplay_benchmark.py",
         "renderer_milestone_d_acceptance.py",
         "renderer_milestone_d_fixture.py",

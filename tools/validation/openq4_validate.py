@@ -577,6 +577,7 @@ def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) 
         root / "tools" / "tests" / "vk_temporal_resolve_shader_pin.py",
         root / "tools" / "tests" / "vscode_fast_build.py",
         root / "tools" / "tests" / "weapon_zoom_view_alignment.py",
+        root / "tools" / "tests" / "windows_dedicated_server_smoke_contract.py",
     ]
     failures: list[str] = []
     for test_script in tests:
