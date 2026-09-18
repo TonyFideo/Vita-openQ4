@@ -7431,7 +7431,12 @@ void RB_ShutdownScenePostProcess( void ) {
 	rbHDRExposureReadbackIndex = 0;
 }
 
+static GLboolean rbRVSpecialCaptureBlendWasEnabled = GL_TRUE;
+static GLboolean rbRVSpecialCaptureCullWasEnabled = GL_TRUE;
+
 static void RB_RVSpecialBeginCapture( idRenderTexture *renderTexture, int width, int height ) {
+	rbRVSpecialCaptureBlendWasEnabled = glIsEnabled( GL_BLEND );
+	rbRVSpecialCaptureCullWasEnabled = glIsEnabled( GL_CULL_FACE );
 	RB_BindPostProcessRenderTexture( renderTexture, width, height );
 
 	glMatrixMode( GL_PROJECTION );
@@ -7483,6 +7488,16 @@ static void RB_RVSpecialEndCapture( idRenderTexture *previousRenderTexture ) {
 	}
 
 	GL_SelectTexture( 0 );
+	// BeginCapture switched these off behind the state cache's back. GL_State only
+	// sets blend factors ("no blending" is ONE/ZERO with GL_BLEND left enabled), so
+	// nothing else turns blending back on: left off, every blended decal in the view
+	// that follows (the MP join screen's blur runs this capture) drew as an opaque quad.
+	if ( rbRVSpecialCaptureBlendWasEnabled ) {
+		glEnable( GL_BLEND );
+	}
+	if ( rbRVSpecialCaptureCullWasEnabled ) {
+		glEnable( GL_CULL_FACE );
+	}
 	backEnd.glState.forceGlState = true;
 }
 
