@@ -219,6 +219,7 @@ target_link_libraries(openq4_vita_prerender PRIVATE
   SceLibKernel_stub
   SceIofilemgr_stub
   ScePower_stub
+  SceAppMgr_stub
 )
 
 vita_create_self(openq4_vita_prerender.self openq4_vita_prerender)

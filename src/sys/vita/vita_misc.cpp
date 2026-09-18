@@ -2,6 +2,9 @@
 #include "../sys_local.h"
 
 #include <psp2/kernel/clib.h>
+#include <psp2/appmgr.h>
+
+#include <stdint.h>
 
 namespace {
 
@@ -11,10 +14,15 @@ char vitaFatalError[4096] = {};
 
 int Sys_GetDriveFreeSpace( const char *path ) {
 	(void)path;
-	// Match the conservative bring-up behaviour used by the Vita idTech4
-	// reference port. Accurate free-space reporting can be wired to the final
-	// filesystem backend without blocking engine startup.
-	return 1000 * 1024;
+	uint64_t maxSize = 0;
+	uint64_t freeSize = 0;
+	if ( sceAppMgrGetDevInfo( "ux0:", &maxSize, &freeSize ) < 0 ) {
+		return 0;
+	}
+	const uint64_t freeMegabytes = freeSize >> 20;
+	return freeMegabytes > 0x7fffffffULL
+		? 0x7fffffff
+		: static_cast<int>( freeMegabytes );
 }
 
 void Sys_SetFatalError( const char *error ) {
