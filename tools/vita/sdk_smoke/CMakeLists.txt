@@ -12,6 +12,18 @@ project(vita_sdk_smoke LANGUAGES CXX)
 
 include("$ENV{VITASDK}/share/vita.cmake" REQUIRED)
 
+set(OPENQ4_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../..")
+execute_process(
+  COMMAND python3
+    "${OPENQ4_ROOT}/tools/build/openq4_version.py"
+    --source-root "${OPENQ4_ROOT}"
+    --track dev
+    --header-out "${CMAKE_CURRENT_BINARY_DIR}/openq4_version_generated.h"
+  RESULT_VARIABLE OPENQ4_VERSION_RESULT
+)
+if(NOT OPENQ4_VERSION_RESULT EQUAL 0)
+  message(FATAL_ERROR "Failed to generate openq4_version_generated.h")
+endif()
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -28,6 +40,10 @@ target_compile_features(openq4_vita_idlib_probe PRIVATE cxx_std_20)
 
 add_library(openq4_vita_precompiled_probe STATIC
   idlib_math_probe.cpp
+)
+
+target_include_directories(openq4_vita_precompiled_probe PRIVATE
+  ${CMAKE_CURRENT_BINARY_DIR}
 )
 
 target_compile_options(openq4_vita_precompiled_probe PRIVATE
