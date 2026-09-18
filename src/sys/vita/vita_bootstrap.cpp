@@ -1,6 +1,7 @@
 #include "../sys_public.h"
 #include "vita_public.h"
 #include "vita_debug_screen.h"
+#include "vita_renderer_smoke.h"
 
 #include <psp2/io/fcntl.h>
 #include <psp2/io/stat.h>
@@ -355,21 +356,31 @@ int main( int argc, char **argv ) {
 		Vita_WriteLogLine( "result=errors" );
 	}
 	Vita_WriteLogLine( "next=renderer-bring-up" );
-	Vita_WriteLogLine( "diagnostic.hold=manual-close" );
+	Vita_WriteLogLine( "diagnostic.handoff=vitagl" );
 
-	Vita_Info( "CIERRA LA APP MANUALMENTE PARA SALIR" );
+	Vita_Info( "INICIANDO VITAGL..." );
 
-	// This pre-render diagnostic build intentionally remains alive after all
-	// checks complete. The previous five-second auto-exit released the active
-	// CDRAM framebuffer immediately before process teardown; Vita3K could still
-	// sample that framebuffer and crash while reading the now-unmapped CDRAM
-	// range. Keep presenting the diagnostic surface until the host/user closes
-	// the app. The real renderer will later replace this hold loop.
+	// The diagnostic framebuffer owns a CDRAM display surface. Fully detach and
+	// release it before VitaGL takes control of SceGxm/display resources.
+	if ( vitaScreenReady ) {
+		VitaDiagScreen_Present();
+		VitaDiagScreen_Finish();
+		vitaScreenReady = false;
+	}
+
+	const VitaProfileMark rendererStart = Vita_ProfileMarkNow();
+	const bool rendererReady = VitaRendererSmoke_Init();
+	const VitaProfileMark rendererEnd = Vita_ProfileMarkNow();
+	Vita_LogProfileStage( "renderer_init", rendererStart, rendererEnd );
+	Vita_WriteLogLine( rendererReady ? "renderer.ready=1" : "renderer.ready=0" );
+
+	if ( rendererReady ) {
+		VitaRendererSmoke_Run();
+	}
+
+	// A failed graphics bring-up must stay alive long enough for Vita3K/hardware
+	// logs to be retrieved. No display surface is owned here after Finish().
 	for ( ;; ) {
-		if ( vitaScreenReady ) {
-			VitaDiagScreen_Present();
-		} else {
-			sceKernelDelayThread( 16 * 1000 );
-		}
+		sceKernelDelayThread( 100 * 1000 );
 	}
 }
