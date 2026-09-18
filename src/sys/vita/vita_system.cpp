@@ -12,7 +12,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -28,9 +27,8 @@ int vitaLastMilliseconds = 0;
 
 static int Vita_BytesToMegabytes( uint64_t bytes ) {
 	const uint64_t megabytes = bytes >> 20;
-	return megabytes > static_cast<uint64_t>( INT_MAX )
-		? INT_MAX
-		: static_cast<int>( megabytes );
+	const uint64_t maxInt = 0x7fffffffULL;
+	return megabytes > maxInt ? 0x7fffffff : static_cast<int>( megabytes );
 }
 
 static void Vita_CopyPath( char *destination, int destinationSize, const char *source ) {
