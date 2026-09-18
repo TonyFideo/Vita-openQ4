@@ -793,10 +793,22 @@ R_RendererModule_RunVulkanProbe
 Loads the Vulkan module for a diagnostics pass and unloads it afterwards.
 Never touches the live GL context or window; the probe is instance/device
 scoped only.
+
+Refused while Vulkan is the active renderer. Loading the module again then
+returns the live instance rather than a fresh one: GetRenderAPI would
+re-initialize its idlib under the running renderer, Shutdown would free its
+SIMD processor and clear its dict string pools while the renderer still uses
+both, and the probe's throwaway instance and device would repoint the volk
+function pointers the live device calls through.
 ====================
 */
 bool R_RendererModule_RunVulkanProbe( bool verbose ) {
 	char modulePath[ 1024 ];
+
+	if ( rm_state.interfacesPublished && rm_state.status.activeApi == RENDER_MODULE_API_VULKAN ) {
+		common->Printf( "rendererVkProbe: the Vulkan renderer is active; restart with r_renderApi gl to probe\n" );
+		return false;
+	}
 
 	if ( !RM_ResolveModulePath( RENDER_MODULE_API_VULKAN, modulePath, sizeof( modulePath ) ) ) {
 		common->Printf( "rendererVkProbe: module path resolution failed\n" );

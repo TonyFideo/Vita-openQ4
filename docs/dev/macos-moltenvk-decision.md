@@ -231,7 +231,9 @@ Available:
 - `gfxInfo` reports the requested API, the actual API, the resolved module path,
   the load/fallback disposition, and the fallback reason.
 - `rendererVkProbe` loads the module on demand, prints the instance, device,
-  queue, and caps report, and unloads without committing the renderer.
+  queue, and caps report, and unloads without committing the renderer. It
+  refuses while Vulkan is the active renderer: loading the module then returns
+  the live instance, which the probe's shutdown would tear down.
 - `rendererModuleSelfTest` and the `rendererVk*SelfTest` family run in the safe
   validation matrix and need no device for the selection/ladder cases.
 - The MoltenVK loader path prints the dylib it actually adopted
