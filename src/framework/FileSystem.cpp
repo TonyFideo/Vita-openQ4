@@ -33,7 +33,10 @@ If you have questions concerning this license or the applicable additional terms
 #include "GameDirPolicy.h"
 #include "LevelLoadCacheManager.h"
 #include "openq4_paks_generated.h"
-#include "../sys/URLPolicy.h"\n#if defined( __vita__ ) || defined( VITA )\n#include "../sys/vita/vita_public.h"\n#endif
+#include "../sys/URLPolicy.h"
+#if defined( __vita__ ) || defined( VITA )
+#include "../sys/vita/vita_public.h"
+#endif
 
 #include <errno.h>
 #include <stdint.h>
