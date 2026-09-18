@@ -387,6 +387,220 @@ void RB_ShowDestinationAlpha( void ) {
 }
 
 /*
+===============================================================================
+
+	Framebuffer readback for the stencil counts, r_showIntensity and r_showDepth
+
+	glReadPixels cannot read a multisampled framebuffer object: it raises
+	GL_INVALID_OPERATION and returns nothing. The view draws into one whenever
+	r_multiSamples puts the scene render target in MSAA, so these readbacks
+	resolve it into a single-sample copy with glBlitFramebuffer and read that.
+	A depth or stencil blit needs GL_NEAREST and a destination of exactly the
+	source's format, so the copy takes the source attachment's internal format.
+	The resolve keeps one sample's depth or stencil value per pixel.
+
+	OpenGL only, like the tools that use it: the Vulkan module has its own
+	versions of them in Vulkan/vk_DebugTools.cpp.
+
+===============================================================================
+*/
+#if !defined( OPENQ4_RENDERER_VK_MODULE )
+
+// The single-sample copies: [0] color, [1] depth/stencil. The names belong to
+// the GL context generation that made them; a new context forgets them.
+typedef struct debugResolveCopy_s {
+	GLuint		framebuffer;
+	GLuint		renderbuffer;
+	GLenum		internalFormat;
+	GLenum		attachment;
+	int			width;
+	int			height;
+	int			contextGeneration;
+} debugResolveCopy_t;
+
+static debugResolveCopy_t	rb_debugResolveCopies[2];
+static int					rb_debugResolveWarned[3] = { -1, -1, -1 };	// per buffer: the context generation it last warned in
+
+// 0 color, 1 depth, 2 stencil
+static int RB_ReadbackBuffer( GLenum format ) {
+	if ( format == GL_DEPTH_COMPONENT ) {
+		return 1;
+	}
+	if ( format == GL_STENCIL_INDEX ) {
+		return 2;
+	}
+	return 0;
+}
+
+static void RB_WarnReadbackResolve( GLenum format, const char *reason ) {
+	static const char * const bufferNames[3] = { "color", "depth", "stencil" };
+	const int buffer = RB_ReadbackBuffer( format );
+	if ( rb_debugResolveWarned[buffer] == tr.glContextGeneration ) {
+		return;
+	}
+	rb_debugResolveWarned[buffer] = tr.glContextGeneration;
+	common->Warning( "RB_ReadFramebufferPixels: can't resolve the multisampled %s buffer (%s); the debug tool that reads it is skipped, set r_multiSamples 0 to use it",
+		bufferNames[buffer], reason );
+}
+
+/*
+===================
+RB_ResolveForReadback
+
+Blits the buffer that format reads from the multisampled framebuffer object
+source into its single-sample copy, and returns the copy's framebuffer, or 0
+after a one-time warning. The caller restores the framebuffer bindings.
+===================
+*/
+static GLuint RB_ResolveForReadback( GLuint source, GLenum format, int width, int height ) {
+	static const GLenum attachments[3] = { GL_COLOR_ATTACHMENT0, GL_DEPTH_ATTACHMENT, GL_STENCIL_ATTACHMENT };
+	static const GLbitfield masks[3] = { GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT, GL_STENCIL_BUFFER_BIT };
+	const int buffer = RB_ReadbackBuffer( format );
+
+	if ( glBlitFramebuffer == NULL || glGenRenderbuffers == NULL || glBindRenderbuffer == NULL
+		|| glRenderbufferStorage == NULL || glFramebufferRenderbuffer == NULL
+		|| glGetFramebufferAttachmentParameteriv == NULL || glCheckFramebufferStatus == NULL ) {
+		RB_WarnReadbackResolve( format, "no framebuffer blits" );
+		return 0;
+	}
+
+	// the source's internal format; the engine's multisampled render targets
+	// attach 2D multisample textures (idRenderTexture::InitRenderTexture)
+	glBindFramebuffer( GL_READ_FRAMEBUFFER, source );
+	GLint objectType = GL_NONE;
+	glGetFramebufferAttachmentParameteriv( GL_READ_FRAMEBUFFER, attachments[buffer], GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, &objectType );
+	if ( objectType != GL_TEXTURE ) {
+		RB_WarnReadbackResolve( format, objectType == GL_NONE ? "the render target has none" : "it is not a texture" );
+		return 0;
+	}
+	GLint texture = 0;
+	GLint previousTexture = 0;
+	GLint internalFormat = 0;
+	glGetFramebufferAttachmentParameteriv( GL_READ_FRAMEBUFFER, attachments[buffer], GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &texture );
+	glGetIntegerv( GL_TEXTURE_BINDING_2D_MULTISAMPLE, &previousTexture );
+	glBindTexture( GL_TEXTURE_2D_MULTISAMPLE, static_cast<GLuint>( texture ) );
+	glGetTexLevelParameteriv( GL_TEXTURE_2D_MULTISAMPLE, 0, GL_TEXTURE_INTERNAL_FORMAT, &internalFormat );
+	glBindTexture( GL_TEXTURE_2D_MULTISAMPLE, static_cast<GLuint>( previousTexture ) );
+
+	// packed depth/stencil sits on both attachment points, as in the source
+	GLenum copyAttachment = attachments[buffer];
+	if ( internalFormat == GL_DEPTH24_STENCIL8 || internalFormat == GL_DEPTH32F_STENCIL8 || internalFormat == GL_DEPTH_STENCIL ) {
+		copyAttachment = GL_DEPTH_STENCIL_ATTACHMENT;
+	}
+
+	debugResolveCopy_t &copy = rb_debugResolveCopies[ buffer == 0 ? 0 : 1 ];
+	if ( copy.contextGeneration != tr.glContextGeneration ) {
+		memset( &copy, 0, sizeof( copy ) );
+		copy.contextGeneration = tr.glContextGeneration;
+	}
+	if ( copy.framebuffer == 0 ) {
+		glGenFramebuffers( 1, &copy.framebuffer );
+		glGenRenderbuffers( 1, &copy.renderbuffer );
+		if ( copy.framebuffer == 0 || copy.renderbuffer == 0 ) {
+			RB_WarnReadbackResolve( format, "no framebuffer object for the copy" );
+			return 0;
+		}
+	}
+	glBindFramebuffer( GL_FRAMEBUFFER, copy.framebuffer );
+	if ( copy.internalFormat != static_cast<GLenum>( internalFormat ) || copy.attachment != copyAttachment
+		|| copy.width != width || copy.height != height ) {
+		if ( copy.attachment != GL_NONE ) {
+			glFramebufferRenderbuffer( GL_FRAMEBUFFER, copy.attachment, GL_RENDERBUFFER, 0 );
+		}
+		glBindRenderbuffer( GL_RENDERBUFFER, copy.renderbuffer );
+		glRenderbufferStorage( GL_RENDERBUFFER, static_cast<GLenum>( internalFormat ), width, height );
+		glBindRenderbuffer( GL_RENDERBUFFER, 0 );
+		glFramebufferRenderbuffer( GL_FRAMEBUFFER, copyAttachment, GL_RENDERBUFFER, copy.renderbuffer );
+		// a copy without color must not name a color buffer, or it is incomplete
+		const GLenum colorBuffer = ( buffer == 0 ) ? GL_COLOR_ATTACHMENT0 : GL_NONE;
+		glDrawBuffer( colorBuffer );
+		glReadBuffer( colorBuffer );
+		copy.internalFormat = static_cast<GLenum>( internalFormat );
+		copy.attachment = copyAttachment;
+		copy.width = width;
+		copy.height = height;
+	}
+	const GLenum status = glCheckFramebufferStatus( GL_FRAMEBUFFER );
+	if ( status != GL_FRAMEBUFFER_COMPLETE ) {
+		RB_WarnReadbackResolve( format, va( "its copy is incomplete, status 0x%04x", status ) );
+		return 0;
+	}
+
+	glBindFramebuffer( GL_READ_FRAMEBUFFER, source );
+	GLint sourceReadBuffer = GL_NONE;
+	if ( buffer == 0 ) {
+		glGetIntegerv( GL_READ_BUFFER, &sourceReadBuffer );
+		glReadBuffer( GL_COLOR_ATTACHMENT0 );
+	}
+	// blits are scissored, and the copy has to be whole
+	const GLboolean scissorWasEnabled = glIsEnabled( GL_SCISSOR_TEST );
+	if ( scissorWasEnabled ) {
+		glDisable( GL_SCISSOR_TEST );
+	}
+	glBlitFramebuffer( 0, 0, width, height, 0, 0, width, height, masks[buffer], GL_NEAREST );
+	if ( scissorWasEnabled ) {
+		glEnable( GL_SCISSOR_TEST );
+	}
+	if ( buffer == 0 ) {
+		glReadBuffer( static_cast<GLenum>( sourceReadBuffer ) );
+	}
+	return copy.framebuffer;
+}
+
+/*
+===================
+RB_ReadFramebufferPixels
+
+glReadPixels of the screen-sized lower left corner of the framebuffer the view
+draws into, resolved first when that is multisampled. Returns false, after a
+one-time warning, when the resolve failed and there is nothing to read.
+===================
+*/
+static bool RB_ReadFramebufferPixels( GLenum format, GLenum type, void *pixels ) {
+	GLint readFramebuffer = 0;
+	GLint drawFramebuffer = 0;
+	GLint sampleBuffers = 0;
+	if ( glBindFramebuffer != NULL ) {
+		glGetIntegerv( GL_READ_FRAMEBUFFER_BINDING, &readFramebuffer );
+		glGetIntegerv( GL_DRAW_FRAMEBUFFER_BINDING, &drawFramebuffer );
+		glGetIntegerv( GL_SAMPLE_BUFFERS, &sampleBuffers );		// the draw framebuffer's
+	}
+
+	// Read what the tools draw into. The default framebuffer reads back
+	// resolved even when it is multisampled; a framebuffer object has to be
+	// resolved into a single-sample copy first.
+	GLuint source = static_cast<GLuint>( drawFramebuffer );
+	const bool resolve = ( source != 0 && sampleBuffers > 0 );
+	if ( resolve ) {
+		GL_CheckErrors();	// report what is pending, so an error below is the resolve's
+		source = RB_ResolveForReadback( source, format, glConfig.vidWidth, glConfig.vidHeight );
+	}
+
+	const bool read = ( !resolve || source != 0 );
+	if ( read ) {
+		if ( glBindFramebuffer != NULL ) {
+			glBindFramebuffer( GL_READ_FRAMEBUFFER, source );
+		}
+		glPixelStorei( GL_PACK_ALIGNMENT, 1 );	// stencil rows are not padded to 4 bytes
+		glReadPixels( 0, 0, glConfig.vidWidth, glConfig.vidHeight, format, type, pixels );
+		glPixelStorei( GL_PACK_ALIGNMENT, 4 );
+	}
+	if ( glBindFramebuffer != NULL ) {
+		glBindFramebuffer( GL_READ_FRAMEBUFFER, static_cast<GLuint>( readFramebuffer ) );
+		glBindFramebuffer( GL_DRAW_FRAMEBUFFER, static_cast<GLuint>( drawFramebuffer ) );
+	}
+	if ( read && resolve ) {
+		const GLenum error = glGetError();
+		if ( error != GL_NO_ERROR ) {
+			RB_WarnReadbackResolve( format, va( "GL error 0x%04x", error ) );
+			return false;
+		}
+	}
+	return read;
+}
+#endif
+
+/*
 ===================
 RB_ScanStencilBuffer
 
@@ -402,7 +616,11 @@ void RB_ScanStencilBuffer( void ) {
 	memset( counts, 0, sizeof( counts ) );
 
 	stencilReadback = (byte *)R_StaticAlloc( glConfig.vidWidth * glConfig.vidHeight );
-	glReadPixels( 0, 0, glConfig.vidWidth, glConfig.vidHeight, GL_STENCIL_INDEX, GL_UNSIGNED_BYTE, stencilReadback );
+	if ( !RB_ReadFramebufferPixels( GL_STENCIL_INDEX, GL_UNSIGNED_BYTE, stencilReadback ) ) {
+		R_StaticFree( stencilReadback );
+		common->Printf( "stencil values: the stencil buffer could not be read back\n" );
+		return;
+	}
 
 	for ( i = 0; i < glConfig.vidWidth * glConfig.vidHeight; i++ ) {
 		counts[ stencilReadback[i] ]++;
@@ -436,7 +654,11 @@ void RB_CountStencilBuffer( void ) {
 
 
 	stencilReadback = (byte *)R_StaticAlloc( glConfig.vidWidth * glConfig.vidHeight );
-	glReadPixels( 0, 0, glConfig.vidWidth, glConfig.vidHeight, GL_STENCIL_INDEX, GL_UNSIGNED_BYTE, stencilReadback );
+	if ( !RB_ReadFramebufferPixels( GL_STENCIL_INDEX, GL_UNSIGNED_BYTE, stencilReadback ) ) {
+		R_StaticFree( stencilReadback );
+		common->Printf( "overdraw: the stencil buffer could not be read back\n" );
+		return;
+	}
 
 	count = 0;
 	for ( i = 0; i < glConfig.vidWidth * glConfig.vidHeight; i++ ) {
@@ -893,7 +1115,10 @@ void RB_ShowIntensity( void ) {
 	}
 
 	colorReadback = (byte *)R_StaticAlloc( glConfig.vidWidth * glConfig.vidHeight * 4 );
-	glReadPixels( 0, 0, glConfig.vidWidth, glConfig.vidHeight, GL_RGBA, GL_UNSIGNED_BYTE, colorReadback );
+	if ( !RB_ReadFramebufferPixels( GL_RGBA, GL_UNSIGNED_BYTE, colorReadback ) ) {
+		R_StaticFree( colorReadback );
+		return;
+	}
 
 	c = glConfig.vidWidth * glConfig.vidHeight * 4;
 	for ( i = 0; i < c ; i+=4 ) {
@@ -968,16 +1193,20 @@ void RB_ShowDepthBuffer( void ) {
 	depthReadback = R_StaticAlloc( glConfig.vidWidth * glConfig.vidHeight*4 );
 	memset( depthReadback, 0, glConfig.vidWidth * glConfig.vidHeight*4 );
 
-	glReadPixels( 0, 0, glConfig.vidWidth, glConfig.vidHeight, GL_DEPTH_COMPONENT , GL_FLOAT, depthReadback );
-
-#if 0
-	for ( i = 0 ; i < glConfig.vidWidth * glConfig.vidHeight ; i++ ) {
-		((byte *)depthReadback)[i*4] = 
-		((byte *)depthReadback)[i*4+1] = 
-		((byte *)depthReadback)[i*4+2] = 255 * ((float *)depthReadback)[i];
-		((byte *)depthReadback)[i*4+3] = 1;
+	if ( !RB_ReadFramebufferPixels( GL_DEPTH_COMPONENT, GL_FLOAT, depthReadback ) ) {
+		R_StaticFree( depthReadback );
+		return;
 	}
-#endif
+
+	// each depth becomes a grey level, in place: the four bytes of float i
+	// turn into the RGBA of pixel i
+	for ( int i = 0 ; i < glConfig.vidWidth * glConfig.vidHeight ; i++ ) {
+		const byte grey = idMath::Ftob( 255.0f * ((float *)depthReadback)[i] + 0.5f );
+		((byte *)depthReadback)[i*4+0] = grey;
+		((byte *)depthReadback)[i*4+1] = grey;
+		((byte *)depthReadback)[i*4+2] = grey;
+		((byte *)depthReadback)[i*4+3] = 255;
+	}
 
 	glDrawPixels( glConfig.vidWidth, glConfig.vidHeight, GL_RGBA , GL_UNSIGNED_BYTE, depthReadback );
 	R_StaticFree( depthReadback );
