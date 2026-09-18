@@ -396,6 +396,18 @@ if get_option('build_native_tests')
     openq4_console_completion_test,
     timeout: 30,
   )
+
+  openq4_arb_color_zero_floor_test = executable(
+    'openq4-arb-color-zero-floor-test',
+    files('tools/tests/native/ARBColorZeroFloorTest.cpp'),
+    include_directories: root_include_dir,
+    install: false,
+  )
+  test(
+    'openq4-arb-color-zero-floor',
+    openq4_arb_color_zero_floor_test,
+    timeout: 30,
+  )
 endif
 
 openq4_pak_files = []

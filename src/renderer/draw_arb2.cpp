@@ -32,6 +32,7 @@ If you have questions concerning this license or the applicable additional terms
 #include <cstring>
 
 #include "tr_local.h"
+#include "ARBColorZeroFloor.h"
 #include "CelShading.h"
 #include "Model_local.h"
 #include "ShadowMapClassification.h"
@@ -16579,6 +16580,38 @@ static bool RB_IsSimpleInteractionProgram( const progDef_t &prog ) {
 		idStr::Icmp( prog.name, "SimpleInteraction.vfp" ) == 0;
 }
 
+/*
+==================
+RB_ARBProgramNeedsColorZeroFloor
+
+The fragment programs the interaction pass adds up once per light. None of them
+saturates N.L: retail's RGBA8 framebuffer dropped a light behind the surface by
+clamping its negative colour, and a float scene target keeps it, so the blend
+subtracts that light. ARBColorZeroFloor.h has the whole story.
+==================
+*/
+static bool RB_ARBProgramNeedsColorZeroFloor( const progDef_t &prog ) {
+	return prog.target == GL_FRAGMENT_PROGRAM_ARB &&
+		( prog.ident == FPROG_INTERACTION ||
+		  prog.ident == FPROG_SIMPLE_INTERACTION ||
+		  prog.ident == FPROG_TEST );
+}
+
+static const char *RB_ARBColorZeroFloorResultName( oq4arbfloor::rewriteResult_t result ) {
+	switch ( result ) {
+	case oq4arbfloor::REWRITE_DONE:
+		return "done";
+	case oq4arbfloor::REWRITE_NO_COLOR_WRITE:
+		return "no result.color write";
+	case oq4arbfloor::REWRITE_UNSUPPORTED:
+		return "unsupported colour output";
+	case oq4arbfloor::REWRITE_NO_ROOM:
+		return "rewrite buffer too small";
+	default:
+		return "unknown";
+	}
+}
+
 static GLuint RB_CurrentInteractionProgramIdent( GLenum target ) {
 	if ( r_testARBProgram.GetBool() ) {
 		return ( target == GL_VERTEX_PROGRAM_ARB ) ? VPROG_TEST : FPROG_TEST;
@@ -16830,14 +16863,43 @@ void R_LoadARBProgram( int progIndex ) {
 		RB_UpdateInteractionColorMode( true );
 	}
 
+	// The interaction programs get a zero floor on their colour. The rewrite is
+	// ours, not the content's, so a driver that refuses it gets the program as
+	// shipped rather than losing lighting.
+	idList<char> zeroFloorProgram;
+	const char *programText = start;
+	if ( RB_ARBProgramNeedsColorZeroFloor( prog ) ) {
+		zeroFloorProgram.SetNum( idLib::SizeToInt( oq4arbfloor::RewriteBufferSize( start ), "R_LoadARBProgram" ) );
+		const oq4arbfloor::rewriteResult_t zeroFloor = oq4arbfloor::RewriteWithZeroFloor( start,
+			zeroFloorProgram.Ptr(), static_cast<size_t>( zeroFloorProgram.Num() ) );
+		if ( zeroFloor == oq4arbfloor::REWRITE_DONE ) {
+			programText = zeroFloorProgram.Ptr();
+		} else {
+			common->Printf( ": colour zero floor not applied (%s)", RB_ARBColorZeroFloorResultName( zeroFloor ) );
+		}
+	}
+
 	glBindProgramARB( prog.target, prog.ident );
 	glGetError();
 
 	glProgramStringARB( prog.target, GL_PROGRAM_FORMAT_ASCII_ARB,
-		idLib::SizeToInt( strlen( start ), "R_LoadARBProgram" ), (unsigned char *)start );
+		idLib::SizeToInt( strlen( programText ), "R_LoadARBProgram" ), (unsigned char *)programText );
 
 	err = glGetError();
 	glGetIntegerv( GL_PROGRAM_ERROR_POSITION_ARB, (GLint *)&ofs );
+	if ( programText != start && ( err == GL_INVALID_OPERATION || ofs != -1 ) ) {
+		const GLubyte *str = glGetString( GL_PROGRAM_ERROR_STRING_ARB );
+		common->Printf( "\n" );
+		common->Warning( "R_LoadARBProgram: the driver rejected the colour zero floor for %s (%s); loading it unchanged, "
+			"so a light behind a surface can darken it on a float scene target",
+			fullPath.c_str(), ( str != NULL ) ? (const char *)str : "unknown" );
+		common->Printf( "%s", fullPath.c_str() );
+		programText = start;
+		glProgramStringARB( prog.target, GL_PROGRAM_FORMAT_ASCII_ARB,
+			idLib::SizeToInt( strlen( programText ), "R_LoadARBProgram" ), (unsigned char *)programText );
+		err = glGetError();
+		glGetIntegerv( GL_PROGRAM_ERROR_POSITION_ARB, (GLint *)&ofs );
+	}
 	if ( err == GL_INVALID_OPERATION ) {
 		const GLubyte *str = glGetString( GL_PROGRAM_ERROR_STRING_ARB );
 		idStr failure = "GL_PROGRAM_ERROR_STRING_ARB: ";
@@ -16845,10 +16907,10 @@ void R_LoadARBProgram( int progIndex ) {
 		common->Printf( "\nGL_PROGRAM_ERROR_STRING_ARB: %s\n", ( str != NULL ) ? (const char *)str : "unknown" );
 		if ( ofs < 0 ) {
 			common->Printf( "GL_PROGRAM_ERROR_POSITION_ARB < 0 with error\n" );
-		} else if ( ofs >= (int)strlen( (char *)start ) ) {
+		} else if ( ofs >= (int)strlen( programText ) ) {
 			common->Printf( "error at end of program\n" );
 		} else {
-			common->Printf( "error at %i:\n%s", ofs, start + ofs );
+			common->Printf( "error at %i:\n%s", ofs, programText + ofs );
 		}
 		RB_SetARBProgramFailure( prog, failure.c_str(), ofs );
 		return;
@@ -16860,7 +16922,7 @@ void R_LoadARBProgram( int progIndex ) {
 	}
 
 	prog.valid = true;
-	common->Printf( "\n" );
+	common->Printf( programText != start ? ": colour floored at zero\n" : "\n" );
 }
 
 /*
