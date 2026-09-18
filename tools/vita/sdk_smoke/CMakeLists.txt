@@ -38,11 +38,20 @@ target_include_directories(openq4_vita_idlib_probe PRIVATE
 
 target_compile_features(openq4_vita_idlib_probe PRIVATE cxx_std_20)
 
-add_library(openq4_vita_precompiled_probe STATIC
-  idlib_math_probe.cpp
+file(GLOB OPENQ4_VITA_IDLIB_SOURCES CONFIGURE_DEPENDS
+  "${OPENQ4_ROOT}/src/idlib/*.cpp"
+  "${OPENQ4_ROOT}/src/idlib/bv/*.cpp"
+  "${OPENQ4_ROOT}/src/idlib/containers/*.cpp"
+  "${OPENQ4_ROOT}/src/idlib/geometry/*.cpp"
+  "${OPENQ4_ROOT}/src/idlib/hashing/*.cpp"
+  "${OPENQ4_ROOT}/src/idlib/math/*.cpp"
 )
 
-target_include_directories(openq4_vita_precompiled_probe PRIVATE
+add_library(openq4_vita_full_idlib_probe STATIC
+  ${OPENQ4_VITA_IDLIB_SOURCES}
+)
+
+target_include_directories(openq4_vita_full_idlib_probe PRIVATE
   ${CMAKE_CURRENT_BINARY_DIR}
   ${OPENQ4_ROOT}
   ${OPENQ4_ROOT}/src
@@ -50,7 +59,7 @@ target_include_directories(openq4_vita_precompiled_probe PRIVATE
   ${OPENQ4_ROOT}/.tmp/gamelibs_stage/src/mpgame
 )
 
-target_compile_options(openq4_vita_precompiled_probe PRIVATE
+target_compile_options(openq4_vita_full_idlib_probe PRIVATE
   -fsigned-char
   -DVITA=1
   -D__DOOM_DLL__
@@ -58,11 +67,11 @@ target_compile_options(openq4_vita_precompiled_probe PRIVATE
   -DGLEW_NO_GLU
   -fno-strict-aliasing
   -ffp-contract=off
-  -Wall
-  -Wextra
+  -include
+  ${OPENQ4_ROOT}/src/idlib/precompiled.h
 )
 
-target_compile_features(openq4_vita_precompiled_probe PRIVATE cxx_std_20)
+target_compile_features(openq4_vita_full_idlib_probe PRIVATE cxx_std_20)
 add_executable(vita_sdk_smoke
   main.cpp
   platform_probe.cpp
