@@ -4,6 +4,7 @@
 #include <psp2/kernel/threadmgr/cond.h>
 #include <psp2/kernel/threadmgr/mutex.h>
 #include <psp2/kernel/threadmgr/thread.h>
+#include <psp2/kernel/clib.h>
 
 #include <stdint.h>
 #include <string.h>
@@ -96,7 +97,7 @@ void Vita_InitThreads( void ) {
 
 	for ( int i = 0; i < MAX_LOCAL_CRITICAL_SECTIONS; ++i ) {
 		char name[32];
-		idStr::snPrintf( name, sizeof( name ), "openq4-mutex-%d", i );
+		sceClibSnprintf( name, sizeof( name ), "openq4-mutex-%d", i );
 		vitaMutexes[i] = sceKernelCreateMutex( name, 0, 0, NULL );
 		if ( vitaMutexes[i] < 0 ) {
 			Sys_Printf( "Vita_InitThreads: sceKernelCreateMutex(%d) failed: 0x%08X\n", i, vitaMutexes[i] );
@@ -109,7 +110,7 @@ void Vita_InitThreads( void ) {
 	if ( vitaMutexReady[eventMutex] ) {
 		for ( int i = 0; i < MAX_TRIGGER_EVENTS; ++i ) {
 			char name[32];
-			idStr::snPrintf( name, sizeof( name ), "openq4-cond-%d", i );
+			sceClibSnprintf( name, sizeof( name ), "openq4-cond-%d", i );
 			vitaConditions[i] = sceKernelCreateCond( name, 0, vitaMutexes[eventMutex], NULL );
 			if ( vitaConditions[i] < 0 ) {
 				Sys_Printf( "Vita_InitThreads: sceKernelCreateCond(%d) failed: 0x%08X\n", i, vitaConditions[i] );
