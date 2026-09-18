@@ -67,7 +67,7 @@ void Sys_Error( const char *error, ... ) {
 
 	va_list args;
 	va_start( args, error );
-	vsnprintf( text, sizeof( text ), error != NULL ? error : "Unknown error", args );
+	idStr::vsnPrintf( text, sizeof( text ), error != NULL ? error : "Unknown error", args );
 	va_end( args );
 	text[sizeof( text ) - 1] = '\0';
 
@@ -326,15 +326,11 @@ void Sys_Mkdir( const char *path ) {
 }
 
 ID_TIME_T Sys_FileTimeStamp( FILE *fp ) {
-	if ( fp == NULL ) {
-		return static_cast<ID_TIME_T>( -1 );
-	}
-
-	struct stat st;
-	if ( fstat( fileno( fp ), &st ) != 0 ) {
-		return static_cast<ID_TIME_T>( -1 );
-	}
-	return st.st_mtime;
+	// VitaSDK's newlib FILE implementation does not expose a portable fileno()
+	// entry point. Engine-owned files use the idFileSystem path/stat layer, so
+	// keep the legacy FILE* timestamp helper conservative during bring-up.
+	(void)fp;
+	return static_cast<ID_TIME_T>( -1 );
 }
 
 const char *Sys_DefaultCDPath( void ) {
