@@ -142,9 +142,9 @@ jobs:
           test -f build/vita-sdk-smoke/vita_sdk_smoke.self
           test -f build/vita-sdk-smoke/openq4_vita_prerender
           test -f build/vita-sdk-smoke/openq4_vita_prerender.self
-          test -f build/vita-sdk-smoke/Vita-OpenQ4-PreRender.vpk
+          test -f build/vita-sdk-smoke/Vita-OpenQ4.vpk
           arm-vita-eabi-readelf -h build/vita-sdk-smoke/openq4_vita_prerender
-          ls -lh             build/vita-sdk-smoke/openq4_vita_prerender             build/vita-sdk-smoke/openq4_vita_prerender.self             build/vita-sdk-smoke/Vita-OpenQ4-PreRender.vpk
+          ls -lh             build/vita-sdk-smoke/openq4_vita_prerender             build/vita-sdk-smoke/openq4_vita_prerender.self             build/vita-sdk-smoke/Vita-OpenQ4.vpk
 
       - name: Upload Vita pre-render artifacts
         uses: actions/upload-artifact@v4
@@ -153,7 +153,7 @@ jobs:
           path: |
             build/vita-sdk-smoke/openq4_vita_prerender
             build/vita-sdk-smoke/openq4_vita_prerender.self
-            build/vita-sdk-smoke/Vita-OpenQ4-PreRender.vpk
+            build/vita-sdk-smoke/Vita-OpenQ4.vpk
             build/vita-sdk-smoke/vita_sdk_smoke
             build/vita-sdk-smoke/vita_sdk_smoke.self
           if-no-files-found: error
