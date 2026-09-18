@@ -29,7 +29,15 @@ If you have questions concerning this license or the applicable additional terms
 #ifndef __SYS_PUBLIC__
 #define __SYS_PUBLIC__
 
+#include <assert.h>
+#include <stdarg.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <time.h>
+
+#ifndef ID_TIME_T
+#define ID_TIME_T time_t
+#endif
 
 class idStr;
 
