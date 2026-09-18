@@ -12,6 +12,7 @@ on:
       - meson_options.txt
       - src/sys/sys_public.h
       - src/sys/vita/**
+      - src/framework/**
       - src/idlib/precompiled.h
       - src/idlib/CryptoHash.*
   workflow_dispatch:
