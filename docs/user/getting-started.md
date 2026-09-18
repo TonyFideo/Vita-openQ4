@@ -69,7 +69,7 @@ If you prefer a self-contained setup, keep these side by side in the same root f
 - Windows release packages are meant to be self-contained.
 - Current validation focuses on Windows 11 and Windows 10. Windows 7/8/8.1 remain legacy compatibility targets rather than the main test matrix.
 - If openQ4 crashes, check the `crashes/` folder beside the executable for log and dump files.
-- Windows ARM64 packages are experimental. They are built natively for Arm64, but no automated test starts them yet and no real-hardware report has confirmed that they run. If the renderer does not start on a Windows on Arm device, launch with `+set r_renderApi vulkan`. Please report what happens, including runs that simply work, with the Windows ARM64 issue template.
+- Windows ARM64 packages are experimental. They are built natively for Arm64 and automated tests start the dedicated server, but nothing has started the game client automatically yet, and no real-hardware report has confirmed that the packages run. If the renderer does not start on a Windows on Arm device, launch with `+set r_renderApi vulkan`. Please report what happens, including runs that simply work, with the Windows ARM64 issue template.
 
 ### Linux
 

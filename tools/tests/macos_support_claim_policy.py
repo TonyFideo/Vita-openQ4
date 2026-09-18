@@ -34,6 +34,11 @@ def require(haystack: str, needle: str, context: str) -> None:
         raise AssertionError(f"Missing {needle!r} in {context}")
 
 
+def reject(haystack: str, needle: str, context: str) -> None:
+    if needle in haystack:
+        raise AssertionError(f"Unexpected {needle!r} in {context}")
+
+
 def require_any(haystack: str, needles: tuple[str, ...], context: str) -> None:
     if not any(needle in haystack for needle in needles):
         formatted = ", ".join(repr(needle) for needle in needles)
@@ -114,10 +119,52 @@ def validate_arm64_tier_labels() -> None:
         ("docs/dev/engine-capability-matrix.md", "| Windows ARM64 client/server | **Experimental** |"),
         (".github/ISSUE_TEMPLATE/windows-arm64-report.yml", "Windows ARM64 packages are experimental"),
         (".github/scripts/announce-release-discord.mjs", '"Windows ARM64 Installer (experimental)"'),
+        ("docs/dev/platform-support.md", "| Windows ARM64 | Experimental |"),
         # Linux ARM64 stays a preview behind its own evidence gate.
         ("docs/dev/platform-support.md", "| Linux ARM64 (`aarch64`) | Preview |"),
     ):
         require(read(relative_path), token, relative_path)
+
+    # Push and pull-request CI start the Windows ARM64 dedicated server, but
+    # never the client, and no hardware report exists. The docs say both, stop
+    # saying that nothing starts it, and the lanes they cite must still exist.
+    for relative_path in (
+        "docs/dev/platform-support.md",
+        "docs/dev/engine-capability-matrix.md",
+        ".github/ISSUE_TEMPLATE/windows-arm64-report.yml",
+    ):
+        source = read(relative_path)
+        require(source, "starts the dedicated server without game data", relative_path)
+        require(source, "client has never been started by automation", relative_path)
+    for relative_path in (
+        "docs/user/getting-started.md",
+        "assets/release/README.html",
+        ".github/workflows/manual-release.yml",
+    ):
+        require(read(relative_path), "nothing has started the game client automatically yet", relative_path)
+    for relative_path in (
+        "README.md",
+        "BUILDING.md",
+        "docs/user/getting-started.md",
+        "assets/release/README.html",
+        "docs/dev/platform-support.md",
+        "docs/dev/engine-capability-matrix.md",
+        ".github/ISSUE_TEMPLATE/windows-arm64-report.yml",
+        ".github/workflows/manual-release.yml",
+    ):
+        source = read(relative_path)
+        for stale in (
+            "no automated test starts them yet",
+            "no automated test starts it",
+            "No workflow starts it",
+            "no workflow starts its binaries",
+            "no job starts its binaries",
+            "binary has been started by automation",
+            "built only by the manual release workflow",
+        ):
+            reject(source, stale, relative_path)
+    for relative_path in (".github/workflows/push-verification.yml", ".github/workflows/commit-validation.yml"):
+        require(read(relative_path), "python tools/tests/windows_dedicated_server_smoke.py --arch arm64", relative_path)
 
     workflow = read(".github/workflows/manual-release.yml")
     for token in (

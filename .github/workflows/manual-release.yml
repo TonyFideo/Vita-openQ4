@@ -2299,7 +2299,7 @@ jobs:
             "${macos_tier_note}" "${macos_package_note}" >> "${RUNNER_TEMP}/release-changelog.md"
 
           printf '\n## Windows ARM64 Support\n\n%s\n' \
-            "Windows ARM64 packages are experimental. They are built natively for Arm64, but no automated test starts them yet and no real-hardware report has confirmed that they run. If the renderer does not start, launch with +set r_renderApi vulkan, and please report the result with the Windows ARM64 issue template." \
+            "Windows ARM64 packages are experimental. They are built natively for Arm64 and automated tests start the dedicated server, but nothing has started the game client automatically yet, and no real-hardware report has confirmed that the packages run. If the renderer does not start, launch with +set r_renderApi vulkan, and please report the result with the Windows ARM64 issue template." \
             >> "${RUNNER_TEMP}/release-changelog.md"
 
       - name: Create or update release
