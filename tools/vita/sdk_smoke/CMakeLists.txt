@@ -44,11 +44,20 @@ add_library(openq4_vita_precompiled_probe STATIC
 
 target_include_directories(openq4_vita_precompiled_probe PRIVATE
   ${CMAKE_CURRENT_BINARY_DIR}
+  ${OPENQ4_ROOT}
+  ${OPENQ4_ROOT}/src
+  ${OPENQ4_ROOT}/.tmp/gamelibs_stage/src/game
+  ${OPENQ4_ROOT}/.tmp/gamelibs_stage/src/mpgame
 )
 
 target_compile_options(openq4_vita_precompiled_probe PRIVATE
   -fsigned-char
   -DVITA=1
+  -D__DOOM_DLL__
+  -DUSE_OPENAL
+  -DGLEW_NO_GLU
+  -fno-strict-aliasing
+  -ffp-contract=off
   -Wall
   -Wextra
 )
