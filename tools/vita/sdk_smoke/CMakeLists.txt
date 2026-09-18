@@ -269,9 +269,10 @@ target_link_libraries(openq4_vita_prerender PRIVATE
 )
 
 vita_create_self(openq4_vita_prerender.self openq4_vita_prerender)
-vita_create_vpk(Vita-OpenQ4-PreRender.vpk Q4VITA001 openq4_vita_prerender.self
-  VERSION 01.00
-  NAME "Vita OpenQ4 Pre-Render"
+# VitaSDK requires APP_VER in ##.## form; 00.10 represents project version 0.1.
+vita_create_vpk(Vita-OpenQ4.vpk VOQ000004 openq4_vita_prerender.self
+  VERSION 00.10
+  NAME "Vita-OpenQ4"
 )
 
 add_executable(vita_sdk_smoke
