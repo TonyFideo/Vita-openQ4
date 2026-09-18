@@ -72,6 +72,32 @@ target_compile_options(openq4_vita_full_idlib_probe PRIVATE
 )
 
 target_compile_features(openq4_vita_full_idlib_probe PRIVATE cxx_std_20)
+
+add_library(openq4_vita_threads_probe STATIC
+  ${OPENQ4_ROOT}/src/sys/vita/vita_threads.cpp
+)
+
+target_include_directories(openq4_vita_threads_probe PRIVATE
+  ${CMAKE_CURRENT_BINARY_DIR}
+  ${OPENQ4_ROOT}
+  ${OPENQ4_ROOT}/src
+  ${OPENQ4_ROOT}/.tmp/gamelibs_stage/src/game
+  ${OPENQ4_ROOT}/.tmp/gamelibs_stage/src/mpgame
+)
+
+target_compile_options(openq4_vita_threads_probe PRIVATE
+  -fsigned-char
+  -DVITA=1
+  -D__DOOM_DLL__
+  -DUSE_OPENAL
+  -DGLEW_NO_GLU
+  -DID_GL_HARDLINK
+  -fpermissive
+  -fno-strict-aliasing
+  -ffp-contract=off
+)
+
+target_compile_features(openq4_vita_threads_probe PRIVATE cxx_std_20)
 add_executable(vita_sdk_smoke
   main.cpp
   platform_probe.cpp
