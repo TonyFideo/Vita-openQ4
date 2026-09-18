@@ -54,12 +54,19 @@ Process:
 
 Use this checklist before editing curated release notes or front-door package docs that mention macOS.
 
-- [ ] Release notes that mention macOS say "experimental Apple Silicon/arm64 macOS" unless a completed evidence entry supports stronger language.
+- [ ] Release notes that mention macOS say "preview Apple Silicon/arm64 macOS" and repeat the preview limitations from `docs/dev/macos-support-matrix-policy.md` (unsigned packages, and only current macOS played on real hardware) unless a completed evidence entry supports stronger language.
 - [ ] Any first-class, stable, or fully supported macOS claim cites the current release entry in `docs/dev/macos-signoff-evidence.md` and has the "macOS Evidence Gate" completed.
 - [ ] Intel Mac, universal2, and Rosetta appear only as unsupported, not-published, or future-policy items until a separate matrix expansion plan is accepted.
 - [ ] `macos_graphics_bridge=metal` is described as a Metal bridge around the OpenGL renderer, not native Metal or OpenGL-free rendering.
 - [ ] `platform_backend=native` on macOS is described as comparison-only diagnostic infrastructure, not a release backend.
-- [ ] Curated release notes keep macOS support experimental and carry GitHub issue #98 as the current visual-parity limitation until fresh Apple-hardware evidence closes it; closing the original issue #73 startup crash does not satisfy the macOS Evidence Gate by itself.
+- [ ] Curated release notes describe macOS as a preview. GitHub issue #98's reporter closed it on 0.12.0, and the #122 reporter confirmed stock gameplay and audio on 0.13.1; like closing the original issue #73 startup crash, these community reports support the preview but do not satisfy the macOS Evidence Gate.
+
+## Windows ARM64 Support Claim Guard
+
+Added 2026-09-18. Windows ARM64 assets carry no tier suffix, so the wording is the only label they get.
+
+- [ ] Release notes, front-door docs, and the packaged README call Windows ARM64 experimental until `docs/dev/platform-support.md` records an automated launch on an Arm64 Windows runner and a real-hardware report.
+- [ ] Windows ARM64 is never listed as supported alongside Windows x64 without that qualifier.
 
 ## macOS Vulkan Renderer Wording Guard
 
@@ -77,6 +84,7 @@ is `docs/dev/macos-moltenvk-decision.md`.
 
 ## Ready For Changelog
 
+- [x] macOS on Apple Silicon is now a preview rather than experimental, and Windows ARM64 is labeled experimental. On macOS 26, one player on an M4 Max reported multiplayer working with sound on 0.12.0 (#98) and another on an M2 played the campaign with sound on 0.13.1 (#122), on top of CI that builds, packages, and starts both macOS variants on every push. The macOS packages are still unsigned, and nothing older than current macOS has been run. Windows ARM64 packages had shipped with no label at all, although nothing starts them in CI and no hardware report exists; the README, setup guide, packaged README, issue template, and release notes now say experimental. Linux ARM64 stays a preview. The tiers, and what each one rests on, are recorded in `docs/dev/platform-support.md`.
 - [x] Baked light grids stream in without stalling when new areas come into view. A map's `.lightgridpack` is stored deflated in `pak1.pk4`, and reading an area's atlas seeked inside that entry, which inflates the pack from its first byte; with three atlases per area, an area deep in `game/airdefense2`'s pack cost up to about 200 ms, and a step that revealed several areas held a frame for half a second. The pack is now read into memory once while the map loads (68 ms for airdefense2's 18.6 MiB, 27 ms for `mp/q4dm1`) and each area streams from that copy in a few milliseconds. In a teleport tour through every area (Windows x64, OpenGL, three interleaved runs each), the worst frame fell from 491 ms to 23 ms on airdefense2 and from 434 ms to 21 ms on the q4dm1 listen server, close to the 11–21 ms of fully preloaded play. Preloading gains the same way: `r_lightGridPreload 1` now costs 84 ms instead of 3.9 s on airdefense2 and 42 ms instead of 2.3 s on q4dm1. The in-memory copy is released once every atlas is resident, unless `r_lightGridResidencyFrames` may still purge atlases; the Vulkan backend, which has no light-grid pass, reads the pack only when preloading, and dedicated servers never read it. `r_lightGridPreload` still defaults to 0.
 - [x] Console argument completion now narrows to what has been typed. Typing a value such as `com_loadingContinueAutoAdvance 30000` or `com_maxfps 120` lists only the values that start with it, and Enter runs the command; before, the popup listed the first 64 values of the range whatever was typed, and Enter replaced the typed value with one of them. Enter also runs the line when the highlighted entry already is what was typed, as with `com_maxfps 60` while 600-609 are still listed. The popup keeps up to 1024 matches, so even the largest name family is listed in full (typing `r` matches 573 command and CVar names, `r_` 473). Typo suggestions stay limited to the best 64 and are no longer offered for numeric values, where a near miss such as 500 for 5000 is a different setting. Covered by the `openq4-console-completion` native test and `tools/tests/console_completion_contract.py`.
 - [x] Heat haze and the other `_currentRender` effects survive antialiasing on the Vulkan backend. With `r_multiSamples` above 0 the scene renders into a multisampled target, `vkCmdBlitImage` cannot read one, and the `_currentRender` capture failed outright; every surface that consumes it — the fire distortion in `effects/fire/*.fx`, the `warp_mask` stages, heat haze — was then skipped for the whole frame, so multisampling silently deleted those effects. The capture now resolves a multisampled colour source into single-sample scratch of the source's own format and blits from that, using the same `vkCmdResolveImage` path the render-target resolve already uses. Depth capture is unchanged; a multisampled depth source is still refused. The added resolve costs roughly 1 ms at 2560x1440 with 4x multisampling on Apple M-class and A19-class GPUs.
@@ -1031,13 +1039,13 @@ is `docs/dev/macos-moltenvk-decision.md`.
 
 ## macOS Evidence Gate
 
-Complete this section before release notes claim macOS support beyond the current experimental Apple Silicon/arm64 status.
+Complete this section before release notes claim macOS support beyond the current preview Apple Silicon/arm64 status.
 
 - [ ] `docs/dev/macos-signoff-evidence.md` has a current release entry for the candidate version.
 - [ ] The evidence entry records run ID, archive path or artifact URL, archive SHA-256, validator command, validator result, openQ4 commit, `openQ4-game` commit, package artifact names, matching dSYM symbol artifact names, `SYMBOLS.txt` manifest status, signing/notarization status, architecture policy, CPU architecture, OS matrix role, macOS version, kernel, Xcode version, macOS SDK version, hardware model, graphics bridges, OpenAL provider, and known exceptions.
 - [ ] The current matrix policy in `docs/dev/macos-support-matrix-policy.md` matches the release notes, `BUILDING.md`, `docs/dev/platform-support.md`, `docs/user/getting-started.md`, and packaged README wording.
-- [ ] macOS floor-version evidence is recorded for the documented `macOS 11` floor, or the release remains experimental and notes that floor evidence is still pending.
-- [ ] Latest-public-macOS evidence is recorded for the release candidate, or the release remains experimental and notes that latest-version evidence is still pending.
+- [ ] macOS floor-version evidence is recorded for the documented `macOS 11` floor, or the release stays a preview and notes that floor evidence is still pending.
+- [ ] Latest-public-macOS evidence is recorded for the release candidate, or the release stays a preview and notes that latest-version evidence is still pending.
 - [ ] The accepted archive was collected with `-RequireCompletedSignoffChecklist`.
 - [ ] `python tools/macos/validate_signoff_archive.py <archive> --require-completed-checklist` passed for both OpenGL and Metal bridge result directories.
 - [ ] `python tools/macos/record_signoff_evidence.py <archive> --version vX.Y.Z --update-index` updated `docs/dev/macos-signoff-evidence.md`.
@@ -1049,12 +1057,12 @@ Complete this section before release notes claim macOS support beyond the curren
 - [ ] Finder or Desktop launcher startup and terminal startup were both checked.
 - [ ] The package layout contract in `docs/dev/macos-package-layout-and-release-policy.md` was followed: app data was under `Contents/Resources/baseoq4`, signed SP/MP modules were under `Contents/Frameworks`, and no adjacent `baseoq4` duplicate shipped.
 - [ ] Runtime macOS packages contain `SYMBOLS.txt`, do not contain `.dSYM` bundles, and have matching `openq4-<version>-macos-arm64-<bridge>-symbols.tar.xz` artifacts recorded for crash symbolication.
-- [ ] Launch from a mounted signed/notarized DMG was checked, or unsigned archive behavior was recorded as an experimental exception.
+- [ ] Launch from a mounted signed/notarized DMG was checked, or unsigned archive behavior was recorded as an unsigned-package exception.
 - [ ] Dragging only `openQ4.app` to `/Applications` or another user-writable location was checked.
 - [ ] Whole-package copied launch was checked for loose client, dedicated-server, and support-tool sibling-runtime discovery.
 - [ ] `fs_basepath`, `fs_cdpath`, and `fs_savepath` were confirmed in logs for Finder/copied package and terminal launches.
 - [ ] Gatekeeper assessment passed for signed/notarized DMGs, or unsigned/unnotarized approval friction was recorded for development archives.
-- [ ] First-class macOS release jobs used signed/notarized DMGs; unsigned `-unsigned.tar.gz` artifacts were published only as experimental/development fallback output.
+- [ ] First-class macOS release jobs used signed/notarized DMGs; unsigned `-unsigned.tar.gz` artifacts were published only as preview/development fallback output.
 - [ ] Keyboard, mouse, controller if available, audio output/device switching, windowed/fullscreen, selected display, and HiDPI/Retina checks were completed or recorded as exceptions.
 - [ ] Curated release notes in `docs/dev/releases/vX.Y.Z.md` mention arm64-only support, unsigned/unnotarized package behavior if applicable, and any renderer, audio, input, package-layout, SP, MP, or dedicated-server limitation found during signoff.
 - [ ] Curated release notes in `docs/dev/releases/vX.Y.Z.md` mention that the macOS Metal package is a bridge around the OpenGL renderer and do not imply native Metal or native Cocoa/OpenGL backend support.

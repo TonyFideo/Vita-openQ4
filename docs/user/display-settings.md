@@ -176,10 +176,11 @@ does not replace or remove the OpenGL renderer.
 - To try it: open the console, run `r_renderApi vulkan`, then quit and relaunch
   openQ4. Check `r_actualRenderApi` or `gfxInfo` afterwards to confirm what
   actually started.
-- **Expect problems.** macOS support is experimental, the Vulkan renderer is
-  experimental, and this combination has no accepted testing on real Apple
-  hardware yet. Missing effects, wrong shading, poor performance, or a refusal
-  to start are all plausible.
+- **Expect problems.** The Vulkan renderer is experimental on every platform,
+  and on macOS only one player has reported it working (openQ4 0.12.0 on an
+  M4 Max MacBook Pro); nothing has checked its output against OpenGL there.
+  Missing effects, wrong shading, poor performance, or a refusal to start are
+  all plausible.
 - **To go back:** run `r_renderApi gl` and restart. The setting is saved to your
   config, so it stays on OpenGL after that.
 - **If it cannot start**, you do not need to do anything. openQ4 logs the

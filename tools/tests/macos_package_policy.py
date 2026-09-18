@@ -36,7 +36,7 @@ def validate_package_layout_policy_doc() -> None:
         "`fs_basepath`, `fs_cdpath`, and `fs_savepath`",
         "Gatekeeper behavior",
         "First-class macOS releases require signed and notarized DMGs",
-        "Unsigned `-unsigned.tar.gz` archives are allowed only for experimental or",
+        "Unsigned `-unsigned.tar.gz` archives are allowed only for experimental, preview,",
         "tools/build/package_nightly.py",
     ):
         require(policy, token, "macOS package layout and release policy doc")
@@ -110,7 +110,7 @@ def validate_release_workflow_gate() -> None:
         "OPENQ4_MACOS_SUPPORT_TIER",
         "First-class macOS releases require signed/notarized DMGs",
         "missing Apple signing/notary repository secrets",
-        "Experimental macOS unsigned/unnotarized tar.gz release artifacts enabled as fallback output",
+        "Preview macOS unsigned/unnotarized tar.gz release artifacts enabled as fallback output",
         "macos_support_tier=",
     ):
         require(workflow, token, "manual release macOS first-class gate")
@@ -119,7 +119,7 @@ def validate_release_workflow_gate() -> None:
         (building, "build documentation"),
         (platform_support, "platform support documentation"),
     ):
-        require(source, "macos_support_tier=experimental", context)
+        require(source, "macos_support_tier=preview", context)
         require(source, "macos_support_tier=first-class", context)
         require(source, "signed/notarized DMGs", context)
         require(source, "`-unsigned.tar.gz`", context)

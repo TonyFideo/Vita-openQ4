@@ -44,10 +44,10 @@ on:
       macos_support_tier:
         description: macOS release support tier
         required: true
-        default: experimental
+        default: preview
         type: choice
         options:
-          - experimental
+          - preview
           - first-class
       draft:
         description: Leave the release as an unpublished draft (no Discord announcement)
@@ -416,9 +416,13 @@ jobs:
                   user_facing_linux_arm64_docs.append(
                       selected_curated_release_notes.as_posix()
                   )
+              # macOS is a preview too. A "preview" followed by macOS or
+              # Apple ("preview macOS", "preview Apple Silicon") is that
+              # platform's claim, not a stale Linux ARM64 one, so macOS
+              # mentions near Linux ARM64 must use that word order.
               linux_arm64_preview_claim_pattern = re.compile(
-                  r"(?:linux[\s_-]+arm64.{0,240}\bpreview\b"
-                  r"|\bpreview\b.{0,240}linux[\s_-]+arm64)",
+                  r"(?:linux[\s_-]+arm64.{0,240}\bpreview\b(?![\s_-]+(?:apple|macos)\b)"
+                  r"|\bpreview\b(?![\s_-]+(?:apple|macos)\b).{0,240}linux[\s_-]+arm64)",
                   flags=re.IGNORECASE | re.DOTALL,
               )
               stale_user_preview_claims = []
@@ -505,8 +509,8 @@ jobs:
               for secret_name in required_macos_secrets
               if not os.environ.get(secret_name)
           ]
-          macos_support_tier = os.environ.get("OPENQ4_MACOS_SUPPORT_TIER", "experimental").strip() or "experimental"
-          if macos_support_tier not in {"experimental", "first-class"}:
+          macos_support_tier = os.environ.get("OPENQ4_MACOS_SUPPORT_TIER", "preview").strip() or "preview"
+          if macos_support_tier not in {"preview", "first-class"}:
               raise SystemExit(f"Unsupported macOS support tier: {macos_support_tier}")
           if (
               not linux_arm64_evidence_candidate
@@ -536,7 +540,7 @@ jobs:
                       + "; ".join(repr(marker) for marker in incomplete_evidence_markers)
                       + ". Validate the signoff archive and record it with "
                       "tools/macos/record_signoff_evidence.py --update-index, or rerun "
-                      "with macos_support_tier=experimental."
+                      "with macos_support_tier=preview."
                   )
           macos_signed_release_enabled = not missing_macos_secrets
           macos_release_mode = "signed" if macos_signed_release_enabled else "unsigned"
@@ -595,7 +599,7 @@ jobs:
               )
           else:
               macos_release_reason = (
-                  "Experimental macOS unsigned/unnotarized tar.gz release artifacts enabled as fallback output "
+                  "Preview macOS unsigned/unnotarized tar.gz release artifacts enabled as fallback output "
                   "because Apple signing/notary repository secrets are not configured: "
                   + ", ".join(missing_macos_secrets)
               )
@@ -2236,6 +2240,8 @@ jobs:
         env:
           LINUX_ARM64_RELEASE_REASON: ${{ needs.metadata.outputs.linux_arm64_release_reason }}
           LINUX_ARM64_SUPPORT_TIER: ${{ needs.metadata.outputs.linux_arm64_support_tier }}
+          MACOS_SIGNED_RELEASE_ENABLED: ${{ needs.metadata.outputs.macos_signed_release_enabled }}
+          MACOS_SUPPORT_TIER: ${{ needs.metadata.outputs.macos_support_tier }}
         shell: bash
         run: |
           set -euo pipefail
@@ -2256,15 +2262,45 @@ jobs:
             "${LINUX_ARM64_RELEASE_REASON}" >> "${RUNNER_TEMP}/release-changelog.md"
 
           if [ "${LINUX_ARM64_SUPPORT_TIER}" = "first-class" ]; then
-            if grep -Eiqz \
-              'linux[[:space:]_-]+arm64.{0,240}preview|preview.{0,240}linux[[:space:]_-]+arm64' \
-              "${RUNNER_TEMP}/release-changelog.md"; then
+            # Same rule as the metadata job: "preview macOS" and
+            # "preview Apple Silicon" are macOS claims, not Linux ARM64 ones.
+            # grep -P needs a UTF-8 locale and exits 2 on any error, which
+            # must fail the release rather than read as "no claim found".
+            preview_claim_status=0
+            LC_ALL=C.UTF-8 grep -Piqz \
+              '(?s)linux[\s_-]+arm64.{0,240}preview(?![\s_-]+(?:apple|macos)\b)|preview(?![\s_-]+(?:apple|macos)\b).{0,240}linux[\s_-]+arm64' \
+              "${RUNNER_TEMP}/release-changelog.md" || preview_claim_status=$?
+            if [ "${preview_claim_status}" -eq 0 ]; then
               echo "First-class Linux ARM64 release notes still contain preview claims:"
               grep -Ein 'linux[[:space:]_-]+arm64|preview' \
                 "${RUNNER_TEMP}/release-changelog.md" | head -20 || true
               exit 1
             fi
+            if [ "${preview_claim_status}" -ne 1 ]; then
+              echo "Linux ARM64 preview-claim scan failed with grep status ${preview_claim_status}."
+              exit 1
+            fi
           fi
+
+          # Appended after the Linux ARM64 check so the macOS preview wording
+          # cannot trip it. Windows ARM64 assets carry no tier suffix, so this
+          # section is the only label the release page gives them.
+          if [ "${MACOS_SUPPORT_TIER}" = "first-class" ]; then
+            macos_tier_note="macOS packages are first-class for Apple Silicon (arm64) Macs."
+          else
+            macos_tier_note="macOS packages are a preview for Apple Silicon (arm64) Macs. The build floor is macOS 11, but only current macOS releases have been played on real hardware."
+          fi
+          if [ "${MACOS_SIGNED_RELEASE_ENABLED}" = "true" ]; then
+            macos_package_note="The packages are signed and notarized DMGs."
+          else
+            macos_package_note="The packages are unsigned and not notarized, so macOS asks for approval the first time openQ4.app opens."
+          fi
+          printf '\n## macOS Support\n\n%s %s Intel Macs are not supported.\n' \
+            "${macos_tier_note}" "${macos_package_note}" >> "${RUNNER_TEMP}/release-changelog.md"
+
+          printf '\n## Windows ARM64 Support\n\n%s\n' \
+            "Windows ARM64 packages are experimental. They are built natively for Arm64, but no automated test starts them yet and no real-hardware report has confirmed that they run. If the renderer does not start, launch with +set r_renderApi vulkan, and please report the result with the Windows ARM64 issue template." \
+            >> "${RUNNER_TEMP}/release-changelog.md"
 
       - name: Create or update release
         env:

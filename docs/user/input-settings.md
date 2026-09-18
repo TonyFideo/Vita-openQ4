@@ -82,7 +82,7 @@ seta cl_mouseAccelDebug 0
 
 For CPI-normalized tuning, set `m_cpi` to the mouse hardware value and use `360 / sensitivity` as an approximate centimeters-per-360 target.
 
-SDL3 builds use relative mouse capture during gameplay on Windows, Linux, and experimental macOS. On Linux, openQ4 requests unscaled relative deltas from SDL where the desktop stack supports them and preserves fractional movement before it reaches the integer engine event queue. `Mouse1` through `Mouse8` are bindable by name on SDL3 and the native X11 fallback, and wheel up/down remain available as `MWHEELUP` and `MWHEELDOWN`.
+SDL3 builds use relative mouse capture during gameplay on Windows, Linux, and macOS. On Linux, openQ4 requests unscaled relative deltas from SDL where the desktop stack supports them and preserves fractional movement before it reaches the integer engine event queue. `Mouse1` through `Mouse8` are bindable by name on SDL3 and the native X11 fallback, and wheel up/down remain available as `MWHEELUP` and `MWHEELDOWN`.
 
 Experimental native macOS builds also expose `Mouse1` through `Mouse8`, track high-resolution wheel/trackpad deltas before emitting wheel steps, and synthesize common edit-field control characters such as Return, Tab, Backspace, and Ctrl-letter shortcuts.
 
@@ -123,7 +123,7 @@ seta in_joystickMoveCurve 1.0
 
 SDL gamepads use SDL's standard controller database, so Xbox, PlayStation, Steam Input, and similar pads should not need axis remapping. Generic SDL joysticks use raw axes with these auto defaults:
 
-Linux and macOS SDL3 builds opt into SDL's HIDAPI controller backends by default so PlayStation, Switch, Steam, Steam Deck, and Xbox-class controllers can expose the same button, stick, trigger, rumble, battery, gyro, and touchpad capabilities available through the shared SDL3 path. macOS builds remain experimental. Run `listControllers` to confirm which SDL driver, hint state, and capabilities are active for a connected device.
+Linux and macOS SDL3 builds opt into SDL's HIDAPI controller backends by default so PlayStation, Switch, Steam, Steam Deck, and Xbox-class controllers can expose the same button, stick, trigger, rumble, battery, gyro, and touchpad capabilities available through the shared SDL3 path. macOS support is a preview, and controllers have not yet been tested on a Mac. Run `listControllers` to confirm which SDL driver, hint state, and capabilities are active for a connected device.
 
 | Cvar | Auto default | What it changes |
 |---|---:|---|
@@ -183,7 +183,7 @@ The shipped defaults are defined in `content/baseoq4/pak0/default.cfg`.
 
 ## Default Controller Buttons
 
-SDL gamepads use stable `JOY` button names so binds work across common Xbox, PlayStation, and Steam Input layouts. Controller support is first-class in SDL3 builds on Windows, Linux, and macOS. macOS controller support remains part of the experimental macOS build track. The native Linux, experimental native macOS, and legacy Win32 input fallbacks currently remain keyboard/mouse focused.
+SDL gamepads use stable `JOY` button names so binds work across common Xbox, PlayStation, and Steam Input layouts. Controller support is first-class in SDL3 builds on Windows, Linux, and macOS. On macOS, controller support has not yet been tested on real hardware. The native Linux, experimental native macOS, and legacy Win32 input fallbacks currently remain keyboard/mouse focused.
 
 | Button | Default action |
 |---|---|

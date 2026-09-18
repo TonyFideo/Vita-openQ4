@@ -274,7 +274,7 @@
       <ul>
         <li>A legitimate Quake 4 installation from Steam or GOG.</li>
         <li>The stock retail PK4 files in a <code>q4base/</code> directory, available through openQ4's asset discovery or a manual <code>fs_basepath</code> setting.</li>
-        <li>A supported package target: Windows, Linux x64, Steam Deck/SteamOS, preview Linux ARM64, or experimental Apple Silicon/arm64 macOS.</li>
+        <li>A supported package target: Windows x64, Linux x64, or Steam Deck/SteamOS; preview Linux ARM64 or preview Apple Silicon/arm64 macOS; or experimental Windows ARM64.</li>
         <li>Use <code>minimum</code>, <code>lowpower</code>, or <code>performance</code> presets on constrained systems before enabling expensive visual options.</li>
       </ul>
     </section>
@@ -290,6 +290,15 @@
         <li>Open <code>docs/index.html</code> for the full offline documentation set, or use the installer-created Start Menu shortcuts on Windows.</li>
         <li>If auto-detection fails, launch with <code>+set fs_basepath "path\\to\\Quake 4"</code>, pointing at the retail root that contains <code>q4base/</code>.</li>
       </ol>
+    </section>
+
+    <section>
+      <h2>Windows ARM64 Experimental Notes</h2>
+      <ul>
+        <li>Windows ARM64 packages are experimental. They are built natively for Arm64, but no automated test starts them yet and no real-hardware report has confirmed that they run.</li>
+        <li>openQ4 renders with OpenGL by default. If the renderer does not start on a Windows on Arm device, launch with <code>+set r_renderApi vulkan</code>.</li>
+        <li>Please report what happens, including runs that simply work, with the Windows ARM64 issue template on the <a href="https://github.com/themuffinator/openQ4/issues">openQ4 issue tracker</a>.</li>
+      </ul>
     </section>
 
     <section>
@@ -313,18 +322,18 @@
     </section>
 
     <section>
-      <h2>Experimental macOS Notes</h2>
+      <h2>macOS Preview Notes</h2>
       <ul>
-        <li>macOS support is experimental. Current packages are for Apple Silicon/arm64 Macs on macOS 11 or later. Intel Mac and universal2 packages are not published yet, and Rosetta is not a supported release target.</li>
-        <li>Credentialed experimental macOS release runs publish signed/notarized OpenGL and Metal bridge DMGs. Releases without Apple Developer ID signing and notarization credentials publish clearly labeled <code>-unsigned.tar.gz</code> archives instead.</li>
+        <li>macOS support is a preview. Current packages are for Apple Silicon/arm64 Macs on macOS 11 or later. Players have run them on macOS 26, including the single-player campaign and multiplayer with sound, but nothing older than the current macOS has been tested. Intel Mac and universal2 packages are not published yet, and Rosetta is not a supported release target.</li>
+        <li>Release runs with Apple Developer ID signing and notarization credentials publish signed/notarized OpenGL and Metal bridge DMGs. Those credentials are not set up yet, so current releases publish clearly labeled <code>-unsigned.tar.gz</code> archives instead.</li>
         <li>Unsigned macOS archives are ad-hoc signed only for bundle validity, are not notarized, and may require normal Gatekeeper approval on first launch.</li>
         <li>The Metal package is a bridge mode around the existing OpenGL renderer, preserving stock-asset compatibility while Metal translation-layer work continues; it is not a native Metal renderer.</li>
         <li>Both macOS packages also carry openQ4's experimental Vulkan renderer. Apple ships no Vulkan driver, so on macOS it runs on top of MoltenVK, a Vulkan-on-Metal translation layer bundled inside the package. It is a translation layer, not a Metal renderer.</li>
         <li>macOS packages bundle OpenAL Soft for audio; no Homebrew or separate audio install is required. Its LGPL notice and corresponding source archive are included inside <code>openQ4.app/Contents/Resources/licenses/openal-soft/</code>.</li>
         <li>OpenGL remains the default and recommended macOS renderer in both packages. Vulkan is opt-in: run <code>r_renderApi vulkan</code> in the console, then quit and relaunch openQ4. It is a runtime option rather than a separate download, so there is no third macOS package to install.</li>
-        <li>Expect problems if you try it. macOS support is experimental, the Vulkan renderer is experimental, and this combination has no accepted testing on real Apple hardware yet. If it cannot start, openQ4 logs the reason and renders with OpenGL instead. Run <code>r_renderApi gl</code> and restart to go back.</li>
+        <li>Expect problems if you try it. The Vulkan renderer is experimental on every platform, and on macOS only one player has reported it working. If it cannot start, openQ4 logs the reason and renders with OpenGL instead. Run <code>r_renderApi gl</code> and restart to go back.</li>
         <li>Open the DMG or unpack the <code>-unsigned.tar.gz</code> archive, drag <code>openQ4.app</code> to <code>/Applications</code> (or another user-writable folder), then launch it. The app contains openQ4's runtime data and signed SP/MP modules. Keep the whole package only for the loose diagnostic client, dedicated server, or support collector; do not add retail <code>q4base</code> assets to the signed app.</li>
-        <li>For experimental macOS crashes, attach full terminal output as text plus <code>openq4.log</code> and any matching <code>.ips</code> report. Run <code>collect_macos_support_info.sh</code> from the package root to collect Rosetta, renderer, architecture, dependency, signing, and quarantine diagnostics, then see the <a href="docs/docs/user/macos-support-data.html">macOS support-data guide</a>.</li>
+        <li>For macOS crashes, attach full terminal output as text plus <code>openq4.log</code> and any matching <code>.ips</code> report. Run <code>collect_macos_support_info.sh</code> from the package root to collect Rosetta, renderer, architecture, dependency, signing, and quarantine diagnostics, then see the <a href="docs/docs/user/macos-support-data.html">macOS support-data guide</a>.</li>
       </ul>
     </section>
 

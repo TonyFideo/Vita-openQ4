@@ -56,9 +56,10 @@ When filing a bug report, include as much of the following as possible:
   `.home/baseoq4/logs/openq4.log` when launching from the repo).
 - For crashes, include the crash log, minidump, or stack trace if available.
 
-If your report is for a preview or experimental platform (Linux ARM64, Windows
-ARM64, or macOS), please use the corresponding issue template so the right
-context is captured up front.
+If your report is for a preview or experimental platform (Linux ARM64 and macOS
+are previews; Windows ARM64 is experimental), please use the corresponding issue
+template so the right context is captured up front. A report that everything
+worked is useful evidence for those platforms, not only bug reports.
 
 ### Reporting Compatibility Issues
 
@@ -105,7 +106,7 @@ In short:
 - **Windows:** MSVC 19.46+ and Meson 1.6.0+. Use `tools/build/meson_setup.ps1`
   from a regular PowerShell window instead of invoking `meson` directly.
 - **Linux:** GCC 13+ or Clang 17+, Meson 1.6.0+, and Ninja.
-- **macOS (experimental):** Xcode 16+ / Clang 17+, Meson 1.6.0+, and Ninja.
+- **macOS (preview):** Xcode 16+ / Clang 17+, Meson 1.6.0+, and Ninja.
 
 ### Building
 

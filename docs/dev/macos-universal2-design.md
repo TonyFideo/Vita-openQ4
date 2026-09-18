@@ -70,7 +70,7 @@ then re-signs after `lipo`, notarizes, staples, runs Gatekeeper assessment, and
 checks each final slice and module install name.
 
 Neither mode creates a GitHub release or changes the public package policy:
-user-facing macOS downloads remain experimental and arm64-only. A successful
+user-facing macOS downloads remain an arm64-only preview. A successful
 candidate is evidence for a future expansion, not Intel or universal2 support
 evidence by itself.
 

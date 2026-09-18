@@ -24,7 +24,7 @@ def validate_evidence_index() -> None:
     for token in (
         "# macOS Signoff Evidence Index",
         "tools/macos/record_signoff_evidence.py",
-        "macOS remains experimental unless the current release entry below points to a completed-checklist archive",
+        "macOS stays a preview, not first-class, unless the current release entry below points to a completed-checklist archive",
         "-RequireCompletedSignoffChecklist",
         "--require-completed-checklist",
         "Archive SHA-256",

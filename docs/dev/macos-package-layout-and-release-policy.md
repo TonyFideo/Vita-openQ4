@@ -4,7 +4,7 @@ Updated: 2026-07-15
 
 This document records the current macOS package support contract for openQ4.
 The client application is self-contained; loose binaries remain beside it for
-dedicated-server and diagnostic use while macOS remains experimental.
+dedicated-server and diagnostic use while macOS remains a preview.
 
 ## Current Layout Decision
 
@@ -46,7 +46,7 @@ through to generic base-path probing.
 
 ## Supported Launch Flows
 
-Supported for experimental macOS signoff:
+Supported for preview macOS signoff:
 
 - Double-click `openQ4.app` from the mounted signed/notarized DMG payload.
 - Drag only `openQ4.app` to `/Applications` or another user-writable folder,
@@ -206,8 +206,8 @@ First-class macOS releases require signed and notarized DMGs for every supported
 macOS artifact. A first-class macOS release job must fail if Apple Developer ID
 signing or notarization credentials are missing.
 
-Unsigned `-unsigned.tar.gz` archives are allowed only for experimental or
-development fallback output. They must stay clearly marked as unsigned and
+Unsigned `-unsigned.tar.gz` archives are allowed only for experimental, preview,
+or development fallback output. They must stay clearly marked as unsigned and
 unnotarized in artifact names, release notes, and user-facing docs.
 
 Runtime and symbol archive validation must match the declared package format. A
@@ -230,7 +230,7 @@ Credentialed macOS release artifacts must keep these checks mandatory:
 
 ## Backward Compatibility
 
-The runtime keeps a legacy adjacent-package fallback so older experimental
+The runtime keeps a legacy adjacent-package fallback so older experimental-era
 downloads can still launch when their original `openQ4.app`, `baseoq4/`, loose
 client, and loose dedicated binary remain together. New package generation,
 archive validation, signing, release smoke tests, support intake, and signoff

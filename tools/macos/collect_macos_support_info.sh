@@ -1,5 +1,5 @@
 #!/bin/sh
-# Collect redacted macOS support data for experimental openQ4 crash reports.
+# Collect redacted macOS support data for openQ4 crash and hardware reports.
 
 set -eu
 umask 077

@@ -1,8 +1,9 @@
-# Experimental macOS Support Data
+# macOS Support Data
 
-macOS support is experimental Apple Silicon/arm64 support. If openQ4 crashes on
+macOS support is a preview for Apple Silicon/arm64 Macs. If openQ4 crashes on
 macOS, a complete report is much more useful than a screenshot because the
-maintainer may not have access to a Mac.
+maintainer may not have access to a Mac. Reports that it simply works are useful
+too, especially on a macOS version older than the current one.
 
 This page is especially useful for startup crashes like
 [GitHub issue #73](https://github.com/themuffinator/openQ4/issues/73), where

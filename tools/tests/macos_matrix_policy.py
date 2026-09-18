@@ -28,7 +28,7 @@ def validate_matrix_policy_doc() -> None:
 
     for token in (
         "# macOS Support Matrix Policy",
-        "Current macOS release artifacts are experimental Apple Silicon/arm64 only",
+        "Current macOS release artifacts are preview Apple Silicon/arm64 only",
         "The current user-facing release policy is `arm64 only`",
         "Intel Mac / `x86_64` packages",
         "universal2 packages",
@@ -176,7 +176,7 @@ def validate_evidence_contract() -> None:
 
     for token in (
         "os_matrix_role",
-        "Architecture policy: arm64-only experimental release matrix",
+        "Architecture policy: arm64-only preview release matrix",
         "OS matrix role:",
         "Xcode And SDK",
         "xcodebuild -version",

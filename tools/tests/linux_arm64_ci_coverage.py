@@ -385,7 +385,7 @@ def validate_linux_arm64_release_claim_policy() -> None:
             path.write_text(contents, encoding="utf-8")
 
         base_environment = os.environ.copy()
-        base_environment["OPENQ4_MACOS_SUPPORT_TIER"] = "experimental"
+        base_environment["OPENQ4_MACOS_SUPPORT_TIER"] = "preview"
         base_environment["OPENQ4_RELEASE_VERSION_TAG"] = "9.9.9-test"
         base_environment["OPENQ4_ARM64_EVIDENCE_CANDIDATE"] = "false"
 
@@ -532,10 +532,41 @@ def validate_linux_arm64_release_claim_policy() -> None:
             "user-facing preview claims still remain",
             "stale curated Linux ARM64 preview-note rejection",
         )
+        # macOS is a preview too, so the scan skips "preview" when macOS or
+        # Apple follows it, but a preview claim that still reaches Linux ARM64
+        # must keep failing.
         for path in preview_docs:
             path.write_text("first-class Linux ARM64 support\n", encoding="utf-8")
         selected_release_notes.write_text(
-            "# Synthetic release\n\nLinux ARM64 first-class support.\n",
+            "# Synthetic release\n\nLinux ARM64 and macOS packages are preview builds.\n",
+            encoding="utf-8",
+        )
+        shared_preview_result = subprocess.run(
+            [sys.executable, "-c", embedded_python],
+            cwd=temp_root,
+            env=first_class_environment,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if shared_preview_result.returncode == 0:
+            raise AssertionError(
+                "first-class Linux ARM64 release accepted a preview claim shared with macOS"
+            )
+        require(
+            shared_preview_result.stdout + shared_preview_result.stderr,
+            "user-facing preview claims still remain",
+            "shared Linux ARM64/macOS preview-claim rejection",
+        )
+
+        for path in preview_docs:
+            path.write_text(
+                "first-class Linux ARM64 support beside preview Apple Silicon/arm64 macOS\n",
+                encoding="utf-8",
+            )
+        selected_release_notes.write_text(
+            "# Synthetic release\n\nLinux ARM64 first-class support. The preview macOS "
+            "packages stay unsigned.\n",
             encoding="utf-8",
         )
 

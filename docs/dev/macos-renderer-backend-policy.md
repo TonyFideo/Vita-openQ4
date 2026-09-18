@@ -49,7 +49,7 @@ documented macOS floor and latest public macOS release.
 ## Apple OpenGL Risk
 
 Apple OpenGL remains the limiting macOS rendering dependency. The current policy
-accepts this for the experimental release line because stock Quake 4 asset
+accepts this for the preview release line because stock Quake 4 asset
 compatibility and renderer parity are higher priorities than changing graphics
 APIs prematurely.
 
@@ -115,8 +115,8 @@ macOS support claim:
   introduced. The `renderer-vk_<arch>.dylib` module and the bundled
   `libMoltenVK.dylib` ship inside the existing `OpenGL` and `Metal bridge`
   packages, in `openQ4.app/Contents/Frameworks`.
-- macOS support remains experimental Apple Silicon/arm64. macOS Vulkan is an
-  experimental renderer inside an experimental platform, and no first-class or
+- macOS support is a preview for Apple Silicon/arm64. macOS Vulkan is an
+  experimental renderer on that preview platform, and no first-class or
   supported-renderer claim follows from this decision.
 - An initialization failure falls back to the OpenGL renderer through the
   existing fail-closed ladder, so a failed opt-in never leaves a user without a
@@ -165,7 +165,7 @@ Native backend maintenance rules:
 
 ## Release-Gate Summary
 
-Before macOS support can move beyond the current experimental wording:
+Before macOS support can move beyond the current preview wording to first-class:
 
 - OpenGL and Metal bridge package evidence must be current for the supported OS
   matrix.

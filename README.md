@@ -6,7 +6,7 @@
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Status](https://img.shields.io/badge/status-Beta%20Development-d97a1f.svg)](https://github.com/themuffinator/openQ4/releases)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20experimental-lightgrey.svg)](https://github.com/themuffinator/openQ4)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20preview-lightgrey.svg)](https://github.com/themuffinator/openQ4)
 [![Architecture](https://img.shields.io/badge/arch-x64%20%7C%20ARM64-orange.svg)](https://github.com/themuffinator/openQ4)
 
 **Play Quake 4 on modern systems with an open-source engine and game-code replacement built around the original retail assets.**
@@ -60,7 +60,7 @@ The [0.13.1 patch notes](docs/dev/releases/v0.13.1.md) cover the release save fi
 - **Optional visual upgrades** such as bloom, HDR, anti-aliasing, baked light grids, and enhanced shadow options, plus soft particles that fade effects into the world instead of cutting a hard edge against it.
 - **Smoother motion at high refresh rates.** The camera, weapons, movers, and everything riding them are drawn on an interpolated presentation clock between the game's 60 Hz ticks, so a 144 Hz or 240 Hz display shows motion at its own rate. Simulation, networking, collision, demos, and saves keep their original timing.
 - **Real liquids** with wading, swimming, drowning, and damaging slime and lava, plus underwater visuals and audio. Retail Quake 4 has none of this, so liquids are something you author - see the [Liquids guide](docs/user/liquids.md).
-- **Reliable OpenAL audio** with compatibility-first voice handling; experimental macOS packages bundle OpenAL Soft so large stock levels are not constrained by Apple's legacy buffer pool.
+- **Reliable OpenAL audio** with compatibility-first voice handling; macOS packages bundle OpenAL Soft so large stock levels are not constrained by Apple's legacy buffer pool.
 - **Improved input and quality-of-life features** including controller support, better console UX, and modern settings behavior.
 - **Single-player and multiplayer in one install** with active compatibility work aimed at the stock game.
 - **Readable multiplayer chat** with adjustable layout, retained conversation history, channel switching and sent-message recall.
@@ -68,7 +68,7 @@ The [0.13.1 patch notes](docs/dev/releases/v0.13.1.md) cover the release save fi
 - **Smarter repeat level loads** with exact-match learned source preparation and validated local model, world, collision, and animation caches that fall back safely to the installed assets.
 - **A stock-map Arena Campaign** (experimental) with five escalating bot tiers, varied combat game types, boss matches, and persistent ladder progress beside the original story.
 - **A unified demo library and player** with pause, speed, stepping, rewind/fast-forward controls, honest legacy-format status, and full-world free-fly/player-follow playback for server-side multi-view recordings.
-- **Cross-platform support** with Windows packages, directly executable Linux AppImages and archives for x86_64 plus preview aarch64, Steam Deck support on Linux, and experimental Apple Silicon/arm64 macOS OpenGL/Metal bridge packages through the signed/notarized DMG lane for credentialed release runs.
+- **Cross-platform support** with Windows x64 packages plus experimental Windows ARM64 builds, directly executable Linux AppImages and archives for x86_64 plus preview aarch64, Steam Deck support on Linux, and preview Apple Silicon/arm64 macOS OpenGL/Metal bridge packages, which are currently unsigned.
 - **Opt-in renderer modernization**, each piece default-off and independently reversible: [temporal AA/upscaling with GPU-time dynamic resolution](docs/user/temporal-presentation.md), [bounded volumetrics, screen-space reflections, and indirect light](docs/user/advanced-screen-space-lighting.md), GPU skeletal animation, and guarded PBR materials with authored specular probes. These are previews rather than finished features, and a single setting rolls the whole set back.
 - **Open development** with releases, issue tracking, and community feedback all happening in public.
 
@@ -83,7 +83,7 @@ You need a legitimate Quake 4 install plus the openQ4 package that matches your 
 | **Minimum** | 64-bit CPU, 4 GB RAM, a working OpenGL compatibility driver with ARB2-era vertex/fragment program support, and about 12 GB free for the openQ4 package plus retail Quake 4 assets. Use the `minimum` or `lowpower` performance preset on constrained systems. |
 | **Recommended** | Modern quad-core CPU, 8 GB RAM, OpenGL 4.1+ compatibility-class GPU with 2 GB+ VRAM, current graphics drivers, and 15 GB+ free. For high resolutions, `quality`, or `ultra`, 16 GB RAM and 6 GB+ VRAM gives much better headroom. |
 
-Packaged support currently focuses on Windows, Linux x64, Steam Deck/SteamOS, preview Linux ARM64, and experimental Apple Silicon/arm64 macOS. Linux ARM64 requires a desktop OpenGL compatibility driver and remains preview until real-hardware Wayland gameplay, audio, and input signoff is accepted. See the [Getting Started guide](docs/user/getting-started.md#system-requirements) for the platform-specific requirements and caveats.
+Packaged support currently focuses on Windows x64, Linux x64, and Steam Deck/SteamOS, with preview Linux ARM64, preview Apple Silicon/arm64 macOS, and experimental Windows ARM64 packages. Linux ARM64 requires a desktop OpenGL compatibility driver and remains preview until real-hardware Wayland gameplay, audio, and input signoff is accepted. The macOS packages are unsigned, and players have run them only on current macOS. The Windows ARM64 packages are built but have not yet been confirmed to run on real hardware. See the [Getting Started guide](docs/user/getting-started.md#system-requirements) for the platform-specific requirements and caveats.
 
 ---
 
@@ -109,7 +109,7 @@ Packaged support currently focuses on Windows, Linux x64, Steam Deck/SteamOS, pr
 </p>
 <p align="center"><sub>A second CRT comparison on mp/q4dm6 shows the same post-process across a brighter indoor arena.</sub></p>
 
-> **Renderer backends:** OpenGL remains the default and recommended release renderer on every platform. The **Vulkan** backend is **experimental and opt-in** (`r_renderApi vulkan`, applied on engine restart), but now renders the stock Quake 4 material-program families, including environment and heat-haze effects, displacement and depth/blur post effects, and guide-driven parallax, custom-lighting, water, and refractive-glass stages. Vulkan also supports 4x MSAA with SMAA. On Windows and Linux it drives a Vulkan driver directly. Apple ships no Vulkan driver, so on experimental macOS the same module runs on top of **MoltenVK**, a Vulkan-on-Metal translation layer bundled inside both existing macOS packages — a runtime option rather than a third download, and not a Metal renderer. Broader parity and platform validation are still in progress, so visual artifacts or instability remain possible; an initialization failure falls back safely to OpenGL. See [Display Settings → Renderer Backend](docs/user/display-settings.md#renderer-backend-opengl-default-vulkan-is-experimental).
+> **Renderer backends:** OpenGL remains the default and recommended release renderer on every platform. The **Vulkan** backend is **experimental and opt-in** (`r_renderApi vulkan`, applied on engine restart), but now renders the stock Quake 4 material-program families, including environment and heat-haze effects, displacement and depth/blur post effects, and guide-driven parallax, custom-lighting, water, and refractive-glass stages. Vulkan also supports 4x MSAA with SMAA. On Windows and Linux it drives a Vulkan driver directly. Apple ships no Vulkan driver, so on macOS the same module runs on top of **MoltenVK**, a Vulkan-on-Metal translation layer bundled inside both existing macOS packages — a runtime option rather than a third download, and not a Metal renderer. Broader parity and platform validation are still in progress, so visual artifacts or instability remain possible; an initialization failure falls back safely to OpenGL. See [Display Settings → Renderer Backend](docs/user/display-settings.md#renderer-backend-opengl-default-vulkan-is-experimental).
 
 ---
 
@@ -175,7 +175,7 @@ The [shadow-mapping audit](docs/dev/shadowmapping-final-audit-2026-09-05.md) rec
 
 The [memory-file robustness notes](docs/dev/memory-file-robustness.md) document buffer-growth measurements and native regression coverage for in-memory file generation.
 
-If you run into problems, please use the [issue tracker](https://github.com/themuffinator/openQ4/issues) and include crash logs or setup details when possible. For experimental macOS crashes, use the [macOS support-data guide](docs/user/macos-support-data.md) before filing or updating an issue.
+If you run into problems, please use the [issue tracker](https://github.com/themuffinator/openQ4/issues) and include crash logs or setup details when possible. For macOS crashes, use the [macOS support-data guide](docs/user/macos-support-data.md) before filing or updating an issue. Windows ARM64 and Linux ARM64 have their own issue templates; a report that everything simply worked is as useful there as a bug.
 
 ---
 

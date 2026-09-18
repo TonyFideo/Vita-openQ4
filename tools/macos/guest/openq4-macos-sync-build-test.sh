@@ -978,7 +978,7 @@ write_signoff_report() {
         echo "- Date (UTC): $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
         echo "- Host: $(hostname)"
         echo "- Architecture: $(uname -m)"
-        echo "- Architecture policy: arm64-only experimental release matrix"
+        echo "- Architecture policy: arm64-only preview release matrix"
         echo "- OS matrix role: ${os_matrix_role}"
         echo "- Graphics bridge: ${graphics_bridge}"
         echo "- OpenAL provider: ${openal_provider}"

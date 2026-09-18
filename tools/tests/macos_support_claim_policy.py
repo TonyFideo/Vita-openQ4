@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression checks for experimental macOS support-claim wording."""
+"""Regression checks for macOS and ARM64 support-claim wording."""
 
 from __future__ import annotations
 
@@ -14,6 +14,15 @@ HISTORICAL_ISSUE_73_RELEASES = {
     "v0.9.0.md",
     "v0.10.000.md",
 }
+# Notes published while macOS was experimental, before the 2026-09-18 move to
+# preview. They keep the wording they shipped with; later notes say preview.
+HISTORICAL_ISSUE_98_RELEASES = {
+    "v0.11.0.md",
+    "v0.12.0.md",
+    "v0.13.0.md",
+    "v0.13.1.md",
+}
+HISTORICAL_EXPERIMENTAL_MACOS_RELEASES = HISTORICAL_ISSUE_73_RELEASES | HISTORICAL_ISSUE_98_RELEASES
 
 
 def read(relative_path: str) -> str:
@@ -38,36 +47,49 @@ def release_files() -> list[Path]:
 def validate_release_facing_docs() -> None:
     expected_tokens = {
         "README.md": (
-            "experimental Apple Silicon/arm64 macOS",
+            "preview Apple Silicon/arm64 macOS",
             "OpenGL/Metal bridge packages",
+            "players have run them only on current macOS",
         ),
         "BUILDING.md": (
-            "Experimental manual macOS release artifacts are Apple Silicon/arm64 only",
+            "Preview manual macOS release artifacts are Apple Silicon/arm64 only",
             "Intel Mac and universal2 packages are not published",
             "Rosetta is not a supported release target",
             "Metal bridge",
             "comparison-only",
         ),
         "docs/user/getting-started.md": (
-            "macOS support is experimental",
+            "macOS support is a preview",
             "Apple Silicon/arm64 Macs on macOS 11 or later",
+            "nothing older than the current macOS has been tested",
             "Intel Mac and universal2 packages are not published yet",
             "Rosetta is not a supported release target",
             "Metal bridge",
             "not a native Metal renderer",
         ),
         "docs/dev/platform-support.md": (
-            "Current architecture policy: `arm64 only` for experimental Apple Silicon/arm64 release packages.",
+            "## Support Tiers",
+            "Current architecture policy: `arm64 only` for preview Apple Silicon/arm64 release packages.",
             "Unsupported current macOS release targets: Intel Mac/`x86_64`, universal2 packages, and Rosetta",
             "Current package variants: `OpenGL` and `Metal bridge`",
             "not a native Metal renderer",
             "comparison-only diagnostics",
             "docs/dev/macos-signoff-evidence.md",
         ),
+        "docs/dev/macos-support-matrix-policy.md": (
+            "## Support Tier",
+            "What the preview does not cover:",
+            "The preview returns to experimental",
+        ),
+        "docs/dev/macos-signoff-evidence.md": (
+            "## Community Hardware Reports",
+            "None of them is an accepted signoff archive",
+        ),
         "assets/release/README.html": (
-            "experimental Apple Silicon/arm64 macOS",
-            "macOS support is experimental",
+            "preview Apple Silicon/arm64 macOS",
+            "macOS support is a preview",
             "Apple Silicon/arm64 Macs on macOS 11 or later",
+            "nothing older than the current macOS has been tested",
             "Intel Mac and universal2 packages are not published yet",
             "Rosetta is not a supported release target",
             "Metal bridge",
@@ -81,19 +103,51 @@ def validate_release_facing_docs() -> None:
             require(source, token, relative_path)
 
 
+def validate_arm64_tier_labels() -> None:
+    # Windows ARM64 assets carry no tier suffix, so these sentences and the
+    # release-body section are the only label they get.
+    for relative_path, token in (
+        ("README.md", "experimental Windows ARM64"),
+        ("docs/user/getting-started.md", "Windows ARM64 packages are experimental"),
+        ("assets/release/README.html", "Windows ARM64 packages are experimental"),
+        ("docs/dev/platform-support.md", "- Windows ARM64 is experimental."),
+        ("docs/dev/engine-capability-matrix.md", "| Windows ARM64 client/server | **Experimental** |"),
+        (".github/ISSUE_TEMPLATE/windows-arm64-report.yml", "Windows ARM64 packages are experimental"),
+        (".github/scripts/announce-release-discord.mjs", '"Windows ARM64 Installer (experimental)"'),
+        # Linux ARM64 stays a preview behind its own evidence gate.
+        ("docs/dev/platform-support.md", "| Linux ARM64 (`aarch64`) | Preview |"),
+    ):
+        require(read(relative_path), token, relative_path)
+
+    workflow = read(".github/workflows/manual-release.yml")
+    for token in (
+        "## macOS Support",
+        "## Windows ARM64 Support",
+        "Windows ARM64 packages are experimental.",
+        "MACOS_SUPPORT_TIER: ${{ needs.metadata.outputs.macos_support_tier }}",
+        "preview_claim_status",
+    ):
+        require(workflow, token, "manual release platform-support notes")
+    # The macOS and Windows sections must follow the first-class Linux ARM64
+    # preview-claim scan, or the macOS preview wording would trip it.
+    if workflow.index("## macOS Support") < workflow.index("preview_claim_status"):
+        raise AssertionError("macOS release notes are appended before the Linux ARM64 preview-claim scan")
+
+
 def validate_release_completion_guard() -> None:
     release_completion = read("docs/dev/release-completion.md")
 
     for token in (
         "## macOS Support Claim Guard",
-        'Release notes that mention macOS say "experimental Apple Silicon/arm64 macOS"',
+        'Release notes that mention macOS say "preview Apple Silicon/arm64 macOS"',
         "Any first-class, stable, or fully supported macOS claim cites the current release entry",
         "docs/dev/macos-signoff-evidence.md",
         "Intel Mac, universal2, and Rosetta appear only as unsupported, not-published, or future-policy items",
         "`macos_graphics_bridge=metal` is described as a Metal bridge around the OpenGL renderer",
         "`platform_backend=native` on macOS is described as comparison-only diagnostic infrastructure",
-        "GitHub issue #98 as the current visual-parity limitation",
-        "closing the original issue #73 startup crash does not satisfy the macOS Evidence Gate",
+        "Curated release notes describe macOS as a preview.",
+        "these community reports support the preview but do not satisfy the macOS Evidence Gate",
+        "## Windows ARM64 Support Claim Guard",
     ):
         require(release_completion, token, "macOS support claim guard")
 
@@ -103,6 +157,8 @@ def validate_curated_release_notes() -> None:
     if not releases:
         raise AssertionError("No curated release notes found under docs/dev/releases")
 
+    # Saying macOS is "no longer experimental" is simply the preview tier now;
+    # these phrases claim more than a preview.
     promotion_phrases = (
         "first-class macos",
         "fully supported macos",
@@ -110,7 +166,8 @@ def validate_curated_release_notes() -> None:
         "stable macos support",
         "production-ready macos",
         "macos support has graduated",
-        "macos support is no longer experimental",
+        "macos support is no longer a preview",
+        "macos support is no longer in preview",
     )
 
     for release_path in releases:
@@ -119,7 +176,12 @@ def validate_curated_release_notes() -> None:
             continue
 
         context = release_path.relative_to(ROOT).as_posix()
-        require(text, "experimental macOS", context)
+        if release_path.name in HISTORICAL_EXPERIMENTAL_MACOS_RELEASES:
+            require(text, "experimental macOS", context)
+        else:
+            # "preview macOS" word order keeps the first-class Linux ARM64
+            # preview-claim scan in manual-release.yml from misreading it.
+            require_any(text, ("preview macOS", "preview Apple Silicon"), context)
         require(text, "Apple Silicon/arm64", context)
         require(text, "Intel Mac", context)
         require_any(text, ("not supported", "not published"), context)
@@ -130,8 +192,8 @@ def validate_curated_release_notes() -> None:
         require_any(text, ("comparison-only", "diagnostic infrastructure"), context)
         if release_path.name in HISTORICAL_ISSUE_73_RELEASES:
             require(text, "issue #73", f"{context} historical macOS limitation tracking")
-        else:
-            require(text, "issue #98", f"{context} current macOS limitation tracking")
+        elif release_path.name in HISTORICAL_ISSUE_98_RELEASES:
+            require(text, "issue #98", f"{context} historical macOS limitation tracking")
         require(text, "docs/dev/macos-signoff-evidence.md", context)
 
         lowered = text.lower()
@@ -180,6 +242,7 @@ def validate_ci_and_local_wiring() -> None:
 
 def main() -> None:
     validate_release_facing_docs()
+    validate_arm64_tier_labels()
     validate_release_completion_guard()
     validate_curated_release_notes()
     validate_phase0_plan_status()

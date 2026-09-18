@@ -1,6 +1,6 @@
 # macOS Support Matrix Policy
 
-Updated: 2026-07-15
+Updated: 2026-09-18
 
 This document defines the current macOS architecture and OS-version matrix for
 openQ4 releases. It records what is supported now, what is deliberately not
@@ -8,12 +8,16 @@ claimed, and what evidence is required before the matrix can expand.
 
 ## Current Release Matrix
 
-Current macOS release artifacts are experimental Apple Silicon/arm64 only:
+Current macOS release artifacts are preview Apple Silicon/arm64 only:
 
 - `openq4-<version>-macos-arm64-opengl.dmg`
 - `openq4-<version>-macos-arm64-metal.dmg`
-- `openq4-<version>-macos-arm64-opengl-unsigned.tar.gz` for experimental fallback output
-- `openq4-<version>-macos-arm64-metal-unsigned.tar.gz` for experimental fallback output
+- `openq4-<version>-macos-arm64-opengl-unsigned.tar.gz` for unsigned fallback output
+- `openq4-<version>-macos-arm64-metal-unsigned.tar.gz` for unsigned fallback output
+
+The DMG names apply only to credentialed runs. The Apple signing and
+notarization secrets have never been configured, so every release so far has
+published the `-unsigned.tar.gz` archives.
 
 The current arm64 CI and manual release lanes use GitHub-hosted `macos-15`
 runners for configure, build, staging, package, signing, notarization, and
@@ -21,6 +25,47 @@ static validation. Push jobs also require an assetless renderer launch for the
 OpenGL and Metal bridge variants, and release jobs launch the packaged app
 executable from a Finder-style unrelated working directory. Hosted runner
 success is not a replacement for real Apple-hardware gameplay signoff.
+
+## Support Tier
+
+macOS on Apple Silicon moved from experimental to preview on 2026-09-18. The
+tier definitions live in the
+[platform support tiers](platform-support.md#support-tiers).
+
+The preview rests on two kinds of evidence:
+
+- Hosted CI. Every push and pull request builds, stages, and packages the
+  OpenGL and Metal bridge variants on native arm64 runners, starts both
+  assetlessly, and runs the dedicated server through the staged MP module.
+  Release jobs also launch the packaged app from an unrelated working
+  directory.
+- Community reports on real hardware, recorded in the
+  [signoff evidence index](macos-signoff-evidence.md#community-hardware-reports).
+  On 0.13.1 a MacBook Air (M2) on macOS 26.6 started a new campaign from the
+  menu and played it, reached gameplay on `game/mcc_1` and `game/airdefense1`,
+  and had audible sound through the bundled OpenAL Soft (issue #122). On
+  0.12.0 a MacBook Pro (M4 Max) on macOS 26.6 played multiplayer without the
+  washed-out lighting of earlier builds, and the Vulkan renderer also ran
+  (issue #98).
+
+What the preview does not cover:
+
+- Signing. Packages are unsigned and unnotarized, so macOS asks for approval
+  the first time `openQ4.app` opens.
+- The OS range. Players have run it only on macOS 26, and hosted CI starts it
+  on macOS 15 without game data. `macOS 11` is the build floor, not a tested
+  one.
+- The Metal bridge package on real hardware, the dedicated server with stock
+  maps, controllers, audio device switching, and display-mode changes beyond
+  native fullscreen.
+- Visual parity with Windows and Linux. The macOS renderer runs in Apple's
+  legacy OpenGL 2.1 context with Apple-specific interaction fallbacks, and
+  nothing has compared its output with the other platforms systematically.
+
+The preview returns to experimental if a current release cannot reach
+single-player or multiplayer gameplay on an Apple Silicon Mac running the
+latest public macOS. Promotion to first-class still needs everything in the
+evidence requirements below.
 
 ## Architecture Policy
 
@@ -78,7 +123,7 @@ Before claiming Intel Mac or universal2 support, openQ4 must have:
 
 ## OS-Version Policy
 
-The current packaged compatibility floor is `macOS 11` for the experimental
+The current packaged compatibility floor is `macOS 11` for the preview
 Apple Silicon/arm64 release line. Meson sets `-mmacosx-version-min=11.0`, app
 metadata sets `LSMinimumSystemVersion` to `11.0`, and user-facing docs say
 macOS 11 or later. The Bash Meson wrapper now supplies
@@ -95,9 +140,11 @@ The validation policy is:
   target for every release that changes platform, packaging, input, audio,
   renderer, loader, or game-module behavior.
 - Record both floor-version and latest-version results before promoting macOS
-  beyond experimental.
+  to first-class.
 - Keep the published OS range no broader than the evidence in
-  `docs/dev/macos-signoff-evidence.md`.
+  `docs/dev/macos-signoff-evidence.md`, or say plainly which part of it has
+  been run. While macOS is a preview, user-facing docs pair "macOS 11 or later"
+  with the note that players have run it only on current macOS.
 
 Before changing the floor, update all of these together:
 
@@ -138,7 +185,8 @@ dependency maintenance. The provider pin is recorded in
 macOS Vulkan evidence is additive to, and never a substitute for, the OpenGL and
 Metal bridge signoff requirements below. There is no accepted real-Apple-hardware
 evidence that MoltenVK-backed Vulkan renders correctly, so it is documented as an
-experimental opt-in that may not work.
+experimental opt-in that may not work. One player reported that it ran on
+0.12.0 (issue #98), which is a report, not evidence of correct rendering.
 
 ## Evidence Requirements
 

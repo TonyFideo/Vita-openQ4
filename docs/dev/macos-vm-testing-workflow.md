@@ -1,6 +1,6 @@
-# Experimental macOS VM Testing Workflow
+# macOS VM Testing Workflow
 
-This workflow is the experimental macOS counterpart to `docs/dev/linux-mint-vmware-workflow.md`.
+This workflow is the macOS counterpart to `docs/dev/linux-mint-vmware-workflow.md`.
 It is intentionally SSH-based instead of VMware-on-Windows based: macOS test VMs
 must run on Apple-branded hardware or a compliant Apple-hosted service.
 
@@ -140,7 +140,7 @@ startup, real keyboard/mouse/controller input, audio output/device switching,
 windowed and fullscreen display modes, HiDPI/Retina behavior, SP gameplay, MP
 listen-server gameplay, dedicated-server startup where supported, and in-game
 OpenGL or Metal bridge coverage beyond hosted CI before macOS support can move
-out of its experimental state. The package UX part of that checklist follows
+from preview to first-class. The package UX part of that checklist follows
 `docs/dev/macos-package-layout-and-release-policy.md`: launch `openQ4.app` from
 the mounted signed/notarized DMG when one is available, drag only the app to
 `/Applications` or another user-writable location and launch it there, copy the
@@ -239,7 +239,7 @@ python tools/macos/record_signoff_evidence.py `
   --package-artifact openq4-vX.Y.Z-macos-arm64-opengl.dmg `
   --package-artifact openq4-vX.Y.Z-macos-arm64-metal.dmg `
   --signing-status "signed and notarized DMGs" `
-  --release-note-limitation "macOS support remains experimental Apple Silicon/arm64" `
+  --release-note-limitation "macOS support remains a preview for Apple Silicon/arm64" `
   --update-index
 ```
 
@@ -264,7 +264,7 @@ recorded in the signoff report, and the complete provider policy is tracked in
 
 ## Expected Validation
 
-For experimental macOS debugging, do not stop at static checks. Use this VM workflow for:
+For macOS debugging, do not stop at static checks. Use this VM workflow for:
 
 - `renderer_gameplay_benchmark.py --profile smoke`
 - `renderer_gameplay_benchmark.py --profile smoke --cases mp-q4dm1-listen`
@@ -287,8 +287,8 @@ device failures, and crashes.
 ## No Persistent Mac Yet
 
 If no Apple VM or hosted Mac is available yet, use the manual GitHub Actions
-workflow `.github/workflows/macos-debug.yml` as the interim experimental macOS debug target.
-It builds and stages the experimental macOS OpenGL and/or Metal bridge variants on Apple's
+workflow `.github/workflows/macos-debug.yml` as the interim macOS debug target.
+It builds and stages the macOS OpenGL and/or Metal bridge variants on Apple's
 hosted macOS runner, uploads `.install`, Meson logs, host diagnostics, and
 optional assetless renderer-probe logs. Each selected artifact also includes
 `macos-debug-evidence-scope.txt`, which records the requested bridge, the

@@ -26,7 +26,7 @@ The staged implementation record for this decision is
 | How Vulkan is selected on macOS | Opt-in only: `r_renderApi vulkan`, applied at the next engine start |
 | `r_renderApi best` on macOS | Resolves to `gl`, unchanged |
 | New package variant | **None.** The existing `OpenGL` and `Metal bridge` packages both carry the module; there is no third download |
-| macOS support claim | Unchanged: **experimental** Apple Silicon/arm64 |
+| macOS support claim | Unchanged by this decision: **experimental** Apple Silicon/arm64 at the time. The platform became a preview on 2026-09-18 (see [platform-support.md](platform-support.md#support-tiers)); macOS Vulkan stayed experimental |
 | Rollback if it goes wrong | Ship-time: drop the module and dylib from staging. Run-time: the fail-closed ladder falls back to OpenGL by itself |
 
 ## Why A Translation Layer And Not Native Metal
@@ -344,8 +344,8 @@ Vulkan adds fields rather than replacing any:
   `renderer-vk_<arch>.dylib` as nested code inside the signed app.
 
 A macOS Vulkan signoff never substitutes for the macOS OpenGL signoff. The
-OpenGL and Metal bridge package evidence required before macOS can move beyond
-experimental wording is unchanged by this decision.
+OpenGL and Metal bridge package evidence required before macOS can move to
+first-class is unchanged by this decision.
 
 ## The Vulkan Portability Contract
 
@@ -430,7 +430,7 @@ On macOS specifically:
 - OpenGL is the default in both package variants. Nothing about a default
   install changes.
 - Vulkan is opt-in and experimental, on top of a platform that is itself
-  experimental.
+  only a preview.
 - `best` stays `gl`. Promotion of `best` on macOS would require its own
   evidence and sign-off, exactly as it does on Windows and Linux, plus the macOS
   hardware evidence this project does not have.
@@ -538,7 +538,7 @@ Required:
   user-facing document must include the words "translation layer".
 - Say that OpenGL remains the default and recommended renderer on macOS.
 - Say that Vulkan on macOS is opt-in and experimental, and that macOS support
-  itself remains experimental Apple Silicon/arm64.
+  itself is a preview for Apple Silicon/arm64.
 - Say that an initialization failure falls back to OpenGL.
 - Keep the two existing macOS package variants named `OpenGL` and `Metal
   bridge`, and keep the Metal bridge described as a bridge around the OpenGL
@@ -554,7 +554,7 @@ Forbidden:
 - Any suggestion that this adds a third macOS download, a new package variant,
   or a new `macos_graphics_bridge` value.
 - Any macOS promotion phrasing — first-class, fully supported, production-ready,
-  stable, no longer experimental — without the completed evidence the macOS
+  stable, no longer a preview — without the completed evidence the macOS
   support claim guard in [release-completion.md](release-completion.md)
   requires.
 

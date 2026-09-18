@@ -248,7 +248,7 @@ def validate_release_path_policy() -> None:
         "First-class macOS releases require signed/notarized DMGs",
         "macos_support_tier",
         "first-class",
-        "Experimental macOS unsigned/unnotarized tar.gz release artifacts enabled as fallback output",
+        "Preview macOS unsigned/unnotarized tar.gz release artifacts enabled as fallback output",
     ):
         require(manual_release, token, "manual release first-class macOS DMG gate")
 
@@ -259,7 +259,7 @@ def validate_release_path_policy() -> None:
     ):
         require(source, "signed/notarized DMGs", context)
         require(source, "`-unsigned.tar.gz`", context)
-        require(source, "experimental", context)
+        require(source, "preview", context)
 
 
 def validate_support_info_path_resolution() -> None:
