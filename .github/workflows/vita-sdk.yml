@@ -33,6 +33,8 @@ jobs:
       VITASDK: /usr/local/vitasdk
       OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}/../openQ4-game
       OPENQ4_GAMELIBS_SHA: 8f411dbc38efcb0f5f63b1c300ab220beb73808c
+      VITAGL_REPO: ${{ github.workspace }}/.tmp/vitaGL
+      VITAGL_SHA: eccee6d767ad5f632812414a6b8251031fe62f0b
 
     steps:
       - name: Partial sparse checkout
@@ -83,6 +85,21 @@ jobs:
           arm-vita-eabi-gcc --version | head -n 1
           arm-vita-eabi-g++ --version | head -n 1
           cmake --version | head -n 1
+
+      - name: Build pinned VitaGL without splashscreen
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "${VITAGL_REPO}"
+          git init "${VITAGL_REPO}"
+          git -C "${VITAGL_REPO}" remote add origin https://github.com/Rinnegatamante/vitaGL.git
+          git -C "${VITAGL_REPO}" fetch --depth 1 origin "${VITAGL_SHA}"
+          git -C "${VITAGL_REPO}" checkout --detach FETCH_HEAD
+          test "$(git -C "${VITAGL_REPO}" rev-parse HEAD)" = "${VITAGL_SHA}"
+          make -C "${VITAGL_REPO}" -j2 NO_SPLASHSCREEN=1 HAVE_VITA3K_SUPPORT=1
+          cp "${VITAGL_REPO}/libvitaGL.a" "${VITASDK}/arm-vita-eabi/lib/libvitaGL.a"
+          cp "${VITAGL_REPO}/source/vitaGL.h" "${VITASDK}/arm-vita-eabi/include/vitaGL.h"
+          arm-vita-eabi-ar t "${VITASDK}/arm-vita-eabi/lib/libvitaGL.a" | head
 
       - name: Install Meson bring-up dependencies
         shell: bash
