@@ -554,11 +554,6 @@ unsigned int idMapBrush::GetGeometryCRC( void ) const {
 // RAVEN BEGIN
 // rjohnson: added resolve for handling func_groups and other aspects.  Before, radiant would do this processing on a map destroying the original data
 
-// This is taken from tools/radiant/EditorBrushPrimit.cpp
-float SarrusDet(idVec3 a, idVec3 b, idVec3 c) {
-	return (float)a[0] * (float)b[1] * (float)c[2] + (float)b[0] * (float)c[1] * (float)a[2] + (float)c[0] * (float)a[1] * (float)b[2] - (float)c[0] * (float)b[1] * (float)a[2] - (float)a[1] * (float)b[0] * (float)c[2] -	(float)a[0] * (float)b[2] * (float)c[1];
-}
-
 /*
 ===============
 idMapBrush::AdjustOrigin
@@ -573,52 +568,31 @@ void idMapBrush::AdjustOrigin( idVec3 &delta ) {
 
 		mapSide->SetPlane( mapSide->GetPlane().Translate( delta ) );
 
-		// This is taken from Face_MoveTexture_BrushPrimit() in tools/radiant/EditorBrushPrimit.cpp
+		// Keep the texture locked to the moved face, as
+		// Face_MoveTexture_BrushPrimit() in tools/radiant/EditorBrushPrimit.cpp
+		// does. That solves a 3x3 system by Cramer's rule, and for a pure
+		// translation its exact solution is this closed form: the scale and
+		// rotation terms are unchanged, and each offset loses the translation's
+		// projection onto the face's texture axes.
+		//
+		// Raven's copy ran that solve in single precision. The x87 FPU hid it
+		// behind extended-precision intermediates, but in SSE float arithmetic
+		// the determinant's partial sums pass 2^24 once a func_group origin is
+		// a few thousand units out. The solve then returned flipped, sheared
+		// or unlocked matrices for most folded faces, so every dmap-compiled
+		// map with func_groups came out with misaligned textures.
 		idVec3	texS, texT;
-		float	tx, ty;
-		idVec3	M[3];	// columns of the matrix .. easier that way
-		float	det;
-		idVec3	D[2];
+		ComputeAxisBase( mapSide->GetPlane().Normal(), texS, texT );
 
-		// compute plane axis base ( doesn't change with translation )
-		ComputeAxisBase( mapSide->GetPlane().Normal(), texS, texT);
-
-		// compute translation vector in plane axis base
-		tx = DotProduct(delta, texS);
-		ty = DotProduct(delta, texT);
-
-		// fill the data vectors
-		M[0][0] = tx;
-		M[0][1] = 1.0f + tx;
-		M[0][2] = tx;
-		M[1][0] = ty;
-		M[1][1] = ty;
-		M[1][2] = 1.0f + ty;
-		M[2][0] = 1.0f;
-		M[2][1] = 1.0f;
-		M[2][2] = 1.0f;
+		const double tx = (double)delta[0] * texS[0] + (double)delta[1] * texS[1] + (double)delta[2] * texS[2];
+		const double ty = (double)delta[0] * texT[0] + (double)delta[1] * texT[1] + (double)delta[2] * texT[2];
 
 		idVec3	tm[2];
 		mapSide->GetTextureMatrix( tm[0], tm[1] );
-
-		D[0][0] = tm[0][2];
-		D[0][1] = tm[0][0] + tm[0][2];
-		D[0][2] = tm[0][1] + tm[0][2];
-		D[1][0] = tm[1][2];
-		D[1][1] = tm[1][0] + tm[1][2];
-		D[1][2] = tm[1][1] + tm[1][2];
-
-		// solve
-		det = SarrusDet(M[0], M[1], M[2]);
-		if ( det != 0. ) {
-			tm[0][0] = SarrusDet(D[0], M[1], M[2]) / det;
-			tm[0][1] = SarrusDet(M[0], D[0], M[2]) / det;
-			tm[0][2] = SarrusDet(M[0], M[1], D[0]) / det;
-			tm[1][0] = SarrusDet(D[1], M[1], M[2]) / det;
-			tm[1][1] = SarrusDet(M[0], D[1], M[2]) / det;
-			tm[1][2] = SarrusDet(M[0], M[1], D[1]) / det;
-			mapSide->SetTextureMatrix(tm);
+		for ( int j = 0; j < 2; j++ ) {
+			tm[j][2] = (float)( (double)tm[j][2] - (double)tm[j][0] * tx - (double)tm[j][1] * ty );
 		}
+		mapSide->SetTextureMatrix( tm );
 	}
 }
 // RAVEN END

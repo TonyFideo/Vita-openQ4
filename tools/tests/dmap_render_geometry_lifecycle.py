@@ -144,6 +144,35 @@ def validate_map_resolution_contract() -> None:
         raise AssertionError("dmap must resolve editable func_group entities exactly once before compiling geometry")
 
 
+def validate_func_group_texture_lock() -> None:
+    # Folding a func_group translates each brush side by the group's origin and
+    # has to keep its texture locked to the face. The exact lock for a pure
+    # translation leaves scale and rotation alone and moves only the offsets.
+    # Raven's single-precision Cramer's-rule solve (SarrusDet) returned
+    # flipped, sheared or unlocked matrices once origins reached a few thousand
+    # units, which misaligned textures across compiled maps (#164).
+    source = read("src/idlib/mapfile.cpp")
+    adjust = braced_body(source, "void idMapBrush::AdjustOrigin( idVec3 &delta )", "func_group brush fold")
+    require_order(
+        adjust,
+        (
+            "mapSide->SetPlane( mapSide->GetPlane().Translate( delta ) );",
+            "ComputeAxisBase( mapSide->GetPlane().Normal(), texS, texT );",
+            "const double tx = (double)delta[0] * texS[0]",
+            "const double ty = (double)delta[0] * texT[0]",
+            "mapSide->GetTextureMatrix( tm[0], tm[1] );",
+            "tm[j][2] = (float)( (double)tm[j][2] - (double)tm[j][0] * tx - (double)tm[j][1] * ty );",
+            "mapSide->SetTextureMatrix( tm );",
+        ),
+        "func_group texture lock",
+    )
+    for forbidden in ("SarrusDet", "det != 0."):
+        if forbidden in adjust:
+            raise AssertionError(f"func_group texture lock must not use the single-precision solve ({forbidden!r})")
+    if "float SarrusDet" in source:
+        raise AssertionError("mapfile.cpp must not reintroduce the single-precision SarrusDet solve")
+
+
 def validate_build_and_ci_wiring() -> None:
     meson = read("meson.build")
     require(meson, "client_link_with = [bse_library, imagetools_library, render_geo_library]", "client render-geometry link")
@@ -178,6 +207,7 @@ def main() -> None:
     validate_allocator_lifecycle()
     validate_engine_tool_lifetime()
     validate_map_resolution_contract()
+    validate_func_group_texture_lock()
     validate_build_and_ci_wiring()
     validate_compiled_map_metadata()
     print("dmap_render_geometry_lifecycle: ok")
