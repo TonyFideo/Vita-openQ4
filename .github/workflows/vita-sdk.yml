@@ -31,19 +31,25 @@ jobs:
       VITASDK: /usr/local/vitasdk
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 1
-          sparse-checkout-cone-mode: false
-          sparse-checkout: |
-            /meson.build
-            /meson_options.txt
-            /src/
-            /tools/build/
-            /tools/vita/
-            /assets/icons/
-            /assets/splash/
+      - name: Partial sparse checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git config core.sparseCheckout true
+          cat > .git/info/sparse-checkout <<'EOF'
+          /meson.build
+          /meson_options.txt
+          /src/
+          /tools/build/
+          /tools/vita/
+          /assets/icons/
+          /assets/splash/
+          EOF
+          git fetch --depth 1 --filter=blob:none origin "${GITHUB_SHA}"
+          git checkout --detach FETCH_HEAD
+          git rev-parse HEAD
 
       - name: Verify VitaSDK toolchain
         shell: bash
