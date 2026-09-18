@@ -50,7 +50,7 @@ void SCR_DrawTextRightAlign( float &y, const char *text, ... ) id_attribute((for
 #define CON_SCROLLBAR_MIN_THUMB			18.0f
 #define CON_SCROLLBAR_LERP_SPEED		12.0f
 #define CON_SELECTION_ALPHA				0.35f
-#define CON_COMPLETION_MAX_MATCHES		64
+#define CON_COMPLETION_MAX_MATCHES		1024
 #define CON_COMPLETION_MAX_VISIBLE		8
 #define CON_TEXT_DRAG_THRESHOLD			4.0f
 #define CON_MOUSE_CURSOR_SIZE			32.0f
