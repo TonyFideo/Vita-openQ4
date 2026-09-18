@@ -6,6 +6,8 @@
 
 #include "../../../src/idlib/CryptoHash.h"
 
+int VitaPlatformProbe();
+
 namespace {
 
 constexpr int Sum(std::span<const int> values) {
@@ -30,6 +32,7 @@ int main() {
         digest[0] == 0xe3 && digest[1] == 0xb0 &&
         digest[2] == 0xc4 && digest[3] == 0x42;
 
-    sceKernelExitProcess(result.load() == 10 && sha256Ok ? 0 : 1);
+    const bool platformOk = VitaPlatformProbe() > 0;
+    sceKernelExitProcess(result.load() == 10 && sha256Ok && platformOk ? 0 : 1);
     return 0;
 }
