@@ -30,6 +30,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "tr_local.h"
+#include "LevelShotDepth.h"
 #include "../imagetools/DXT/DXTCodec.h"
 #include "CelShading.h"
 #include "RendererBootstrap.h"
@@ -529,6 +530,7 @@ idCVar r_shaderReport( "r_shaderReport", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVA
 idCVar r_forceAppleGL21InteractionCorridor( "r_forceAppleGL21InteractionCorridor", "0", CVAR_RENDERER | CVAR_BOOL, "non-Apple hosts only: treat a GL 2.1 compatibility context as the Apple GL 2.1 interaction corridor for reproduction; requires vid_restart" );
 
 idCVar r_jitter( "r_jitter", "0", CVAR_RENDERER | CVAR_BOOL, "randomly subpixel jitter the projection matrix" );
+idCVar r_levelshotSupersample( "r_levelshotSupersample", "1", CVAR_RENDERER | CVAR_FLOAT, "levelshot source scale: each 4:3 view is rendered this many times the tile height, then area-averaged down to the tile", 1.0f, 4.0f );
 
 idCVar r_skipSuppress( "r_skipSuppress", "0", CVAR_RENDERER | CVAR_BOOL, "ignore the per-view suppressions" );
 idCVar r_skipPostProcess( "r_skipPostProcess", "0", CVAR_RENDERER | CVAR_BOOL, "skip all post-process renderings" );
@@ -2778,7 +2780,71 @@ static void R_CaptureTiledPixelsRGBA( int width, int height, int blends, renderV
 	R_StaticFree( rgbBuffer );
 }
 
+/*
+==================
+R_DownsampleLevelShotAreaRGBA
+
+Box-filters src into dst, weighting partially covered source texels by their overlap.
+R_ResampleTexture only filters correctly down to half size, so a supersampled capture
+reduced further than that would alias.
+==================
+*/
+static void R_DownsampleLevelShotAreaRGBA( const byte *src, int srcWidth, int srcHeight, byte *dst, int dstWidth, int dstHeight ) {
+	const float scaleX = static_cast<float>( srcWidth ) / static_cast<float>( dstWidth );
+	const float scaleY = static_cast<float>( srcHeight ) / static_cast<float>( dstHeight );
+	idTempArray<float> columns( dstWidth * srcHeight * 4 );
+
+	for ( int y = 0; y < srcHeight; y++ ) {
+		const byte *srcRow = src + y * srcWidth * 4;
+		float *dstRow = columns.Ptr() + y * dstWidth * 4;
+		for ( int x = 0; x < dstWidth; x++ ) {
+			const float x0 = x * scaleX;
+			const float x1 = x0 + scaleX;
+			float sum[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+			for ( int sx = idMath::Ftoi( idMath::Floor( x0 ) ); sx < x1 && sx < srcWidth; sx++ ) {
+				const float weight = Min( x1, static_cast<float>( sx + 1 ) ) - Max( x0, static_cast<float>( sx ) );
+				if ( weight <= 0.0f ) {
+					continue;
+				}
+				for ( int c = 0; c < 4; c++ ) {
+					sum[c] += srcRow[ sx * 4 + c ] * weight;
+				}
+			}
+			for ( int c = 0; c < 4; c++ ) {
+				dstRow[ x * 4 + c ] = sum[c] / scaleX;
+			}
+		}
+	}
+
+	for ( int y = 0; y < dstHeight; y++ ) {
+		const float y0 = y * scaleY;
+		const float y1 = y0 + scaleY;
+		for ( int x = 0; x < dstWidth; x++ ) {
+			float sum[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+			for ( int sy = idMath::Ftoi( idMath::Floor( y0 ) ); sy < y1 && sy < srcHeight; sy++ ) {
+				const float weight = Min( y1, static_cast<float>( sy + 1 ) ) - Max( y0, static_cast<float>( sy ) );
+				if ( weight <= 0.0f ) {
+					continue;
+				}
+				const float *column = columns.Ptr() + ( sy * dstWidth + x ) * 4;
+				for ( int c = 0; c < 4; c++ ) {
+					sum[c] += column[c] * weight;
+				}
+			}
+			byte *dstPixel = dst + ( y * dstWidth + x ) * 4;
+			for ( int c = 0; c < 4; c++ ) {
+				dstPixel[c] = static_cast<byte>( idMath::ClampInt( 0, 255, idMath::Ftoi( sum[c] / scaleY + 0.5f ) ) );
+			}
+		}
+	}
+}
+
 static bool R_ResampleLevelShotTileRGBA( const byte *src, int srcWidth, int srcHeight, int tileSize, byte *dst ) {
+	if ( srcHeight > tileSize && srcWidth >= tileSize ) {
+		R_DownsampleLevelShotAreaRGBA( src, srcWidth, srcHeight, dst, tileSize, tileSize );
+		return true;
+	}
+
 	byte *resampled = R_ResampleTexture( src, srcWidth, srcHeight, tileSize, tileSize );
 	if ( resampled == NULL ) {
 		return false;
@@ -2789,19 +2855,124 @@ static bool R_ResampleLevelShotTileRGBA( const byte *src, int srcWidth, int srcH
 	return true;
 }
 
+// Pixels rendered around every region and then discarded, so screen-space
+// passes such as SSAO see real neighbours where regions meet.
+static const int LEVELSHOT_REGION_GUARD = 64;
+
+/*
+==================
+R_CaptureLevelShotTileRGBA
+
+Renders one 4:3 levelshot view, off-axis by the given shift in half-view units.
+A view larger than the window is split into regions that each fit it; every
+region is rendered as its own sub-frustum of the view and copied back pixel for
+pixel. R_ReadTiledPixels' viewport-offset tiling cannot be used for that: the
+scene render target and its post passes only ever see the first tile.
+==================
+*/
 static void R_CaptureLevelShotTileRGBA( int width, int height, int blends, const renderView_t &sourceView,
 	float projectionShiftX, float projectionShiftY, byte *rgbaOut ) {
 	const bool previousDisableLevelshotEntityCulling = tr.disableLevelshotEntityCulling;
 	tr_levelshotProjectionShiftActive = true;
-	tr_levelshotProjectionShiftX = projectionShiftX;
-	tr_levelshotProjectionShiftY = projectionShiftY;
 	tr.disableLevelshotEntityCulling = true;
-	renderView_t captureView = sourceView;
-	R_CaptureTiledPixelsRGBA( width, height, blends, &captureView, rgbaOut );
+
+	const int guard = LEVELSHOT_REGION_GUARD;
+	if ( width <= glConfig.vidWidth && height <= glConfig.vidHeight ) {
+		tr_levelshotProjectionShiftX = projectionShiftX;
+		tr_levelshotProjectionShiftY = projectionShiftY;
+		renderView_t captureView = sourceView;
+		R_CaptureTiledPixelsRGBA( width, height, blends, &captureView, rgbaOut );
+	} else {
+		const int maxRegionWidth = Max( 16, glConfig.vidWidth - 2 * guard );
+		const int maxRegionHeight = Max( 16, glConfig.vidHeight - 2 * guard );
+		const int columns = ( width + maxRegionWidth - 1 ) / maxRegionWidth;
+		const int rows = ( height + maxRegionHeight - 1 ) / maxRegionHeight;
+		const float tanX = idMath::Tan( DEG2RAD( sourceView.fov_x * 0.5f ) );
+		const float tanY = idMath::Tan( DEG2RAD( sourceView.fov_y * 0.5f ) );
+
+		for ( int row = 0; row < rows; row++ ) {
+			// rows run top-down, like the RGBA the capture returns
+			const int y0 = row * height / rows;
+			const int y1 = ( row + 1 ) * height / rows;
+			for ( int column = 0; column < columns; column++ ) {
+				const int x0 = column * width / columns;
+				const int x1 = ( column + 1 ) * width / columns;
+				const int regionX = x0 - guard;
+				const int regionY = y0 - guard;
+				const int regionWidth = x1 - x0 + 2 * guard;
+				const int regionHeight = y1 - y0 + 2 * guard;
+
+				// Region extents in units of the whole view's half-extents, up positive.
+				const float left = projectionShiftX - 1.0f + 2.0f * regionX / width;
+				const float right = projectionShiftX - 1.0f + 2.0f * ( regionX + regionWidth ) / width;
+				const float top = projectionShiftY + 1.0f - 2.0f * regionY / height;
+				const float bottom = projectionShiftY + 1.0f - 2.0f * ( regionY + regionHeight ) / height;
+				const float halfX = 0.5f * ( right - left );
+				const float halfY = 0.5f * ( top - bottom );
+
+				renderView_t regionView = sourceView;
+				regionView.fov_x = RAD2DEG( 2.0f * idMath::ATan( halfX * tanX ) );
+				regionView.fov_y = RAD2DEG( 2.0f * idMath::ATan( halfY * tanY ) );
+				tr_levelshotProjectionShiftX = 0.5f * ( left + right ) / halfX;
+				tr_levelshotProjectionShiftY = 0.5f * ( top + bottom ) / halfY;
+
+				idTempArray<byte> region( regionWidth * regionHeight * 4 );
+				R_CaptureTiledPixelsRGBA( regionWidth, regionHeight, blends, &regionView, region.Ptr() );
+				for ( int y = y0; y < y1; y++ ) {
+					memcpy( rgbaOut + ( y * width + x0 ) * 4,
+						region.Ptr() + ( ( y - regionY ) * regionWidth + guard ) * 4, ( x1 - x0 ) * 4 );
+				}
+			}
+		}
+	}
+
 	tr.disableLevelshotEntityCulling = previousDisableLevelshotEntityCulling;
 	tr_levelshotProjectionShiftActive = false;
 	tr_levelshotProjectionShiftX = 0.0f;
 	tr_levelshotProjectionShiftY = 0.0f;
+}
+
+/*
+==================
+R_LevelShotApplyCamera
+
+Points a copy of the player view at an explicit camera. The view keeps its viewID, time
+and shader parms, so the player's own body and view weapon stay suppressed and animated
+materials match the frame the command ran on.
+==================
+*/
+static void R_LevelShotApplyCamera( renderView_t &view, const idVec3 &origin, const idAngles &angles, float fovX, float aspect ) {
+	view.vieworg = origin;
+	view.viewaxis = angles.ToMat3();
+	view.fov_x = fovX;
+	view.fov_y = RAD2DEG( 2.0f * idMath::ATan( idMath::Tan( DEG2RAD( fovX * 0.5f ) ) / aspect ) );
+}
+
+static bool R_ParseLevelShotCamera( const idCmdArgs &args, int firstArg, idVec3 &origin, idAngles &angles, float &fovX ) {
+	float values[7];
+	const int count = Min( 7, args.Argc() - firstArg );
+	if ( count < 6 ) {
+		return false;
+	}
+
+	values[6] = 90.0f;
+	for ( int i = 0; i < count; i++ ) {
+		const char *token = args.Argv( firstArg + i );
+		char *end = NULL;
+		values[i] = static_cast<float>( strtod( token, &end ) );
+		// FLOAT_IS_NAN matches an all-ones exponent, so it rejects infinities too.
+		if ( end == token || *end != '\0' || FLOAT_IS_NAN( values[i] ) ) {
+			return false;
+		}
+	}
+	if ( values[6] <= 1.0f || values[6] >= 179.0f ) {
+		return false;
+	}
+
+	origin.Set( values[0], values[1], values[2] );
+	angles.Set( values[3], values[4], values[5] );
+	fovX = values[6];
+	return true;
 }
 
 static void R_LevelShotNormalizeFovToAspect( const renderView_t &sourceView, float currentAspect, float targetAspect, float &fovX, float &fovY ) {
@@ -3048,13 +3219,21 @@ static void R_WriteLevelShotPose( const idStr &baseName, const renderView_t &vie
 void R_LevelShot_f( const idCmdArgs &args ) {
 	idStr baseName;
 	int size = 512;
+	idVec3 cameraOrigin;
+	idAngles cameraAngles;
+	float cameraFovX = 90.0f;
+	const bool explicitCamera = args.Argc() >= 8;
 
-	if ( args.Argc() > 2 ) {
-		common->Printf( "usage: levelshot\n       levelshot <size>\n" );
+	if ( args.Argc() > 9 || ( args.Argc() > 2 && !explicitCamera ) ) {
+		common->Printf( "usage: levelshot\n       levelshot <size>\n       levelshot <size> <x> <y> <z> <pitch> <yaw> <roll> [fovX]\n" );
 		return;
 	}
-	if ( args.Argc() == 2 ) {
+	if ( args.Argc() >= 2 ) {
 		size = atoi( args.Argv( 1 ) );
+	}
+	if ( explicitCamera && !R_ParseLevelShotCamera( args, 2, cameraOrigin, cameraAngles, cameraFovX ) ) {
+		common->Printf( "levelshot: the camera needs six finite numbers and an optional fovX between 1 and 179\n" );
+		return;
 	}
 
 	R_NormalizeLevelShotBaseName( baseName );
@@ -3068,16 +3247,20 @@ void R_LevelShot_f( const idCmdArgs &args ) {
 		return;
 	}
 
-	const int rawTileHeight = size;
+	const int rawTileHeight = Max( size, idMath::Ftoi( size * r_levelshotSupersample.GetFloat() + 0.5f ) );
 	const float tileAspect = static_cast<float>( SCREEN_WIDTH ) / static_cast<float>( SCREEN_HEIGHT );
 	const int rawTileWidth = Max( 1, idMath::Ftoi( rawTileHeight * tileAspect + 0.5f ) );
 
 	renderView_t baseRef = tr.primaryView->renderView;
-	float currentAspect = tileAspect;
-	if ( glConfig.vidWidth > 0 && glConfig.vidHeight > 0 ) {
-		currentAspect = static_cast<float>( glConfig.vidWidth ) / static_cast<float>( glConfig.vidHeight );
+	if ( explicitCamera ) {
+		R_LevelShotApplyCamera( baseRef, cameraOrigin, cameraAngles, cameraFovX, tileAspect );
+	} else {
+		float currentAspect = tileAspect;
+		if ( glConfig.vidWidth > 0 && glConfig.vidHeight > 0 ) {
+			currentAspect = static_cast<float>( glConfig.vidWidth ) / static_cast<float>( glConfig.vidHeight );
+		}
+		R_LevelShotNormalizeFovToAspect( tr.primaryView->renderView, currentAspect, tileAspect, baseRef.fov_x, baseRef.fov_y );
 	}
-	R_LevelShotNormalizeFovToAspect( tr.primaryView->renderView, currentAspect, tileAspect, baseRef.fov_x, baseRef.fov_y );
 	baseRef.x = 0;
 	baseRef.y = 0;
 	baseRef.width = SCREEN_WIDTH;
@@ -3128,6 +3311,181 @@ void R_LevelShot_f( const idCmdArgs &args ) {
 
 	common->Printf( "Wrote %s(.tga/.dds) and _left/_right/_top/_bottom tiles from %dx%d 4:3 source captures\n",
 		baseName.c_str(), rawTileWidth, rawTileHeight );
+}
+
+static bool R_RenderLevelShotProbe( const idCmdArgs &probe ) {
+	const char *outputName = probe.Argv( 0 );
+	const int width = atoi( probe.Argv( 1 ) );
+	const int height = atoi( probe.Argv( 2 ) );
+	const bool currentView = idStr::Icmp( probe.Argv( 3 ), "current" ) == 0;
+	const int cameraArgs = currentView ? 4 : 10;
+	const bool wantDepth = probe.Argc() == cameraArgs + 1 && idStr::Icmp( probe.Argv( cameraArgs ), "depth" ) == 0;
+
+	if ( outputName[0] == '\0' || ( probe.Argc() != cameraArgs && !wantDepth ) ) {
+		common->Warning( "levelshotProbe: malformed probe '%s'", probe.Args() );
+		return false;
+	}
+	if ( width < 16 || height < 16 || width > 8192 || height > 8192 ) {
+		common->Warning( "levelshotProbe: bad probe size %dx%d for '%s'", width, height, outputName );
+		return false;
+	}
+
+	const float aspect = static_cast<float>( width ) / static_cast<float>( height );
+	renderView_t ref = tr.primaryView->renderView;
+	if ( currentView ) {
+		float windowAspect = aspect;
+		if ( glConfig.vidWidth > 0 && glConfig.vidHeight > 0 ) {
+			windowAspect = static_cast<float>( glConfig.vidWidth ) / static_cast<float>( glConfig.vidHeight );
+		}
+		R_LevelShotNormalizeFovToAspect( tr.primaryView->renderView, windowAspect, aspect, ref.fov_x, ref.fov_y );
+	} else {
+		idVec3 origin;
+		idAngles angles;
+		float fovX;
+		if ( !R_ParseLevelShotCamera( probe, 3, origin, angles, fovX ) ) {
+			common->Warning( "levelshotProbe: bad camera for '%s'", outputName );
+			return false;
+		}
+		R_LevelShotApplyCamera( ref, origin, angles, fovX, aspect );
+	}
+	ref.x = 0;
+	ref.y = 0;
+	ref.width = SCREEN_WIDTH;
+	ref.height = SCREEN_HEIGHT;
+
+	// Depth comes from one backend pass, so the probe must fit the window untiled.
+	const bool canReadDepth = width <= glConfig.vidWidth && height <= glConfig.vidHeight;
+	if ( wantDepth && !canReadDepth ) {
+		common->Warning( "levelshotProbe: '%s' is larger than the %dx%d window; skipping its depth", outputName, glConfig.vidWidth, glConfig.vidHeight );
+	}
+	idTempArray<float> depth( ( wantDepth && canReadDepth ) ? width * height : 1 );
+	if ( wantDepth && canReadDepth ) {
+		tr_levelshotDepthCapture.linearDepth = depth.Ptr();
+		tr_levelshotDepthCapture.width = width;
+		tr_levelshotDepthCapture.height = height;
+		tr_levelshotDepthCapture.captured = false;
+	}
+
+	idTempArray<byte> rgba( width * height * 4 );
+	R_CaptureTiledPixelsRGBA( width, height, 1, &ref, rgba.Ptr() );
+
+	const bool depthCaptured = tr_levelshotDepthCapture.linearDepth != NULL && tr_levelshotDepthCapture.captured;
+	tr_levelshotDepthCapture.linearDepth = NULL;
+	tr_levelshotDepthCapture.captured = false;
+
+	R_WriteTGA( va( "%s.tga", outputName ), rgba.Ptr(), width, height );
+	if ( depthCaptured ) {
+		fileSystem->WriteFile( va( "%s.depth", outputName ), depth.Ptr(), width * height * sizeof( float ) );
+	} else if ( wantDepth && canReadDepth ) {
+		common->Warning( "levelshotProbe: no depth was captured for '%s'", outputName );
+	}
+
+	const idAngles viewAngles = ref.viewaxis.ToAngles();
+	idStr pose = va( "%.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %d %d %d %d\n",
+		ref.vieworg.x, ref.vieworg.y, ref.vieworg.z, viewAngles.pitch, viewAngles.yaw, viewAngles.roll,
+		ref.fov_x, ref.fov_y, width, height, ref.time, depthCaptured ? 1 : 0 );
+	fileSystem->WriteFile( va( "%s.pose", outputName ), pose.c_str(), pose.Length() );
+	return true;
+}
+
+/*
+==================
+R_LevelShotProbe_f
+
+levelshotProbe <requestFile>
+
+Renders camera probes for tools that search for a levelshot pose, without moving the
+player or touching game state. Each line of the request file (relative to fs_savepath) is
+
+	<output> <width> <height> <x> <y> <z> <pitch> <yaw> <roll> <fovX> [depth]
+	<output> <width> <height> current [depth]
+
+"current" renders the view the game last drew (a cinematic camera, say) with its fov fitted
+to the probe's aspect. Every probe writes <output>.tga and <output>.pose ("x y z pitch yaw
+roll fovX fovY width height time depthWritten"); "depth" adds <output>.depth, float32
+distances along the view axis, top row first, -1 where nothing was drawn. A line that
+starts with "levelshot" runs that command, so a driver can stage a scene and then take the
+five-tile capture exactly once. All lines in a request share one frame's time; a first line
+"after <time>" holds the whole request until the view's time (the .pose time) reaches it.
+The request file is deleted once every line is handled, which is the completion signal for
+a driver that polls this command.
+==================
+*/
+static void R_LevelShotProbe_f( const idCmdArgs &args ) {
+	if ( args.Argc() != 2 ) {
+		common->Printf( "usage: levelshotProbe <requestFile>\n" );
+		return;
+	}
+
+	const idStr requestName = args.Argv( 1 );
+	// Open the OS path directly: a pure server hides loose savepath files from the search paths.
+	idFile *requestFile = fileSystem->OpenExplicitFileRead( fileSystem->RelativePathToOSPath( requestName.c_str(), "fs_savepath" ) );
+	if ( requestFile == NULL ) {
+		return;
+	}
+	if ( !tr.primaryView || !tr.primaryWorld ) {
+		// Leave the request queued until the world is drawing.
+		fileSystem->CloseFile( requestFile );
+		return;
+	}
+
+	idStr request;
+	const int length = requestFile->Length();
+	if ( length > 0 ) {
+		idTempArray<char> text( length + 1 );
+		const int read = requestFile->Read( text.Ptr(), length );
+		text[ Max( 0, read ) ] = '\0';
+		request = text.Ptr();
+	}
+	fileSystem->CloseFile( requestFile );
+
+	// A request that opens with "after <time>" stays queued until the primary view's clock
+	// reaches that time, so a capture lands on a chosen game time (a spinning pickup at a
+	// given angle, say) without the requester having to race the frame loop.
+	idCmdArgs gate;
+	const int gateEnd = request.Find( '\n' );
+	gate.TokenizeString( request.Left( gateEnd < 0 ? request.Length() : gateEnd ).c_str(), false );
+	const bool gated = gate.Argc() == 2 && !idStr::Icmp( gate.Argv( 0 ), "after" );
+	if ( gated && tr.primaryView->renderView.time < atoi( gate.Argv( 1 ) ) ) {
+		return;
+	}
+
+	console->Close();
+	const bool previousSuppressLevelshotViewModels = tr.suppressLevelshotViewModels;
+	tr.suppressLevelshotViewModels = true;
+
+	int rendered = 0;
+	int rejected = 0;
+	int lineStart = gated ? ( gateEnd < 0 ? request.Length() : gateEnd + 1 ) : 0;
+	while ( lineStart < request.Length() ) {
+		int lineEnd = request.Find( '\n', lineStart );
+		if ( lineEnd < 0 ) {
+			lineEnd = request.Length();
+		}
+		const idStr line = request.Mid( lineStart, lineEnd - lineStart );
+		lineStart = lineEnd + 1;
+
+		idCmdArgs probe;
+		probe.TokenizeString( line.c_str(), false );
+		if ( probe.Argc() == 0 ) {
+			continue;
+		}
+		if ( !idStr::Icmp( probe.Argv( 0 ), "levelshot" ) ) {
+			// A queued five-tile capture, taken once a staged scene is in place.
+			R_LevelShot_f( probe );
+			rendered++;
+			continue;
+		}
+		if ( probe.Argc() < 4 || !R_RenderLevelShotProbe( probe ) ) {
+			rejected++;
+			continue;
+		}
+		rendered++;
+	}
+
+	tr.suppressLevelshotViewModels = previousSuppressLevelshotViewModels;
+	fileSystem->RemoveFile( requestName.c_str() );
+	common->Printf( "levelshotProbe: rendered %d probe(s) from %s, rejected %d\n", rendered, requestName.c_str(), rejected );
 }
 
 /*
@@ -4834,6 +5192,7 @@ void R_InitCommands( void ) {
 	cmdSystem->AddCommand( "guiTraceProbe", R_GuiTraceProbe_f, CMD_FL_RENDERER, "diagnostic: GuiTrace every in-world gui surface and report hits" );
 	cmdSystem->AddCommand( "screenshot", R_ScreenShot_f, CMD_FL_RENDERER, "takes a screenshot" );
 	cmdSystem->AddCommand( "levelshot", R_LevelShot_f, CMD_FL_RENDERER | CMD_FL_CHEAT, "captures a 5-tile levelshot set" );
+	cmdSystem->AddCommand( "levelshotProbe", R_LevelShotProbe_f, CMD_FL_RENDERER | CMD_FL_CHEAT, "renders the camera probes queued in a request file, for levelshot pose tools" );
 	cmdSystem->AddCommand( "envshot", R_EnvShot_f, CMD_FL_RENDERER, "takes an environment shot" );
 	cmdSystem->AddCommand( "makeAmbientMap", R_MakeAmbientMap_f, CMD_FL_RENDERER|CMD_FL_CHEAT, "makes an ambient map" );
 	cmdSystem->AddCommand( "benchmark", R_Benchmark_f, CMD_FL_RENDERER, "benchmark" );

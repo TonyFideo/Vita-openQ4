@@ -30,6 +30,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "tr_local.h"
+#include "LevelShotDepth.h"
 #include "Model_local.h"
 #include "simplex.h"	// line font definition
 
@@ -2826,6 +2827,78 @@ void RB_TestImage( void ) {
 
 /*
 =================
+RB_CaptureLevelshotDepth
+
+Copies the main view's depth buffer out for levelshotProbe. Runs before the debug
+tools draw, so nothing but the scene has touched depth yet.
+=================
+*/
+static void RB_CaptureLevelshotDepth( void ) {
+	levelshotDepthCapture_t &capture = tr_levelshotDepthCapture;
+	if ( capture.linearDepth == NULL || capture.captured ) {
+		return;
+	}
+	if ( backEnd.viewDef->isSubview || ( backEnd.viewDef->renderFlags & RF_PORTAL_SKY ) != 0 ) {
+		return;
+	}
+
+	const idScreenRect &viewport = backEnd.viewDef->viewport;
+	const int width = viewport.x2 - viewport.x1 + 1;
+	const int height = viewport.y2 - viewport.y1 + 1;
+	if ( width != capture.width || height != capture.height ) {
+		common->Warning( "levelshotProbe: depth viewport is %dx%d, expected %dx%d", width, height, capture.width, capture.height );
+		return;
+	}
+
+	// The scene may be drawing into a render texture that is bound for draw only.
+	// Bind with raw GL and restore the exact previous binding afterwards: the
+	// state cache can hold a stale read binding and would skip the bind.
+	GLint previousReadFramebuffer = 0;
+	GLint drawFramebuffer = 0;
+	if ( glBindFramebuffer != NULL ) {
+		glGetIntegerv( GL_READ_FRAMEBUFFER_BINDING, &previousReadFramebuffer );
+		glGetIntegerv( GL_DRAW_FRAMEBUFFER_BINDING, &drawFramebuffer );
+		if ( previousReadFramebuffer != drawFramebuffer ) {
+			glBindFramebuffer( GL_READ_FRAMEBUFFER, static_cast<GLuint>( drawFramebuffer ) );
+		}
+	}
+
+	idTempArray<float> windowDepth( width * height );
+	while ( glGetError() != GL_NO_ERROR ) {
+	}
+	GLint sampleBuffers = 0;
+	glGetIntegerv( GL_SAMPLE_BUFFERS, &sampleBuffers );
+	glPixelStorei( GL_PACK_ALIGNMENT, 4 );
+	glReadPixels( viewport.x1, viewport.y1, width, height, GL_DEPTH_COMPONENT, GL_FLOAT, windowDepth.Ptr() );
+	const GLenum readError = glGetError();
+
+	if ( glBindFramebuffer != NULL && previousReadFramebuffer != drawFramebuffer ) {
+		glBindFramebuffer( GL_READ_FRAMEBUFFER, static_cast<GLuint>( previousReadFramebuffer ) );
+	}
+
+	if ( readError != GL_NO_ERROR ) {
+		common->Warning( "levelshotProbe: depth readback failed (GL error 0x%x, draw fbo %d, read fbo %d, sample buffers %d)",
+			readError, drawFramebuffer, previousReadFramebuffer, sampleBuffers );
+		return;
+	}
+
+	// Invert the infinite-far projection: ndc = B / d - A with A = P[10], B = P[14].
+	const float *projection = backEnd.viewDef->projectionMatrix;
+	for ( int y = 0; y < height; y++ ) {
+		const float *srcRow = windowDepth.Ptr() + ( height - 1 - y ) * width;
+		float *dstRow = capture.linearDepth + y * width;
+		for ( int x = 0; x < width; x++ ) {
+			const float ndc = 2.0f * srcRow[ x ] - 1.0f;
+			const float denominator = ndc + projection[ 10 ];
+			const float distance = ( idMath::Fabs( denominator ) > 1e-9f ) ? projection[ 14 ] / denominator : -1.0f;
+			dstRow[ x ] = ( distance > 0.0f && distance < MAX_WORLD_SIZE * 4.0f ) ? distance : -1.0f;
+		}
+	}
+	capture.captured = true;
+}
+
+/*
+=================
 RB_RenderDebugTools
 =================
 */
@@ -2834,6 +2907,8 @@ void RB_RenderDebugTools( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 	if ( !backEnd.viewDef->viewEntitys ) {
 		return;
 	}
+
+	RB_CaptureLevelshotDepth();
 
 	RB_LogComment( "---------- RB_RenderDebugTools ----------\n" );
 
