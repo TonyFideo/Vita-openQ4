@@ -231,6 +231,7 @@ target_compile_options(openq4_vita_filesystem_probe PRIVATE
 target_compile_features(openq4_vita_filesystem_probe PRIVATE cxx_std_20)
 add_executable(openq4_vita_prerender
   ${OPENQ4_ROOT}/src/sys/vita/vita_bootstrap.cpp
+  ${OPENQ4_ROOT}/src/sys/vita/vita_debug_screen.cpp
   ${OPENQ4_ROOT}/src/sys/vita/vita_system.cpp
   ${OPENQ4_ROOT}/src/sys/vita/vita_threads.cpp
   ${OPENQ4_ROOT}/src/sys/vita/vita_events.cpp
@@ -264,6 +265,7 @@ target_link_libraries(openq4_vita_prerender PRIVATE
   SceIofilemgr_stub
   ScePower_stub
   SceAppMgr_stub
+  SceDisplay_stub
 )
 
 vita_create_self(openq4_vita_prerender.self openq4_vita_prerender)

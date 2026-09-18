@@ -18,7 +18,7 @@
 
 namespace {
 
-const char *VITA_DATA_ROOT = "ux0:data/Vita-OpenQ4";
+const char *VITA_DATA_ROOT = VITA_OPENQ4_WRITABLE_ROOT;
 const char *VITA_PACKAGE_ROOT = "app0:";
 const char *VITA_EBOOT_PATH = "app0:/eboot.bin";
 

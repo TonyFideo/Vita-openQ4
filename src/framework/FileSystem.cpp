@@ -33,7 +33,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "GameDirPolicy.h"
 #include "LevelLoadCacheManager.h"
 #include "openq4_paks_generated.h"
-#include "../sys/URLPolicy.h"
+#include "../sys/URLPolicy.h"\n#if defined( __vita__ ) || defined( VITA )\n#include "../sys/vita/vita_public.h"\n#endif
 
 #include <errno.h>
 #include <stdint.h>
@@ -1303,9 +1303,9 @@ static void FS_BuildVitaInstallCandidates( idStrList &candidates ) {
 	// storage and finally the Vita internal ur0 partition. A candidate is only
 	// accepted when q4base/pak001.pk4 is present, so the writable ux0 skeleton
 	// created by Sys_Init cannot mask a valid install on uma0 or ur0.
-	FS_AddUniquePath( candidates, "ux0:data/Vita-OpenQ4" );
-	FS_AddUniquePath( candidates, "uma0:data/Vita-OpenQ4" );
-	FS_AddUniquePath( candidates, "ur0:data/Vita-OpenQ4" );
+	FS_AddUniquePath( candidates, VITA_OPENQ4_DATA_ROOT_UX0 );
+	FS_AddUniquePath( candidates, VITA_OPENQ4_DATA_ROOT_UMA0 );
+	FS_AddUniquePath( candidates, VITA_OPENQ4_DATA_ROOT_UR0 );
 
 	FS_LogPathList( "Vita Quake 4 data candidates", candidates );
 }
