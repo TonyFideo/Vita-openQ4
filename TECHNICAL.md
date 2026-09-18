@@ -132,7 +132,7 @@ openQ4 automatically validates your Quake 4 installation to ensure you have legi
 - See [docs/user/shadow-mapping.md](docs/user/shadow-mapping.md) for the full shadow-map CVar reference, presets, transparency behavior, and debug modes
 
 ### Renderer Backend
-- `r_renderApi best|gl|vulkan|gl-module` — Rendering API; default `gl`. `vulkan` selects the experimental native Vulkan module and applies on engine restart. A module that cannot load falls back to OpenGL; a driver or GPU that cannot start Vulkan stops with an error until `r_renderApi gl` is set again
+- `r_renderApi best|gl|vulkan|gl-module` — Rendering API; default `gl`. `vulkan` selects the experimental native Vulkan module and applies on engine restart. A module that cannot load, or finds no usable Vulkan device before it activates, falls back to OpenGL; a window, surface, or swapchain failure after activation stops with an error and resets `r_renderApi` to `gl` for the next launch
 - See [docs/user/display-settings.md](docs/user/display-settings.md#renderer-backend-opengl-default-vulkan-is-experimental)
 
 ### Presentation Clock

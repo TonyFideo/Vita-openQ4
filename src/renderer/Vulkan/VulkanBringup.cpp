@@ -28,7 +28,11 @@
 */
 
 static const renderModuleServices_t *vk_services = NULL;
+static vkBringupLoaderInit_t vk_loaderInit = NULL;
 static bool vk_volkInitialized = false;
+// the instance of the last passed gate probe (VK_Bringup_RunDeviceSelfTest),
+// alive until VK_Bringup_ReleaseHeldInstance
+static VkInstance vk_heldInstance = VK_NULL_HANDLE;
 
 // the feature floor the real Vulkan renderer is designed against
 // (docs/dev/plans/2026-07-16-vulkan-renderer.md, "Vulkan technical design")
@@ -44,6 +48,7 @@ typedef struct vkBringupDeviceInfo_s {
 	uint32_t							transferQueueFamily;		// dedicated transfer family when present, else graphics
 	bool								hasGraphicsQueue;
 	bool								hasDedicatedTransferQueue;
+	bool								hasSwapchain;
 	VkDeviceSize						deviceLocalBytes;
 	bool								hasDynamicRendering;
 	bool								hasSynchronization2;
@@ -59,6 +64,10 @@ typedef struct vkBringupDeviceInfo_s {
 
 void VK_Bringup_SetServices( const renderModuleServices_t *services ) {
 	vk_services = services;
+}
+
+void VK_Bringup_SetLoaderInit( vkBringupLoaderInit_t initLoader ) {
+	vk_loaderInit = initLoader;
 }
 
 static void VK_Printf( const char *fmt, ... ) {
@@ -322,15 +331,19 @@ static void VK_Bringup_QueryDevice( VkPhysicalDevice physicalDevice, vkBringupDe
 	info.hasSamplerAnisotropy = features2.features.samplerAnisotropy == VK_TRUE;
 	info.hasTextureCompressionBC = features2.features.textureCompressionBC == VK_TRUE;
 	info.hasDepthBounds = features2.features.depthBounds == VK_TRUE;
+	info.hasSwapchain = VK_Bringup_DeviceExtensionSupported( physicalDevice, VK_KHR_SWAPCHAIN_EXTENSION_NAME );
 
 	// What the shipping renderer actually requires of a device: the 1.3 core
-	// floor, a graphics+present queue, and enough bound descriptor sets for the
-	// shadowed-interaction pipeline layout. Timeline semaphores, descriptor
-	// indexing and BC compression are reported for information only -- the back
-	// end uses none of them for device creation, and gating on them made this
-	// probe report FAIL on otherwise perfectly capable portability devices.
+	// floor, a graphics+present queue, the swapchain extension it always enables,
+	// and enough bound descriptor sets for the shadowed-interaction pipeline
+	// layout. Timeline semaphores, descriptor indexing and BC compression are
+	// reported for information only -- the back end uses none of them for device
+	// creation, and gating on them made this probe report FAIL on otherwise
+	// perfectly capable portability devices. Presentation support itself needs a
+	// surface, which this probe never creates.
 	info.meetsRequirements = info.props.apiVersion >= VK_BRINGUP_REQUIRED_API_VERSION
 			&& info.hasGraphicsQueue
+			&& info.hasSwapchain
 			&& info.hasDynamicRendering
 			&& info.hasSynchronization2
 			&& info.props.limits.maxBoundDescriptorSets >= (uint32_t)VK_BRINGUP_REQUIRED_BOUND_DESCRIPTOR_SETS;
@@ -348,6 +361,50 @@ static void VK_Bringup_QueryDevice( VkPhysicalDevice physicalDevice, vkBringupDe
 		info.score += 10;
 	}
 	info.score += ( int )( info.deviceLocalBytes / ( 1024ull * 1024ull * 1024ull ) );
+}
+
+/*
+====================
+VK_Bringup_DescribeUnmetRequirements
+
+Names every requirement from VK_Bringup_QueryDevice the device misses. The
+loader records this as the reason it fell back to OpenGL, so it has to say
+which requirement failed rather than just that one did.
+====================
+*/
+static void VK_Bringup_AppendListItem( char *out, size_t outSize, const char *item ) {
+	if ( out[ 0 ] != '\0' ) {
+		strncat( out, ", ", outSize - strlen( out ) - 1 );
+	}
+	strncat( out, item, outSize - strlen( out ) - 1 );
+}
+
+static void VK_Bringup_DescribeUnmetRequirements( const vkBringupDeviceInfo_t &info, char *out, size_t outSize ) {
+	char item[ 64 ];
+
+	out[ 0 ] = '\0';
+	if ( info.props.apiVersion < VK_BRINGUP_REQUIRED_API_VERSION ) {
+		snprintf( item, sizeof( item ), "Vulkan 1.3 (device has %u.%u)",
+				VK_API_VERSION_MAJOR( info.props.apiVersion ), VK_API_VERSION_MINOR( info.props.apiVersion ) );
+		VK_Bringup_AppendListItem( out, outSize, item );
+	}
+	if ( !info.hasGraphicsQueue ) {
+		VK_Bringup_AppendListItem( out, outSize, "a graphics queue" );
+	}
+	if ( !info.hasSwapchain ) {
+		VK_Bringup_AppendListItem( out, outSize, VK_KHR_SWAPCHAIN_EXTENSION_NAME );
+	}
+	if ( !info.hasDynamicRendering ) {
+		VK_Bringup_AppendListItem( out, outSize, "dynamicRendering" );
+	}
+	if ( !info.hasSynchronization2 ) {
+		VK_Bringup_AppendListItem( out, outSize, "synchronization2" );
+	}
+	if ( info.props.limits.maxBoundDescriptorSets < (uint32_t)VK_BRINGUP_REQUIRED_BOUND_DESCRIPTOR_SETS ) {
+		snprintf( item, sizeof( item ), "%d bound descriptor sets (device has %u)",
+				VK_BRINGUP_REQUIRED_BOUND_DESCRIPTOR_SETS, info.props.limits.maxBoundDescriptorSets );
+		VK_Bringup_AppendListItem( out, outSize, item );
+	}
 }
 
 /*
@@ -402,16 +459,20 @@ static void VK_Bringup_ReportFormatSupport( VkPhysicalDevice physicalDevice, boo
 VK_Bringup_RunProbeInternal
 ====================
 */
-static bool VK_Bringup_RunProbeInternal( bool verbose, char *outSummary, int summaryLength ) {
+static bool VK_Bringup_RunProbeInternal( bool verbose, char *outSummary, int summaryLength, bool holdInstance ) {
 	VkResult result;
 
 	if ( outSummary != NULL && summaryLength > 0 ) {
 		outSummary[ 0 ] = '\0';
 	}
 
-	// 1. loader
+	// 1. loader: the library the renderer itself will load
 	if ( !vk_volkInitialized ) {
-		result = volkInitialize();
+		if ( vk_loaderInit != NULL ) {
+			result = vk_loaderInit() ? VK_SUCCESS : VK_ERROR_INITIALIZATION_FAILED;
+		} else {
+			result = volkInitialize();
+		}
 		if ( result != VK_SUCCESS ) {
 			VK_Printf( "Vulkan bring-up: no Vulkan loader available on this system (%s)\n", VK_ResultName( result ) );
 			if ( outSummary != NULL ) {
@@ -563,6 +624,7 @@ static bool VK_Bringup_RunProbeInternal( bool verbose, char *outSummary, int sum
 		VkPhysicalDevice physicalDevices[ 16 ];
 		vkEnumeratePhysicalDevices( instance, &deviceCount, physicalDevices );
 
+		const int overrideIndex = VK_CVarGetInteger( "r_vkDevice" );
 		vkBringupDeviceInfo_t deviceInfos[ 16 ];
 		int bestIndex = -1;
 		for ( uint32_t i = 0; i < deviceCount; i++ ) {
@@ -575,7 +637,8 @@ static bool VK_Bringup_RunProbeInternal( bool verbose, char *outSummary, int sum
 						( unsigned long long )( info.deviceLocalBytes / ( 1024ull * 1024ull ) ),
 						info.hasGraphicsQueue ? ( int )info.graphicsQueueFamily : -1,
 						info.hasDedicatedTransferQueue ? "dedicated" : "shared" );
-				VK_Printf( "  features: dynamicRendering=%d sync2=%d timelineSemaphore=%d descriptorIndexing=%d bufferDeviceAddress=%d anisotropy=%d bc=%d depthBounds=%d -> %s\n",
+				VK_Printf( "  features: swapchain=%d dynamicRendering=%d sync2=%d timelineSemaphore=%d descriptorIndexing=%d bufferDeviceAddress=%d anisotropy=%d bc=%d depthBounds=%d -> %s\n",
+						info.hasSwapchain ? 1 : 0,
 						info.hasDynamicRendering ? 1 : 0, info.hasSynchronization2 ? 1 : 0, info.hasTimelineSemaphore ? 1 : 0,
 						info.hasDescriptorIndexing ? 1 : 0, info.hasBufferDeviceAddress ? 1 : 0, info.hasSamplerAnisotropy ? 1 : 0,
 						info.hasTextureCompressionBC ? 1 : 0, info.hasDepthBounds ? 1 : 0,
@@ -586,9 +649,18 @@ static bool VK_Bringup_RunProbeInternal( bool verbose, char *outSummary, int sum
 			if ( bestIndex < 0 || info.score > deviceInfos[ bestIndex ].score ) {
 				bestIndex = ( int )i;
 			}
+			// The quiet pass is the engine's activation gate, which needs one
+			// device the renderer can run on; the renderer itself takes the first
+			// device that can present, not the best-scored one. Querying the rest
+			// is most of the gate's cost where Microsoft's Dozen translation
+			// driver is installed: it reports a Vulkan 1.2 device per adapter,
+			// never suitable, and every query of one is slow.
+			if ( !verbose && overrideIndex < 0 && info.meetsRequirements ) {
+				bestIndex = ( int )i;
+				break;
+			}
 		}
 
-		const int overrideIndex = VK_CVarGetInteger( "r_vkDevice" );
 		int selectedIndex = bestIndex;
 		if ( overrideIndex >= 0 ) {
 			if ( overrideIndex < ( int )deviceCount ) {
@@ -611,9 +683,11 @@ static bool VK_Bringup_RunProbeInternal( bool verbose, char *outSummary, int sum
 		const vkBringupDeviceInfo_t &selected = deviceInfos[ selectedIndex ];
 		VK_Printf( "Vulkan selected device: %s (%s)\n", selected.props.deviceName, VK_DeviceTypeName( selected.props.deviceType ) );
 		if ( !selected.meetsRequirements ) {
-			VK_Printf( "Vulkan bring-up: selected device does not meet the Vulkan 1.3 feature floor (dynamicRendering/sync2/timelineSemaphore/descriptorIndexing/anisotropy/BC)\n" );
+			char unmet[ 256 ];
+			VK_Bringup_DescribeUnmetRequirements( selected, unmet, sizeof( unmet ) );
+			VK_Printf( "Vulkan bring-up: selected device does not meet the renderer's requirements; it lacks %s\n", unmet );
 			if ( outSummary != NULL ) {
-				snprintf( outSummary, summaryLength, "device '%s' below 1.3 feature floor", selected.props.deviceName );
+				snprintf( outSummary, summaryLength, "device '%s' lacks %s", selected.props.deviceName, unmet );
 			}
 			break;
 		}
@@ -835,7 +909,14 @@ static bool VK_Bringup_RunProbeInternal( bool verbose, char *outSummary, int sum
 	if ( device != VK_NULL_HANDLE ) {
 		vkDestroyDevice( device, NULL );
 	}
-	vkDestroyInstance( instance, NULL );
+	if ( holdInstance && probePassed ) {
+		// the renderer creates its own instance next; destroying this one
+		// first would unload every Vulkan driver just for it to load them again
+		VK_Bringup_ReleaseHeldInstance();
+		vk_heldInstance = instance;
+	} else {
+		vkDestroyInstance( instance, NULL );
+	}
 	// volk keeps only the loader handle after this; safe for repeat probes
 
 	return probePassed;
@@ -847,7 +928,7 @@ VK_Bringup_RunProbe
 ====================
 */
 bool VK_Bringup_RunProbe( bool verbose ) {
-	return VK_Bringup_RunProbeInternal( verbose, NULL, 0 );
+	return VK_Bringup_RunProbeInternal( verbose, NULL, 0, false );
 }
 
 /*
@@ -856,7 +937,21 @@ VK_Bringup_RunDeviceSelfTest
 ====================
 */
 bool VK_Bringup_RunDeviceSelfTest( char *outSummary, int summaryLength ) {
-	return VK_Bringup_RunProbeInternal( false, outSummary, summaryLength );
+	return VK_Bringup_RunProbeInternal( false, outSummary, summaryLength, true );
+}
+
+/*
+====================
+VK_Bringup_ReleaseHeldInstance
+====================
+*/
+void VK_Bringup_ReleaseHeldInstance( void ) {
+	if ( vk_heldInstance != VK_NULL_HANDLE ) {
+		// volk's instance entry points may belong to a newer instance by now;
+		// loader and MoltenVK entry points both dispatch on the handle
+		vkDestroyInstance( vk_heldInstance, NULL );
+		vk_heldInstance = VK_NULL_HANDLE;
+	}
 }
 
 /*
@@ -865,6 +960,8 @@ VK_Bringup_Shutdown
 ====================
 */
 void VK_Bringup_Shutdown( void ) {
-	// per-probe objects are torn down inside the probe; nothing persists here
+	// only a passed gate probe leaves anything behind: its instance
+	VK_Bringup_ReleaseHeldInstance();
 	vk_services = NULL;
+	vk_loaderInit = NULL;
 }

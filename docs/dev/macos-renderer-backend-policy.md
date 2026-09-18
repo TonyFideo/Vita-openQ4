@@ -118,10 +118,12 @@ macOS support claim:
 - macOS support is a preview for Apple Silicon/arm64. macOS Vulkan is an
   experimental renderer on that preview platform, and no first-class or
   supported-renderer claim follows from this decision.
-- A missing renderer module falls back to the OpenGL renderer through the
-  existing fail-closed ladder. A missing MoltenVK or a GPU that cannot start
-  Vulkan is not covered by that ladder: device initialization fails and openQ4
-  stops with an error until `r_renderApi` is set back to `gl` (issue #96).
+- A missing renderer module, a missing MoltenVK, or a GPU that cannot start
+  Vulkan falls back to the OpenGL renderer through the existing fail-closed
+  ladder, which probes the Vulkan device before it activates the module. A
+  window or surface failure after activation stops openQ4 with an error, after
+  setting `r_renderApi` back to `gl` so the next launch uses OpenGL (issue #96
+  recorded the old behavior, where every device failure stopped every launch).
 
 The gate remains closed for a native Metal renderer, for making Vulkan the macOS
 default or resolving `best` to `vulkan` on macOS, and for any additional macOS

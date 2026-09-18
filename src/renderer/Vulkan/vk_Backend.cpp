@@ -43,6 +43,7 @@
 #include "../ClassicFogBlendDomain.h"
 #include "../ClassicSubviewDomain.h"
 #include "VulkanDevice.h"
+#include "VulkanBringup.h"
 #include "vk_Image.h"
 
 // the back-end state object normally defined by tr_backend.cpp
@@ -270,7 +271,11 @@ bool VK_InitRenderDevice( void ) {
 		return false;
 	}
 
-	if ( !VK_Device_Init( vkBackendServices ) ) {
+	const bool deviceReady = VK_Device_Init( vkBackendServices );
+	// the loader's gate probe kept its instance so the drivers stayed loaded
+	// for this one; it has served its purpose either way
+	VK_Bringup_ReleaseHeldInstance();
+	if ( !deviceReady ) {
 		vkBackendServices->DestroyAttemptWindow();
 		return false;
 	}

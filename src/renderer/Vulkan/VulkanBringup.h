@@ -24,13 +24,26 @@ struct renderModuleServices_s;
 
 void	VK_Bringup_SetServices( const struct renderModuleServices_s *services );
 
+// how the probe resolves the Vulkan library. The module glue installs the
+// device back end's resolver so the probe tests the library the renderer will
+// load: on macOS volk alone never looks inside the app bundle for MoltenVK.
+// Without one the probe falls back to volkInitialize().
+typedef bool ( *vkBringupLoaderInit_t )( void );
+void	VK_Bringup_SetLoaderInit( vkBringupLoaderInit_t initLoader );
+
 // full bring-up pass: loader -> instance (+ optional validation) -> device
 // enumeration/selection -> logical device + queues -> VMA allocations ->
 // timeline semaphore -> teardown; reports through services->Printf
 bool	VK_Bringup_RunProbe( bool verbose );
 
-// quiet pass/fail wrapper for self-test harnesses
+// quiet pass/fail wrapper; the engine's loader runs it before activating the
+// module. A pass keeps its instance alive, so the Vulkan drivers stay loaded
+// for the renderer's own instance, until VK_Bringup_ReleaseHeldInstance
 bool	VK_Bringup_RunDeviceSelfTest( char *outSummary, int summaryLength );
+
+// destroys the instance a passed VK_Bringup_RunDeviceSelfTest kept; called
+// once the renderer has created its own, and from VK_Bringup_Shutdown
+void	VK_Bringup_ReleaseHeldInstance( void );
 
 // releases any cached module state; called before the engine unloads the module
 void	VK_Bringup_Shutdown( void );

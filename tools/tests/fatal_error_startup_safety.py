@@ -245,19 +245,80 @@ def validate_posix_fatal_signal_report() -> None:
 
 
 def validate_renderer_failure_entry_points() -> None:
-    """Both backends reach FatalError from the same point in startup."""
+    """Both backends reach FatalError from the same point in startup.
+
+    A Vulkan device is probed before its module activates, so most device
+    failures fall back to OpenGL without reaching this point. What still fails
+    here (window, surface, swapchain) is past the in-process fallback, and the
+    archived r_renderApi would stop every later launch the same way, so the
+    loader resets it to gl before the fatal error says so.
+    """
     renderer = read("src/renderer/RenderSystem_init.cpp")
 
     init_opengl = function_body(renderer, "void idRenderSystemLocal::InitOpenGL( void ) {")
-    require(
+    require_ordered(
         init_opengl,
-        'common->FatalError( "Vulkan renderer device initialization failed" );',
+        (
+            "if ( !VK_InitRenderDevice() ) {",
+            "const bool nextLaunchUsesGL = R_RendererModule_ResetApiAfterDeviceFailure();",
+            'common->FatalError( "Vulkan renderer device initialization failed; %s",',
+            '"r_renderApi has been reset to gl, so the next launch uses OpenGL"',
+            '"launch with +set r_renderApi gl to use OpenGL"',
+        ),
         "Vulkan device bring-up failure path",
     )
     require(
         renderer,
         'common->FatalError( "Unable to initialize OpenGL" );',
         "OpenGL bring-up failure path",
+    )
+
+    loader = read("src/renderer/RendererModule.cpp")
+    try_load = function_body(
+        loader,
+        "static bool RM_TryLoadModuleApi( rendererModuleApi_t api, rendererModuleStatus_t &status ) {",
+    )
+    require_ordered(
+        try_load,
+        (
+            "if ( !RM_ExportCanRender( moduleExport, &reason ) ) {",
+            "const bool deviceReady = RM_ExportDeviceReady( moduleExport, deviceSummary, sizeof( deviceSummary ) );",
+            "if ( !deviceReady ) {",
+            "Sys_DLL_Unload( handle );",
+            '"device probe failed: %s"',
+            "return false;",
+            "RM_PublishActiveModuleInterfaces( rm_state.moduleExport );",
+        ),
+        "renderer module device probe runs before activation",
+    )
+    device_ready = function_body(
+        loader,
+        "static bool RM_ExportDeviceReady( const renderExport_t *moduleExport, char *outSummary, int summaryLength ) {",
+    )
+    require(device_ready, "moduleExport->diagnostics->RunDeviceSelfTest( outSummary, summaryLength )", "device probe gate")
+
+    reset = function_body(loader, "bool R_RendererModule_ResetApiAfterDeviceFailure( void ) {")
+    require_ordered(
+        reset,
+        (
+            "RM_PeekConfigRenderApi( configValue, sizeof( configValue ) )",
+            "configApi != RENDER_MODULE_API_VULKAN",
+            'fileSystem->RelativePathToOSPath( CONFIG_FILE, "fs_savepath" )',
+            'fileSystem->OpenFileAppend( CONFIG_FILE, false, "fs_savepath" );',
+            'seta r_renderApi \\"gl\\"',
+        ),
+        "device-failure reset appends a gl selection to the saved config",
+    )
+    # the whole-config writer drops every game-module cvar this early in startup
+    reject(reset, "WriteConfigToFile", "device-failure reset")
+
+    api = read("src/renderer/RenderModuleAPI.h")
+    require(api, "bool\t\t\t( *ResetRenderApiAfterDeviceFailure )( void );", "renderer module services")
+    module_glue = read("src/renderer/RendererGLModule.cpp")
+    require(
+        module_glue,
+        "return rgm_services->ResetRenderApiAfterDeviceFailure();",
+        "module forwards the device-failure reset to the loader",
     )
 
 

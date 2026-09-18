@@ -97,6 +97,11 @@ one VkInstance is undefined behavior. This mirrors SDL's precedence exactly:
 
 so every case lands on one library. Developers who want validation layers point
 SDL_VULKAN_LIBRARY at an SDK loader and both halves follow.
+
+The bring-up probe resolves its library through this function too, because the
+engine runs that probe to decide whether to activate this module at all; a probe
+that looked only where volk looks would find no MoltenVK inside the app bundle
+and send every packaged Mac back to OpenGL.
 ====================
 */
 #if defined( MACOS_X )
@@ -117,7 +122,7 @@ static bool VK_Device_AdoptLoaderAt( const char *path ) {
 }
 #endif
 
-static bool VK_Device_InitLoader( void ) {
+bool VK_Device_InitLoader( void ) {
 #if defined( MACOS_X )
 	const char *pinned = getenv( "SDL_VULKAN_LIBRARY" );
 	if ( pinned != NULL && pinned[ 0 ] != '\0' && VK_Device_AdoptLoaderAt( pinned ) ) {

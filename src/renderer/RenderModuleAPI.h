@@ -57,7 +57,10 @@
 // 11 - Append-only idRenderSystem slots publish frame-latched scene/native
 //      output state and enqueue the backend-neutral temporal presentation
 //      resolve requested by game modules
-#define RENDER_API_VERSION			11
+// 12 - ResetRenderApiAfterDeviceFailure service: a module whose device cannot
+//      start after activation asks the loader to point the next launch at
+//      OpenGL
+#define RENDER_API_VERSION			12
 #define RENDER_API_ENTRY_POINT		"GetRenderAPI"
 
 class idSys;
@@ -102,6 +105,12 @@ typedef struct renderModuleServices_s {
 	// bake pool's Sys_CreateThread signature (thread registry, priority,
 	// threadInfo_t) is resolved by the module-side forwarder design in
 	// Phase B8 (docs/dev/plans/2026-07-16-vulkan-renderer-phase-b.md)
+
+	// --- version 12: the loader also owns the archived r_renderApi value. An
+	// active module whose device cannot start is past the in-process fallback
+	// ladder, so before its fatal error it asks the loader to select gl for the
+	// next launch; returns true when the saved config now selects gl ---
+	bool			( *ResetRenderApiAfterDeviceFailure )( void );
 } renderModuleServices_t;
 
 // native window/surface handoff; zeroed until the engine has created a window

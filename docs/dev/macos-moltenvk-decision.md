@@ -27,7 +27,7 @@ The staged implementation record for this decision is
 | `r_renderApi best` on macOS | Resolves to `gl`, unchanged |
 | New package variant | **None.** The existing `OpenGL` and `Metal bridge` packages both carry the module; there is no third download |
 | macOS support claim | Unchanged by this decision: **experimental** Apple Silicon/arm64 at the time. The platform became a preview on 2026-09-18 (see [platform-support.md](platform-support.md#support-tiers)); macOS Vulkan stayed experimental |
-| Rollback if it goes wrong | Ship-time: drop the module and dylib from staging. Run-time: the fail-closed ladder falls back to OpenGL by itself |
+| Rollback if it goes wrong | Ship-time: drop the module and dylib from staging. Run-time: the fail-closed ladder, which probes the Vulkan device before activating the module, falls back to OpenGL by itself; a window or surface failure after activation stops that launch and leaves the next one on OpenGL |
 
 ## Why A Translation Layer And Not Native Metal
 
@@ -160,8 +160,8 @@ Two second-order consequences are accepted:
   level-load warm-up already exist for this reason and are the mitigation.
 - **Late failure.** A shader that translates badly fails at
   `vkCreateGraphicsPipelines`, not at build time. That failure surfaces as a
-  Vulkan validation/creation error, and the module's own error handling decides
-  whether the frame degrades or the renderer fails closed to OpenGL.
+  Vulkan validation/creation error; the draw then reuses another cached
+  pipeline or is skipped, and nothing falls back to OpenGL at that point.
 
 Replacement — authoring MSL or a Metal-specific shader family — is explicitly
 rejected. It would recreate the native-Metal cost this decision exists to avoid.
@@ -258,12 +258,22 @@ macOS caveats:
 
 The fail-closed ladder in `src/renderer/RendererModule.cpp` is the mechanism,
 and it is the same one Windows and Linux use. `R_RendererModule_BuildFallbackLadder`
-places the requested API first and always terminates on GL, so every
-module-loading failure lands on the proven OpenGL renderer with its own
-safe-mode retry loop. The ladder ends once a module is active: a failure in the
-Vulkan device bring-up that follows calls
-`FatalError( "Vulkan renderer device initialization failed" )` instead. This
-section claimed otherwise until 2026-09-18; issue #96 shows the real behavior.
+places the requested API first and always terminates on GL, so every failure
+the ladder sees lands on the proven OpenGL renderer with its own safe-mode
+retry loop. Before a module activates, the ladder runs the module's own device
+probe (`RunDeviceSelfTest`, the quiet form of `rendererVkProbe`). The probe
+resolves the Vulkan library through `VK_Device_InitLoader`, as the renderer
+does, then creates an instance and a device without touching a window, so a
+probe failure is one more fallback class. It destroys the device at once but
+keeps the instance until the renderer has created its own, so the Vulkan
+drivers stay loaded in between, and it stops at the first device that meets
+the requirements. The ladder ends once a module is active. Device bring-up
+that fails after that point, in window, surface, or swapchain creation, calls
+`FatalError( "Vulkan renderer device initialization failed; ..." )`. Before
+that it appends `seta r_renderApi "gl"` to the saved config, so the next
+launch starts on OpenGL. Until 2026-09-18 there was no probe: every device
+failure took the fatal path and left `vulkan` archived, so each relaunch
+failed the same way (issue #96).
 
 Failure classes, each of which warns, records a fallback reason, and continues:
 
@@ -274,10 +284,11 @@ Failure classes, each of which warns, records a fallback reason, and continues:
 | `dlopen` of the module failed | `module load failed` |
 | No `GetRenderAPI` entry point | `missing GetRenderAPI entry point` |
 | Export rejected, or diagnostics-only bring-up export | logged with `falling back to OpenGL. Use rendererVkProbe to inspect it.` |
+| Device probe failed: no Vulkan library, no driver or GPU, a device below the requirements, or device creation | `device probe failed: <probe summary>`, for example `device probe failed: no Vulkan loader` |
 
-macOS-specific failure classes. The first three happen in device bring-up,
-after the module is already active, so they do not reach the ladder: each logs
-its reason and then stops the engine with the fatal error above.
+macOS-specific failure classes. The device probe catches the first three
+before the module activates, so each falls back to OpenGL with its reason
+recorded.
 
 - `libMoltenVK.dylib` missing from the bundle, so `VK_Device_InitLoader` finds no
   loader and `volkInitialize()` fails.
@@ -300,9 +311,12 @@ or mod content.
 Rollback:
 
 - **User rollback:** set `r_renderApi gl` and restart the engine. Because the
-  cvar is `CVAR_ARCHIVE`, this persists. A failed Vulkan start is not rolled
-  back automatically: the archived `vulkan` value stops every launch until the
-  user starts once with `+set r_renderApi gl`.
+  cvar is `CVAR_ARCHIVE`, this persists. A start that fails the device probe
+  renders with OpenGL and keeps the `vulkan` selection, so the next launch tries
+  again. A start that fails after activation stops the engine, but first
+  appends `seta r_renderApi "gl"` to the saved config, so the next launch uses
+  OpenGL; only a `+set r_renderApi vulkan` launch option can select Vulkan
+  again then.
 - **Project rollback:** configure macOS packages with
   `-Dbuild_renderer_vk=false`. The module is not built or staged, module path
   resolution fails, and the ladder returns to OpenGL. The module and the
@@ -311,9 +325,10 @@ Rollback:
   withdraw the option. It is a configure-flag change: no source change, no
   default change, no user action.
 - **Damaged user copy:** if a user's package loses `libMoltenVK.dylib` (a
-  partial copy, a stripped archive), `r_renderApi vulkan` fails at loader
-  init, logs the reason, and stops with `Vulkan renderer device initialization
-  failed` (issue #96). It does not fall back to OpenGL.
+  partial copy, a stripped archive), `r_renderApi vulkan` fails the device
+  probe at loader init, logs the reason, and falls back to OpenGL. Before
+  2026-09-18 it stopped with `Vulkan renderer device initialization failed`
+  instead (issue #96).
 - **No rollback is needed for the default renderer**, because the default never
   moved. That is the core safety property of this decision.
 
@@ -555,9 +570,10 @@ Required:
 - Say that OpenGL remains the default and recommended renderer on macOS.
 - Say that Vulkan on macOS is opt-in and experimental, and that macOS support
   itself is a preview for Apple Silicon/arm64.
-- Say what happens when Vulkan cannot start: a missing module falls back to
-  OpenGL, but a missing translation layer or an unsuitable GPU stops openQ4
-  with an error until `r_renderApi` is set back to `gl`.
+- Say what happens when Vulkan cannot start: a missing module, a missing
+  translation layer, or an unsuitable GPU falls back to OpenGL, and a window or
+  surface failure later in startup stops openQ4 with an error after setting
+  `r_renderApi` back to `gl` for the next launch.
 - Keep the two existing macOS package variants named `OpenGL` and `Metal
   bridge`, and keep the Metal bridge described as a bridge around the OpenGL
   renderer, not a native Metal renderer.

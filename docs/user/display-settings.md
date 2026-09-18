@@ -144,7 +144,7 @@ for normal play.
 | Setting | Default | What it does |
 |---|---:|---|
 | `r_renderApi` | `gl` | Renderer backend: `gl` (default, supported) or `vulkan` (**experimental**). `best` resolves to `gl` until the Vulkan backend clears its promotion evidence and sign-off. Takes effect on **engine restart**, not `vid_restart`. |
-| `r_actualRenderApi` | (read-only) | Reports the backend that actually initialized. If the Vulkan renderer module cannot be loaded, the engine **falls back to OpenGL** and this reports `gl`. |
+| `r_actualRenderApi` | (read-only) | Reports the backend that actually initialized. If the Vulkan renderer module cannot be loaded or finds no usable Vulkan device, the engine **falls back to OpenGL** and this reports `gl`. |
 
 ### All `r_renderApi` values
 
@@ -161,15 +161,20 @@ Notes:
 
 - The `vulkan` selection is archived to your config and applied at the next
   engine start; restart openQ4 fully (not just `vid_restart`) to switch.
-- If the Vulkan renderer module is missing or cannot be loaded, openQ4 logs a
-  warning and renders with OpenGL. Check `r_actualRenderApi` or `gfxInfo` to
-  see the active backend.
-- If the module loads but your driver or GPU cannot start Vulkan (no Vulkan
-  driver, a GPU below the renderer's Vulkan 1.3 feature floor, or a device or
-  window creation failure), openQ4 currently **stops with "Vulkan renderer
-  device initialization failed"** instead of switching to OpenGL. Because
-  `r_renderApi` is saved in your config, every launch stops the same way until
-  you start openQ4 once with `+set r_renderApi gl`.
+- Before it switches to Vulkan, openQ4 loads the Vulkan renderer module and
+  tries to create a Vulkan device with it. If the module is missing, there is no
+  Vulkan driver, no GPU meets the renderer's Vulkan 1.3 feature floor, or the
+  device cannot be created, openQ4 logs a warning and renders with OpenGL.
+  `gfxInfo` gives the reason on its `Renderer API fallback reason` line, and
+  `r_actualRenderApi` reports `gl`. Your `vulkan` selection is kept, so the next
+  launch tries Vulkan again, for example after a driver update.
+- A failure that only appears later, while openQ4 creates the window, its
+  Vulkan surface, or the swapchain, still **stops openQ4 with "Vulkan renderer
+  device initialization failed"**: by then the engine has been set up around
+  the Vulkan renderer and cannot switch to OpenGL mid-start. Before stopping,
+  openQ4 sets `r_renderApi` back to `gl` in your saved config, so the next
+  launch starts on OpenGL. If you chose Vulkan with a `+set r_renderApi vulkan`
+  launch option, remove that option too.
 - Vulkan reports are welcome. Check the list below first, then include
   `openq4.log`, `gfxInfo`, and your GPU and driver version.
 
@@ -219,14 +224,15 @@ does not replace or remove the OpenGL renderer.
   all plausible.
 - **To go back:** run `r_renderApi gl` and restart. The setting is saved to your
   config, so it stays on OpenGL after that.
-- **If it cannot start**, openQ4 currently stops with "Vulkan renderer device
-  initialization failed" instead of switching to OpenGL, and because the setting
-  is saved it stops the same way on every launch. Start it once with
-  `+set r_renderApi gl` to go back, for example from Terminal with
-  `/Applications/openQ4.app/Contents/MacOS/openQ4 +set r_renderApi gl`. Common
-  reasons on a Mac are a GPU that does not meet the renderer's Vulkan 1.3
-  feature floor, or a package whose bundled translation layer is missing or was
-  stripped by a copy.
+- **If it cannot start**, openQ4 renders with OpenGL instead and logs why, and
+  `gfxInfo` shows the reason. Common reasons on a Mac are a GPU that does not
+  meet the renderer's Vulkan 1.3 feature floor, or a package whose bundled
+  translation layer is missing or was stripped by a copy. If Vulkan only fails
+  later, while creating the window or its surface, openQ4 stops with "Vulkan
+  renderer device initialization failed", but first sets the saved setting back
+  to `gl`, so the next launch uses OpenGL. If it still stops, start it once with
+  `+set r_renderApi gl`, for example from Terminal with
+  `/Applications/openQ4.app/Contents/MacOS/openQ4 +set r_renderApi gl`.
 - When reporting a macOS Vulkan problem, include `openq4.log` (it records which
   translation-layer library was loaded), the `gfxInfo` output, and your Mac
   model and macOS version.

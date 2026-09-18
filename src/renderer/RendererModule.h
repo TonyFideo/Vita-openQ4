@@ -11,9 +11,11 @@
 
 	Consumes r_renderApi, resolves renderer module binaries next to the
 	executable (never through the game/mod search path), performs the
-	GetRenderAPI handshake, and falls back closed to the OpenGL renderer on
-	every failure class so a bad selection can never leave the user without
-	a picture.
+	GetRenderAPI handshake, runs a module's device probe before activating
+	it, and falls back closed to the OpenGL renderer on every failure it can
+	see so a bad selection can never leave the user without a picture. A
+	device that still fails after activation points the next launch at
+	OpenGL instead.
 
 ===============================================================================
 */
@@ -84,5 +86,11 @@ bool	RendererModule_RunSelfTest( void );
 // loads the Vulkan renderer module on demand, runs its bring-up probe, and
 // unloads it again; used by the rendererVkProbe console command
 bool	R_RendererModule_RunVulkanProbe( bool verbose );
+
+// the active module could not start its device, too late for the in-process
+// ladder: selects gl for the next launch, appending it to the saved config
+// when that config selects vulkan, and returns true when it did. Module builds
+// forward this to the engine's loader through the services table.
+bool	R_RendererModule_ResetApiAfterDeviceFailure( void );
 
 #endif /* !__RENDERERMODULE_H__ */

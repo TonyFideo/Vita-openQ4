@@ -21,7 +21,7 @@
 // every build shape, including module-only clients that shed the static
 // renderer sources
 static const char *r_renderApiArgs[] = { "best", "gl", "vulkan", "gl-module", NULL };
-idCVar r_renderApi( "r_renderApi", "gl", CVAR_RENDERER | CVAR_ARCHIVE, "rendering API: best = platform default (currently gl), gl = OpenGL renderer (loaded as the renderer-gl module on module-only builds, statically linked elsewhere), vulkan = experimental Vulkan renderer module (falls back to gl only if the module cannot load), gl-module = alias that always selects the OpenGL module. Module selections take effect on engine restart.", r_renderApiArgs, idCmdSystem::ArgCompletion_String<r_renderApiArgs> );
+idCVar r_renderApi( "r_renderApi", "gl", CVAR_RENDERER | CVAR_ARCHIVE, "rendering API: best = platform default (currently gl), gl = OpenGL renderer (loaded as the renderer-gl module on module-only builds, statically linked elsewhere), vulkan = experimental Vulkan renderer module (falls back to gl when the module cannot load or finds no usable Vulkan device; a device that fails later resets this to gl for the next launch), gl-module = alias that always selects the OpenGL module. Module selections take effect on engine restart.", r_renderApiArgs, idCmdSystem::ArgCompletion_String<r_renderApiArgs> );
 idCVar r_actualRenderApi( "r_actualRenderApi", "UNINITIALIZED", CVAR_RENDERER | CVAR_ROM, "rendering API actually active after request/fallback selection" );
 
 // engine-side homes for window/gui cvars referenced by both the platform
@@ -149,6 +149,10 @@ static void RM_Services_PrintRendererApiStatus( void ) {
 	RendererModule_PrintGfxInfo();
 }
 
+static bool RM_Services_ResetRenderApiAfterDeviceFailure( void ) {
+	return R_RendererModule_ResetApiAfterDeviceFailure();
+}
+
 static const renderModuleServices_t rm_services = {
 	RM_Services_Printf,
 	RM_Services_Warning,
@@ -163,6 +167,7 @@ static const renderModuleServices_t rm_services = {
 	RM_Services_LeaveCriticalSection,
 	RM_Services_IsRenderDocInjected,
 	RM_Services_PrintRendererApiStatus,
+	RM_Services_ResetRenderApiAfterDeviceFailure,
 };
 
 /*
@@ -461,6 +466,33 @@ static bool RM_ExportCanRender( const renderExport_t *moduleExport, const char *
 
 /*
 ====================
+RM_ExportDeviceReady
+
+A module that exports a device self-test must pass it before it activates.
+Once active it owns the decls and the render system, so a device that cannot
+start is past the in-process ladder and ends in a fatal error. The Vulkan
+probe creates its own instance and device without touching a window, so it
+covers a missing loader or driver, no GPU, a device below the feature floor,
+and device creation; surface and swapchain creation only happen after
+activation. Shared with the self-test so the policy cannot silently drift.
+====================
+*/
+static bool RM_ExportDeviceReady( const renderExport_t *moduleExport, char *outSummary, int summaryLength ) {
+	outSummary[ 0 ] = '\0';
+	if ( moduleExport->diagnostics == NULL || moduleExport->diagnostics->RunDeviceSelfTest == NULL ) {
+		return true;
+	}
+	if ( moduleExport->diagnostics->RunDeviceSelfTest( outSummary, summaryLength ) ) {
+		return true;
+	}
+	if ( outSummary[ 0 ] == '\0' ) {
+		idStr::Copynz( outSummary, "no failure detail recorded", summaryLength );
+	}
+	return false;
+}
+
+/*
+====================
 RM_UnloadModule
 ====================
 */
@@ -562,6 +594,29 @@ static bool RM_TryLoadModuleApi( rendererModuleApi_t api, rendererModuleStatus_t
 		Sys_DLL_Unload( handle );
 		RM_AppendFallbackReason( status, reason );
 		return false;
+	}
+
+	// the last point a device failure can still fall back: the probe costs
+	// a throwaway instance and device on top of the renderer's own, so the
+	// log records how long it took
+	char deviceSummary[ 192 ];
+	const int probeStartMsec = Sys_Milliseconds();
+	const bool deviceReady = RM_ExportDeviceReady( moduleExport, deviceSummary, sizeof( deviceSummary ) );
+	const int probeMsec = Sys_Milliseconds() - probeStartMsec;
+	if ( !deviceReady ) {
+		common->Warning( "renderer module '%s' found no usable device (%s) in %d ms; falling back to OpenGL. Use rendererVkProbe to inspect it.",
+				modulePath, deviceSummary, probeMsec );
+		if ( moduleExport->Shutdown != NULL ) {
+			moduleExport->Shutdown();
+		}
+		Sys_DLL_Unload( handle );
+		char deviceReason[ 256 ];
+		idStr::snPrintf( deviceReason, sizeof( deviceReason ), "device probe failed: %s", deviceSummary );
+		RM_AppendFallbackReason( status, deviceReason );
+		return false;
+	}
+	if ( deviceSummary[ 0 ] != '\0' ) {
+		common->Printf( "Renderer module device probe: %s (%d ms)\n", deviceSummary, probeMsec );
 	}
 
 	rm_state.moduleHandle = handle;
@@ -741,6 +796,56 @@ void R_RendererModule_BootEarly( void ) {
 
 /*
 ====================
+R_RendererModule_ResetApiAfterDeviceFailure
+
+The active module could not start its device. Decls and the render system
+already belong to it, so the ladder cannot fall back in-process any more; what
+is left is making sure the next launch does not stop the same way, which it
+would every time because r_renderApi is archived.
+
+The config is appended to, never rewritten: this runs before the game module
+registers its cvars, and WriteConfigToFile would drop every one of them. The
+appended line wins because RM_PeekConfigRenderApi and config execution both
+take the last set/seta. Only the fs_savepath config the engine itself writes is
+touched, and only when it is what selected vulkan; a selection made on the
+command line has nothing archived to undo.
+====================
+*/
+bool R_RendererModule_ResetApiAfterDeviceFailure( void ) {
+	r_renderApi.SetString( "gl" );
+
+	char configValue[ 64 ];
+	rendererModuleApi_t configApi;
+	if ( !RM_PeekConfigRenderApi( configValue, sizeof( configValue ) )
+			|| !R_RendererModule_ParseApi( configValue, configApi )
+			|| configApi != RENDER_MODULE_API_VULKAN ) {
+		return false;
+	}
+
+	// copied at once: the path lives in a buffer the next file call reuses
+	const idStr configPath = fileSystem->RelativePathToOSPath( CONFIG_FILE, "fs_savepath" );
+	idFile *existing = fileSystem->OpenExplicitFileRead( configPath.c_str() );
+	if ( existing == NULL ) {
+		return false;
+	}
+	fileSystem->CloseFile( existing );
+
+	idFile *config = fileSystem->OpenFileAppend( CONFIG_FILE, false, "fs_savepath" );
+	if ( config == NULL ) {
+		common->Warning( "could not reset r_renderApi to gl in %s", configPath.c_str() );
+		return false;
+	}
+	// the leading newline keeps a config that lacks a final newline from
+	// joining its last line onto this one
+	config->Printf( "\n// the Vulkan device could not start; the next launch uses OpenGL\nseta r_renderApi \"gl\"\n" );
+	fileSystem->CloseFile( config );
+	common->Printf( "r_renderApi reset to gl in %s; the next launch uses OpenGL unless a +set r_renderApi launch option selects vulkan again\n",
+			configPath.c_str() );
+	return true;
+}
+
+/*
+====================
 R_RendererModule_Shutdown
 ====================
 */
@@ -854,12 +959,30 @@ bool R_RendererModule_RunVulkanProbe( bool verbose ) {
 	return probePassed;
 }
 
+// stand-ins for a module's device self-test, driving RM_ExportDeviceReady
+static bool RM_SelfTestDeviceReady( char *outSummary, int summaryLength ) {
+	idStr::Copynz( outSummary, "self-test device ready", summaryLength );
+	return true;
+}
+
+static bool RM_SelfTestDeviceMissing( char *outSummary, int summaryLength ) {
+	idStr::Copynz( outSummary, "self-test device missing", summaryLength );
+	return false;
+}
+
+static bool RM_SelfTestDeviceMissingSilently( char *outSummary, int summaryLength ) {
+	(void)outSummary;
+	(void)summaryLength;
+	return false;
+}
+
 /*
 ====================
 RendererModule_RunSelfTest
 
 Pure-logic checks that need no window, device, or module binary: api-string
-parsing, module naming, ladder composition, and export validation rules.
+parsing, module naming, ladder composition, export validation rules, and the
+device gate in front of activation.
 ====================
 */
 bool RendererModule_RunSelfTest( void ) {
@@ -980,6 +1103,42 @@ bool RendererModule_RunSelfTest( void ) {
 		testExport.renderSystem = NULL;
 	}
 
+	// device gate: a module that exports a device self-test activates only
+	// when it passes, and a failure always carries a reason for the fallback
+	{
+		renderModuleDiagnostics_t testDiagnostics;
+		memset( &testDiagnostics, 0, sizeof( testDiagnostics ) );
+		renderExport_t testExport;
+		memset( &testExport, 0, sizeof( testExport ) );
+		char summary[ 128 ];
+
+		if ( !RM_ExportDeviceReady( &testExport, summary, sizeof( summary ) ) ) {
+			common->Warning( "rendererModuleSelfTest: a module without diagnostics must not be device-gated" );
+			numFailures++;
+		}
+		testExport.diagnostics = &testDiagnostics;
+		if ( !RM_ExportDeviceReady( &testExport, summary, sizeof( summary ) ) ) {
+			common->Warning( "rendererModuleSelfTest: a module without a device self-test must not be device-gated" );
+			numFailures++;
+		}
+		testDiagnostics.RunDeviceSelfTest = RM_SelfTestDeviceReady;
+		if ( !RM_ExportDeviceReady( &testExport, summary, sizeof( summary ) ) ) {
+			common->Warning( "rendererModuleSelfTest: a passing device self-test must allow activation" );
+			numFailures++;
+		}
+		testDiagnostics.RunDeviceSelfTest = RM_SelfTestDeviceMissing;
+		if ( RM_ExportDeviceReady( &testExport, summary, sizeof( summary ) )
+				|| idStr::Cmp( summary, "self-test device missing" ) != 0 ) {
+			common->Warning( "rendererModuleSelfTest: a failed device self-test must refuse activation and keep its summary" );
+			numFailures++;
+		}
+		testDiagnostics.RunDeviceSelfTest = RM_SelfTestDeviceMissingSilently;
+		if ( RM_ExportDeviceReady( &testExport, summary, sizeof( summary ) ) || summary[ 0 ] == '\0' ) {
+			common->Warning( "rendererModuleSelfTest: a device self-test that fails without a summary must still record a reason" );
+			numFailures++;
+		}
+	}
+
 	// import completeness: every v2 interface pointer and service binding
 	// must be filled by the shared builder
 	{
@@ -995,6 +1154,10 @@ bool RendererModule_RunSelfTest( void ) {
 				|| testImport.services->LeaveCriticalSection == NULL
 				|| testImport.services->IsRenderDocInjected == NULL ) {
 			common->Warning( "rendererModuleSelfTest: v2 service bindings incomplete" );
+			numFailures++;
+		}
+		if ( testImport.services == NULL || testImport.services->ResetRenderApiAfterDeviceFailure == NULL ) {
+			common->Warning( "rendererModuleSelfTest: v12 device-failure reset service not bound" );
 			numFailures++;
 		}
 		if ( testImport.sys == NULL || testImport.common == NULL || testImport.cvarSystem == NULL

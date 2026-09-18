@@ -398,6 +398,14 @@ void RendererModule_PrintGfxInfo( void ) {
 	}
 }
 
+bool R_RendererModule_ResetApiAfterDeviceFailure( void ) {
+	// the loader owns the archived r_renderApi selection
+	if ( rgm_services != NULL && rgm_services->ResetRenderApiAfterDeviceFailure != NULL ) {
+		return rgm_services->ResetRenderApiAfterDeviceFailure();
+	}
+	return false;
+}
+
 #ifdef OPENQ4_RENDERER_GL_MODULE
 /*
 ====================

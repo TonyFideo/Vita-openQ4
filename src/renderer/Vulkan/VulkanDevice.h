@@ -153,6 +153,11 @@ typedef struct vkDeviceContext_s {
 // the module-wide device context; valid while initialized is true
 extern vkDeviceContext_t vkCtx;
 
+// resolves the Vulkan library into volk exactly the way SDL will for the
+// surface (SDL_VULKAN_LIBRARY, the bundled MoltenVK, then the system loader);
+// the bring-up probe shares it so both load the same image
+bool	VK_Device_InitLoader( void );
+
 // full bring-up through the window services: instance (+validation when
 // r_vkValidation), surface, device selection honoring r_vkDevice, queues,
 // swapchain, per-frame sync. Returns false with everything torn down on any

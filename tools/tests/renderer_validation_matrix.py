@@ -1568,6 +1568,36 @@ def build_safe_cases(tiers: tuple[str, ...]) -> list[dict[str, Any]]:
                 ["created OpenGL context"],
             ],
         },
+        {
+            "id": "renderer-vk-device-fallback-drill",
+            "category": "vulkan",
+            "description": "Vulkan device break drill: the Vulkan loader is pointed at an empty driver manifest, so the module loads but its pre-activation device probe finds no driver. The vulkan request must fall back to OpenGL with the probe's reason instead of stopping in device bring-up.",
+            "assetless": True,
+            "requiresVulkanModule": True,
+            "preservesConfig": True,
+            "emptyVulkanDrivers": True,
+            # the probe reports the Vulkan call the empty driver list makes fail
+            "allowedWarningSignatures": ["vulkanCallFailed"],
+            "args": [
+                "+set",
+                "r_renderApi",
+                "vulkan",
+                "+gfxInfo",
+            ],
+            "checks": [
+                ["Loading renderer module: api='vulkan'"],
+                ["found no usable device"],
+                ["renderer API fallback: requested 'vulkan', active 'gl'"],
+                ["Renderer API: requested=vulkan active=gl disposition=fallback"],
+                ["Renderer API fallback reason: device probe failed:"],
+                ["created OpenGL context"],
+            ],
+            # the fallback must happen before activation, not after bring-up
+            "absent": [
+                "----- VK_InitRenderDevice -----",
+                "Vulkan renderer device initialization failed",
+            ],
+        },
     ]
 
     for shader_tier in SHADER_LIBRARY_TIER_MATRIX:
@@ -1735,7 +1765,14 @@ def filter_vulkan_module_cases(cases: list[dict[str, Any]], runtime_dir: Path) -
     # MoltenVK, which is bundled with the package, so both hosts qualify once
     # the module is staged next to the executable.
     if (os.name == "nt" or sys.platform == "darwin") and vk_module_path(runtime_dir).exists():
-        return cases
+        if sys.platform != "darwin":
+            return cases
+        # the empty-driver lever works on the Khronos loader's driver list;
+        # macOS loads the bundled MoltenVK directly, past that list
+        dropped = [case["id"] for case in cases if case.get("emptyVulkanDrivers")]
+        if dropped:
+            print(f"note: skipping loader-driver drills on macOS (MoltenVK loads directly): {', '.join(dropped)}")
+        return [case for case in cases if not case.get("emptyVulkanDrivers")]
     dropped = [case["id"] for case in cases if case.get("requiresVulkanModule")]
     if dropped:
         print(f"note: skipping Vulkan module cases (module not staged or unsupported host): {', '.join(dropped)}")
@@ -1798,16 +1835,27 @@ def format_warning_signatures(warnings: dict[str, int]) -> str:
     return ", ".join(active) if active else "0"
 
 
-def evaluate_checks(text: str, checks: list[list[str]], warnings: dict[str, int]) -> tuple[bool, list[str]]:
+def evaluate_checks(
+    text: str,
+    checks: list[list[str]],
+    warnings: dict[str, int],
+    absent: list[str] | None = None,
+    allowed_warnings: list[str] | None = None,
+) -> tuple[bool, list[str]]:
     missing: list[str] = []
     for alternatives in checks:
         if not any(pattern in text for pattern in alternatives):
             missing.append(" or ".join(alternatives))
-    failed_markers = ["self-test failed"]
+    failed_markers = ["self-test failed"] + list(absent or [])
     for marker in failed_markers:
         if marker in text:
             missing.append(f"unexpected marker: {marker}")
-    missing += [f"warning signature: {name}={count}" for name, count in sorted(warnings.items()) if count > 0]
+    allowed = set(allowed_warnings or [])
+    missing += [
+        f"warning signature: {name}={count}"
+        for name, count in sorted(warnings.items())
+        if count > 0 and name not in allowed
+    ]
     return len(missing) == 0, missing
 
 
@@ -1893,6 +1941,16 @@ def run_case(
     config_path = savepath / "baseoq4" / "openQ4Config.cfg"
     preserve_config = bool(case.get("preservesConfig", False))
     saved_config = config_path.read_bytes() if preserve_config and config_path.exists() else None
+    # drill lever: point the Vulkan loader at an empty driver manifest so the
+    # module loads but no Vulkan driver, and so no device, exists for the run
+    process_env = None
+    if case.get("emptyVulkanDrivers"):
+        empty_manifest = output_dir / f"{sanitize_case_id(case_id)}.no-vulkan-drivers.json"
+        empty_manifest.write_text("", encoding="utf-8")
+        process_env = os.environ.copy()
+        process_env.pop("VK_ADD_DRIVER_FILES", None)
+        process_env["VK_DRIVER_FILES"] = str(empty_manifest)
+        process_env["VK_ICD_FILENAMES"] = str(empty_manifest)
 
     started = time.time()
     timed_out = False
@@ -1905,6 +1963,7 @@ def run_case(
                 cwd=str(runtime_dir),
                 stdout=stdout_file,
                 stderr=stderr_file,
+                env=process_env,
             )
             try:
                 exit_code = process.wait(timeout=timeout_seconds)
@@ -1939,7 +1998,13 @@ def run_case(
 
     warning_signatures = count_warning_signatures(diagnostic_text)
     failure_diagnostics, failure_diagnostics_omitted = collect_failure_diagnostics(diagnostic_sources)
-    checks_ok, missing = evaluate_checks(diagnostic_text, case["checks"], warning_signatures)
+    checks_ok, missing = evaluate_checks(
+        diagnostic_text,
+        case["checks"],
+        warning_signatures,
+        case.get("absent"),
+        case.get("allowedWarningSignatures"),
+    )
     ok = exit_code == 0 and not timed_out and log_path is not None and checks_ok
     return {
         "id": case_id,

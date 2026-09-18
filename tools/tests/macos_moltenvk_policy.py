@@ -11,7 +11,9 @@ sweep:
   extension) must stay presence-gated -- hardcoding either way breaks one of the
   two supported MoltenVK loading shapes.
 * The engine (SDL) and the renderer module (volk) must resolve the SAME Vulkan
-  library, in the same order, or a VkInstance crosses two images.
+  library, in the same order, or a VkInstance crosses two images. The
+  module's bring-up probe, which decides whether the module activates at all,
+  must resolve it the same way too.
 * The macOS module must export only its entry point, because the macOS client
   still links a full second copy of the renderer statically.
 * Shadow-map and depth-writing shaders must avoid the two GLSL constructs whose
@@ -124,13 +126,34 @@ def validate_loader_agreement() -> None:
     # because both consult SDL_VULKAN_LIBRARY first, then the bundled dylib at
     # the same app-bundle and two loose-package paths, then the system loader.
     device = read("src/renderer/Vulkan/VulkanDevice.cpp")
-    loader = function_body(device, "static bool VK_Device_InitLoader( void ) {")
+    loader = function_body(device, "bool VK_Device_InitLoader( void ) {")
     require(loader, 'getenv( "SDL_VULKAN_LIBRARY" )', "module honors the SDL Vulkan library pin")
     require(loader, '"/../Frameworks/libMoltenVK.dylib"', "module bundle-relative MoltenVK path")
     require(loader, '"/Frameworks/libMoltenVK.dylib"', "module loose Frameworks MoltenVK path")
     require(loader, '"/libMoltenVK.dylib"', "module adjacent MoltenVK path")
     require(loader, "return volkInitialize() == VK_SUCCESS;", "module falls back to the system Vulkan loader")
     require(device, "volkInitializeCustom( getInstanceProcAddr );", "module adopts the resolved loader through volk")
+
+    # The engine runs the bring-up probe before it activates the module and
+    # falls back to OpenGL when the probe fails, so the probe has to resolve
+    # the same library. volk's own search never looks inside the app bundle;
+    # a probe relying on it would send every packaged Mac back to OpenGL.
+    bringup = read("src/renderer/Vulkan/VulkanBringup.cpp")
+    probe = function_body(
+        bringup,
+        "static bool VK_Bringup_RunProbeInternal( bool verbose, char *outSummary, int summaryLength, bool holdInstance ) {",
+    )
+    require(
+        probe,
+        "result = vk_loaderInit() ? VK_SUCCESS : VK_ERROR_INITIALIZATION_FAILED;",
+        "probe resolves the renderer's Vulkan library",
+    )
+    module = read("src/renderer/Vulkan/VulkanModule.cpp")
+    require(
+        module,
+        "VK_Bringup_SetLoaderInit( VK_Device_InitLoader );",
+        "module hands the device loader to the probe",
+    )
 
     backend = read("src/sys/sdl3/sdl3_backend.cpp")
     pin = function_body(backend, "static void SDL3_PinBundledMoltenVKLibrary(void) {")

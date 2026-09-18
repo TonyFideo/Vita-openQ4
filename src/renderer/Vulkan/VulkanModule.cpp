@@ -24,6 +24,9 @@
 #include "../RenderModuleAPI.h"
 #include "VulkanBringup.h"
 
+// VulkanDevice.cpp; declared here so this TU stays free of the volk/VMA headers
+bool VK_Device_InitLoader( void );
+
 static const renderModuleDiagnostics_t vk_moduleDiagnostics = {
 	VK_Bringup_RunProbe,
 	VK_Bringup_RunDeviceSelfTest,
@@ -38,11 +41,14 @@ const renderModuleDiagnostics_t *VK_GetModuleDiagnostics( void ) {
 VK_ModuleBindServices
 
 Called by the shared glue after the import handshake so the bring-up /
-diagnostics layer can print through the engine.
+diagnostics layer can print through the engine. The probe also takes the
+device back end's library resolver: the engine runs that probe before it
+activates this module, so it must test the library the renderer will load.
 ====================
 */
 void VK_ModuleBindServices( const renderModuleServices_t *services ) {
 	VK_Bringup_SetServices( services );
+	VK_Bringup_SetLoaderInit( VK_Device_InitLoader );
 }
 
 #endif /* OPENQ4_RENDERER_VK_MODULE */

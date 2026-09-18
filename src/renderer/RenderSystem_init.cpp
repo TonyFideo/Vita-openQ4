@@ -5160,7 +5160,15 @@ void idRenderSystemLocal::InitOpenGL( void ) {
 		// the window services; no GL ladder, caps probe, or program loads
 		extern bool VK_InitRenderDevice( void );
 		if ( !VK_InitRenderDevice() ) {
-			common->FatalError( "Vulkan renderer device initialization failed" );
+			// The loader probed the device before activating this module, so
+			// what fails here is mostly window, surface or swapchain creation.
+			// The module already owns the decls and the render system, too late
+			// to fall back in-process, so keep the archived selection from
+			// stopping the next launch the same way.
+			const bool nextLaunchUsesGL = R_RendererModule_ResetApiAfterDeviceFailure();
+			common->FatalError( "Vulkan renderer device initialization failed; %s",
+					nextLaunchUsesGL ? "r_renderApi has been reset to gl, so the next launch uses OpenGL"
+							: "launch with +set r_renderApi gl to use OpenGL" );
 		}
 		// The Vulkan module does not run the OpenGL tier/bootstrap tail that
 		// normally initializes shared scene resources.  The classic-GUI domain
