@@ -179,6 +179,44 @@ public:
 
 #endif
 
+
+#if defined(__vita__) || defined(VITA)
+
+// VitaSDK targets ARMv7 with an ILP32, little-endian ABI.
+#include <stddef.h>
+#include <limits.h>
+#include <float.h>
+
+	#undef WIN32
+	#undef _XBOX
+	#undef _CONSOLE
+	#define _OPENGL
+	#define _LITTLE_ENDIAN
+	#undef _CASE_SENSITIVE_FILESYSTEM
+	#define _USE_OPENAL
+	#ifndef Q4SDK
+		#define Q4SDK_MD5R
+	#endif
+
+	#define NEWLINE "\n"
+	#define _GLVAS_SUPPPORT
+
+	#ifndef ID_ALIGNMENTCHECKER_DEFINED
+#define ID_ALIGNMENTCHECKER_DEFINED
+class AlignmentChecker
+{
+public:
+	static void UpdateCount(void const * const ptr) {}
+	static void ClearCount() {}
+	static void Print() {}
+};
+#endif
+
+	#define RESTRICT
+	#define TIME_THIS_SCOPE(x)
+
+#endif
+
 #ifdef MACOS_X
 
 // for offsetof
