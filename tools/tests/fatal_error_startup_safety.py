@@ -284,7 +284,7 @@ def validate_renderer_failure_entry_points() -> None:
             "if ( !RM_ExportCanRender( moduleExport, &reason ) ) {",
             "const bool deviceReady = RM_ExportDeviceReady( moduleExport, deviceSummary, sizeof( deviceSummary ) );",
             "if ( !deviceReady ) {",
-            "Sys_DLL_Unload( handle );",
+            "RM_UnloadModuleBinary( handle, rm_state.moduleCompletions );",
             '"device probe failed: %s"',
             "return false;",
             "RM_PublishActiveModuleInterfaces( rm_state.moduleExport );",

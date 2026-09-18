@@ -67,7 +67,7 @@ def validate_probe_refuses_active_vulkan() -> None:
         "Sys_DLL_Load( modulePath )",
         "GetRenderAPI( &moduleImport )",
         "moduleExport->Shutdown();",
-        "Sys_DLL_Unload( handle );",
+        "RM_UnloadModuleBinary( handle, completions );",
     ):
         position = probe.find(token)
         if position == -1:

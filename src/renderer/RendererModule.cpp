@@ -5,6 +5,7 @@
 #include "RenderModuleAPI.h"
 #include "RendererModule.h"
 #include "../framework/RenderDoc.h"
+#include "../framework/CVarCompletionSnapshot.h"
 #include "../bse/BSEInterface.h"
 
 /*
@@ -66,6 +67,9 @@ typedef struct rendererModuleState_s {
 	// to the active renderer instance
 	bool					activationAllowed;
 	bool					everBooted;
+	// cvar completion callbacks as they were before the loaded module's
+	// GetRenderAPI registered its static cvars; put back before it unloads
+	idCVarCompletionSnapshot	moduleCompletions;
 } rendererModuleState_t;
 
 static rendererModuleState_t rm_state;
@@ -493,6 +497,23 @@ static bool RM_ExportDeviceReady( const renderExport_t *moduleExport, char *outS
 
 /*
 ====================
+RM_UnloadModuleBinary
+
+Every renderer module unload goes through here. The module's GetRenderAPI
+pointed the value completion of each cvar it declares into the module, the
+ones it shares with the engine and the active renderer included
+(CVarCompletionSnapshot.h), so first put back the callbacks captured when it
+was loaded.
+====================
+*/
+static void RM_UnloadModuleBinary( intptr_t handle, idCVarCompletionSnapshot &completions ) {
+	completions.Restore();
+	completions.Clear();
+	Sys_DLL_Unload( handle );
+}
+
+/*
+====================
 RM_UnloadModule
 ====================
 */
@@ -504,7 +525,7 @@ static void RM_UnloadModule( void ) {
 	rm_state.moduleExportValid = false;
 	memset( &rm_state.moduleExport, 0, sizeof( rm_state.moduleExport ) );
 	if ( rm_state.moduleHandle != 0 ) {
-		Sys_DLL_Unload( rm_state.moduleHandle );
+		RM_UnloadModuleBinary( rm_state.moduleHandle, rm_state.moduleCompletions );
 		rm_state.moduleHandle = 0;
 	}
 }
@@ -543,10 +564,8 @@ static bool RM_TryLoadModuleApi( rendererModuleApi_t api, rendererModuleStatus_t
 
 	if ( !rm_state.activationAllowed ) {
 		// outside the first-boot activation window the engine has already
-		// bound decl/material/font state to the active renderer instance;
-		// don't even load the candidate — its GetRenderAPI would register
-		// module-side static cvars whose completion callbacks dangle after
-		// the unload
+		// bound decl/material/font state to the active renderer instance, so
+		// the candidate could never activate; don't even load it
 		common->Warning( "r_renderApi '%s': renderer modules can only activate at engine startup; restart to apply",
 				R_RendererModule_ApiName( api ) );
 		RM_AppendFallbackReason( status, "renderer module activation requires an engine restart" );
@@ -567,11 +586,13 @@ static bool RM_TryLoadModuleApi( rendererModuleApi_t api, rendererModuleStatus_t
 		RM_AppendFallbackReason( status, "module load failed" );
 		return false;
 	}
+	// kept with the module if it activates, spent by the unload otherwise
+	rm_state.moduleCompletions.Capture();
 
 	GetRenderAPI_t GetRenderAPI = ( GetRenderAPI_t )Sys_DLL_GetProcAddress( handle, RENDER_API_ENTRY_POINT );
 	if ( GetRenderAPI == NULL ) {
 		common->Warning( "renderer module '%s' has no %s entry point", modulePath, RENDER_API_ENTRY_POINT );
-		Sys_DLL_Unload( handle );
+		RM_UnloadModuleBinary( handle, rm_state.moduleCompletions );
 		RM_AppendFallbackReason( status, "missing GetRenderAPI entry point" );
 		return false;
 	}
@@ -591,7 +612,7 @@ static bool RM_TryLoadModuleApi( rendererModuleApi_t api, rendererModuleStatus_t
 		if ( moduleExport != NULL && moduleExport->version == RENDER_API_VERSION && moduleExport->Shutdown != NULL ) {
 			moduleExport->Shutdown();
 		}
-		Sys_DLL_Unload( handle );
+		RM_UnloadModuleBinary( handle, rm_state.moduleCompletions );
 		RM_AppendFallbackReason( status, reason );
 		return false;
 	}
@@ -609,7 +630,7 @@ static bool RM_TryLoadModuleApi( rendererModuleApi_t api, rendererModuleStatus_t
 		if ( moduleExport->Shutdown != NULL ) {
 			moduleExport->Shutdown();
 		}
-		Sys_DLL_Unload( handle );
+		RM_UnloadModuleBinary( handle, rm_state.moduleCompletions );
 		char deviceReason[ 256 ];
 		idStr::snPrintf( deviceReason, sizeof( deviceReason ), "device probe failed: %s", deviceSummary );
 		RM_AppendFallbackReason( status, deviceReason );
@@ -926,6 +947,10 @@ bool R_RendererModule_RunVulkanProbe( bool verbose ) {
 		common->Printf( "rendererVkProbe: module not present or failed to load (build with -Dbuild_renderer_vk=true and stage it next to the executable)\n" );
 		return false;
 	}
+	// the unload puts back every cvar completion GetRenderAPI takes over,
+	// the active renderer's and the game's included
+	idCVarCompletionSnapshot completions;
+	completions.Capture();
 
 	bool probePassed = false;
 	GetRenderAPI_t GetRenderAPI = ( GetRenderAPI_t )Sys_DLL_GetProcAddress( handle, RENDER_API_ENTRY_POINT );
@@ -955,7 +980,7 @@ bool R_RendererModule_RunVulkanProbe( bool verbose ) {
 		}
 	}
 
-	Sys_DLL_Unload( handle );
+	RM_UnloadModuleBinary( handle, completions );
 	return probePassed;
 }
 

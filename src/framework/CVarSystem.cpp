@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "../idlib/PrivateCommand.h"
 #include "RemoteCVarPolicy.h"
+#include "CVarCompletionSnapshot.h"
 
 idCVar * idCVar::staticVars = NULL;
 
@@ -44,6 +45,7 @@ idCVar * idCVar::staticVars = NULL;
 
 class idInternalCVar : public idCVar {
 	friend class idCVarSystemLocal;
+	friend class idCVarCompletionSnapshot;
 public:
 							idInternalCVar( void );
 							idInternalCVar( const char *newName, const char *newValue, int newFlags );
@@ -539,6 +541,8 @@ public:
 	void					SetInternal( const char *name, const char *value, int flags );
 
 private:
+	friend class idCVarCompletionSnapshot;
+
 	bool					initialized;
 	idList<idInternalCVar*>	cvars;
 	idHashIndex				cvarHash;
@@ -1436,4 +1440,86 @@ void idCVarSystemLocal::Restart_f( const idCmdArgs &args ) {
 
 		cvar->Reset();
 	}
+}
+
+/*
+===============================================================================
+
+	idCVarCompletionSnapshot
+
+===============================================================================
+*/
+
+/*
+============
+CVarCompletionSnapshot_Key
+
+Internal cvars live until the cvar system shuts down, and cvar_restart only
+frees the ones no code declared, which never have a completion, so a cvar's
+address identifies it for as long as a snapshot is kept.
+============
+*/
+static int CVarCompletionSnapshot_Key( const idCVar *cvar ) {
+	return static_cast<int>( ( reinterpret_cast<uintptr_t>( cvar ) >> 4 ) & 0x7fffffff );
+}
+
+/*
+============
+idCVarCompletionSnapshot::Capture
+============
+*/
+void idCVarCompletionSnapshot::Capture( void ) {
+	Clear();
+	captured = true;
+	for ( int i = 0; i < localCVarSystem.cvars.Num(); i++ ) {
+		const idInternalCVar *cvar = localCVarSystem.cvars[i];
+		if ( cvar->valueCompletion == NULL ) {
+			continue;
+		}
+		savedCompletion_t entry;
+		entry.cvar = cvar;
+		entry.completion = cvar->valueCompletion;
+		savedHash.Add( CVarCompletionSnapshot_Key( cvar ), saved.Append( entry ) );
+	}
+}
+
+/*
+============
+idCVarCompletionSnapshot::Restore
+
+Reads the callback pointers without calling them, so it is safe after the
+binary they point into is gone.
+============
+*/
+int idCVarCompletionSnapshot::Restore( void ) const {
+	if ( !captured ) {
+		return 0;
+	}
+	int numChanged = 0;
+	for ( int i = 0; i < localCVarSystem.cvars.Num(); i++ ) {
+		idInternalCVar *cvar = localCVarSystem.cvars[i];
+		argCompletion_t completion = NULL;
+		for ( int j = savedHash.First( CVarCompletionSnapshot_Key( cvar ) ); j != -1; j = savedHash.Next( j ) ) {
+			if ( saved[j].cvar == cvar ) {
+				completion = saved[j].completion;
+				break;
+			}
+		}
+		if ( cvar->valueCompletion != completion ) {
+			cvar->valueCompletion = completion;
+			numChanged++;
+		}
+	}
+	return numChanged;
+}
+
+/*
+============
+idCVarCompletionSnapshot::Clear
+============
+*/
+void idCVarCompletionSnapshot::Clear( void ) {
+	saved.Clear();
+	savedHash.Free();
+	captured = false;
 }

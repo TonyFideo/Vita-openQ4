@@ -249,6 +249,7 @@ jobs:
             tools/tests/renderer_classic_fog_blend_domain.py \
             tools/tests/renderer_classic_subview_domain.py \
             tools/tests/renderer_classic_deform_domain.py \
+            tools/tests/renderer_module_completion_safety.py \
             tools/tests/renderer_msaa_cvar_safety.py \
             tools/tests/renderer_picmip_policy.py \
             tools/tests/renderer_texture_filter.py \
@@ -429,6 +430,7 @@ jobs:
           python tools/tests/renderer_classic_fog_blend_domain.py
           python tools/tests/renderer_classic_subview_domain.py
           python tools/tests/renderer_classic_deform_domain.py
+          python tools/tests/renderer_module_completion_safety.py
           python tools/tests/renderer_msaa_cvar_safety.py
           python tools/tests/renderer_picmip_policy.py
           python tools/tests/renderer_texture_filter.py
