@@ -139,6 +139,7 @@ idRenderWorldLocal::idRenderWorldLocal() {
 
 	lightGridAvailabilityFrame = -1;
 	anyLightGridAvailable = false;
+	lightGridPackFile = NULL;
 
 	doublePortals = NULL;
 	numInterAreaPortals = 0;

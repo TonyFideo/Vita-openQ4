@@ -53,6 +53,7 @@ openQ4's current light-grid path:
 - relocates probes away from solid or near-solid map space where possible, then uses those relocated positions at runtime
 - blends indirect light between adjacent visible portal areas near doorway/window boundaries
 - streams packed light-grid atlases for visible areas and their portal neighbors on demand, avoiding large up-front map-load stalls and VRAM spikes
+- reads the map's `.lightgridpack` into memory once while the map loads, so an area that streams in costs only its own atlas upload; that copy is dropped as soon as every atlas is resident, unless `r_lightGridResidencyFrames` may still purge some
 - draws one material-selected representative diffuse stage for the indirect pass, avoiding repeated light-grid redraws on multi-diffuse materials
 - lights eligible first-person weapon/viewmodel surfaces from the active view area's light grid through a dedicated weapon pass
 

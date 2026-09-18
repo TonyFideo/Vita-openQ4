@@ -2245,6 +2245,7 @@ static bool LightGrid_AssignPackChunk( idRenderWorldLocal *world, const char *pa
 
 bool idRenderWorldLocal::LoadLightGridPackFile( const char *name ) {
 	const int start = Sys_Milliseconds();
+	ReleaseLightGridPack();
 	idFile *file = fileSystem->OpenFileRead( name );
 	if ( file == NULL ) {
 		return false;
@@ -2313,7 +2314,118 @@ bool idRenderWorldLocal::LoadLightGridPackFile( const char *name ) {
 	return assignedChunks > 0;
 }
 
-static lightGridPackedImageLoadResult_t LightGrid_LoadPackedImageRef( const lightGridPackedImageRef_t &ref, idImage *image, textureUsage_t usage ) {
+/*
+===================
+LightGrid_ReadPackIntoMemory
+
+A pk4 stores a .lightgridpack deflated, and seeking inside a deflated entry
+means inflating it from its first byte, so reading chunks straight from the
+pk4 costs each chunk its offset in the pack.  One sequential read into memory
+makes every chunk load proportional to its own size.
+===================
+*/
+static idFile *LightGrid_ReadPackIntoMemory( const char *name ) {
+	idFile *source = fileSystem->OpenFileRead( name );
+	if ( source == NULL ) {
+		return NULL;
+	}
+
+	const int length = source->Length();
+	byte *bytes = length > 0 ? static_cast<byte *>( Mem_Alloc( length ) ) : NULL;
+	const bool read = bytes != NULL && source->Read( bytes, length ) == length;
+	fileSystem->CloseFile( source );
+
+	idFile *pack = read ? fileSystem->GetNewFileMemory() : NULL;
+	if ( pack != NULL && pack->Write( bytes, length ) != length ) {
+		fileSystem->CloseFile( pack );
+		pack = NULL;
+	}
+	if ( bytes != NULL ) {
+		Mem_Free( bytes );
+	}
+	if ( pack != NULL ) {
+		pack->MakeReadOnly();
+	}
+	return pack;
+}
+
+static bool LightGrid_PackedImageIsResident( const lightGridPackedImageRef_t &ref, const idImage *image ) {
+	return !LightGrid_PackedImageRefIsValid( ref ) || ( image != NULL && image->IsLoaded() && !image->IsDefaulted() );
+}
+
+static bool LightGrid_PackedImagesAreResident( const LightGrid &lightGrid ) {
+	return LightGrid_PackedImageIsResident( lightGrid.packedIrradianceImage, lightGrid.irradianceImage ) &&
+		LightGrid_PackedImageIsResident( lightGrid.packedVisibilityImage, lightGrid.visibilityImage ) &&
+		LightGrid_PackedImageIsResident( lightGrid.packedProbeImage, lightGrid.probeImage );
+}
+
+/*
+===================
+idRenderWorldLocal::AcquireLightGridPack
+
+Returns the named pack from memory, reading it on first use.  A pack that
+fails to read is not retried until the next map load, because every surface
+drawn from an unloaded area would otherwise read it again each frame.
+===================
+*/
+idFile *idRenderWorldLocal::AcquireLightGridPack( const char *name ) {
+	if ( name == NULL || name[0] == '\0' ) {
+		return NULL;
+	}
+	if ( lightGridPackFileName.Icmp( name ) == 0 ) {
+		return lightGridPackFile;
+	}
+
+	ReleaseLightGridPack();
+	const int start = Sys_Milliseconds();
+	lightGridPackFile = LightGrid_ReadPackIntoMemory( name );
+	lightGridPackFileName = name;
+	if ( lightGridPackFile == NULL ) {
+		common->Warning( "LightGrid pack: failed to read %s", name );
+		return NULL;
+	}
+
+	common->DPrintf(
+		"LightGrid pack %s read into memory: %.2f MiB in %.3fs\n",
+		name,
+		lightGridPackFile->Length() / ( 1024.0f * 1024.0f ),
+		( Sys_Milliseconds() - start ) * 0.001f );
+	return lightGridPackFile;
+}
+
+void idRenderWorldLocal::ReleaseLightGridPack() {
+	if ( lightGridPackFile != NULL && fileSystem != NULL ) {
+		fileSystem->CloseFile( lightGridPackFile );
+	}
+	lightGridPackFile = NULL;
+	lightGridPackFileName.Clear();
+}
+
+/*
+===================
+idRenderWorldLocal::TrimLightGridPack
+
+Drops the in-memory pack once nothing can stream from it: every usable area's
+atlases are resident and runtime purging is off.  A later purge or image
+reload reads the pack again on demand.
+===================
+*/
+void idRenderWorldLocal::TrimLightGridPack() {
+	if ( lightGridPackFile == NULL || r_lightGridResidencyFrames.GetInteger() > 0 ) {
+		return;
+	}
+	for ( int i = 0; i < numPortalAreas; i++ ) {
+		const LightGrid &lightGrid = portalAreas[i].lightGrid;
+		if ( lightGrid.IsUsable() && !LightGrid_PackedImagesAreResident( lightGrid ) ) {
+			return;
+		}
+	}
+
+	common->DPrintf( "LightGrid pack %s released: every atlas is resident\n", lightGridPackFileName.c_str() );
+	ReleaseLightGridPack();
+}
+
+static lightGridPackedImageLoadResult_t LightGrid_LoadPackedImageRef( idRenderWorldLocal *world, const lightGridPackedImageRef_t &ref, idImage *image, textureUsage_t usage ) {
 	(void)usage;
 	if ( !LightGrid_PackedImageRefIsValid( ref ) || image == NULL ) {
 		return LIGHTGRID_PACKED_IMAGE_LOAD_FAILED;
@@ -2322,12 +2434,8 @@ static lightGridPackedImageLoadResult_t LightGrid_LoadPackedImageRef( const ligh
 		return LIGHTGRID_PACKED_IMAGE_LOAD_ALREADY_RESIDENT;
 	}
 
-	idFile *file = fileSystem->OpenFileRead( ref.packFileName.c_str() );
-	if ( file == NULL ) {
-		return LIGHTGRID_PACKED_IMAGE_LOAD_FAILED;
-	}
-	if ( file->Seek( ref.dataOffset, FS_SEEK_SET ) != 0 ) {
-		fileSystem->CloseFile( file );
+	idFile *file = world->AcquireLightGridPack( ref.packFileName.c_str() );
+	if ( file == NULL || file->Seek( ref.dataOffset, FS_SEEK_SET ) != 0 ) {
 		return LIGHTGRID_PACKED_IMAGE_LOAD_FAILED;
 	}
 
@@ -2335,7 +2443,6 @@ static lightGridPackedImageLoadResult_t LightGrid_LoadPackedImageRef( const ligh
 	const int chunkStart = file->Tell();
 	const bool readPayload = packedImage.LoadFromFile( file, ref.dataBytes );
 	const int chunkEnd = file->Tell();
-	fileSystem->CloseFile( file );
 	if ( !readPayload || chunkEnd - chunkStart != ref.dataBytes ) {
 		common->Warning( "LightGrid pack: failed to read %s from %s", image->GetName(), ref.packFileName.c_str() );
 		return LIGHTGRID_PACKED_IMAGE_LOAD_FAILED;
@@ -2387,11 +2494,11 @@ bool idRenderWorldLocal::EnsureLightGridAreaImages( int areaIndex ) {
 
 	if ( LightGrid_PackedImageRefIsValid( lightGrid.packedIrradianceImage ) ) {
 		const lightGridPackedImageLoadResult_t irradianceLoad =
-			LightGrid_LoadPackedImageRef( lightGrid.packedIrradianceImage, lightGrid.irradianceImage, TD_LIGHTGRID );
+			LightGrid_LoadPackedImageRef( this, lightGrid.packedIrradianceImage, lightGrid.irradianceImage, TD_LIGHTGRID );
 		const lightGridPackedImageLoadResult_t visibilityLoad =
-			LightGrid_LoadPackedImageRef( lightGrid.packedVisibilityImage, lightGrid.visibilityImage, TD_LIGHTGRID_VISIBILITY );
+			LightGrid_LoadPackedImageRef( this, lightGrid.packedVisibilityImage, lightGrid.visibilityImage, TD_LIGHTGRID_VISIBILITY );
 		const lightGridPackedImageLoadResult_t probeLoad =
-			LightGrid_LoadPackedImageRef( lightGrid.packedProbeImage, lightGrid.probeImage, TD_LIGHTGRID_PROBE );
+			LightGrid_LoadPackedImageRef( this, lightGrid.packedProbeImage, lightGrid.probeImage, TD_LIGHTGRID_PROBE );
 		materializedPackedImage = irradianceLoad == LIGHTGRID_PACKED_IMAGE_LOAD_MATERIALIZED ||
 			visibilityLoad == LIGHTGRID_PACKED_IMAGE_LOAD_MATERIALIZED ||
 			probeLoad == LIGHTGRID_PACKED_IMAGE_LOAD_MATERIALIZED;
@@ -2412,6 +2519,9 @@ bool idRenderWorldLocal::EnsureLightGridAreaImages( int areaIndex ) {
 			"LightGrid pack: materialized area %i images in %.3fs\n",
 			areaIndex,
 			( Sys_Milliseconds() - start ) * 0.001f );
+	}
+	if ( materializedPackedImage ) {
+		TrimLightGridPack();
 	}
 
 	return lightGrid.irradianceImage != NULL && lightGrid.irradianceImage->IsLoaded() && !lightGrid.irradianceImage->IsDefaulted();
@@ -2774,6 +2884,8 @@ bool idRenderWorldLocal::AnyLightGridAvailable() {
 
 void idRenderWorldLocal::LoadLightGridImages( bool forceReloadLoaded ) {
 	const int loadStart = Sys_Milliseconds();
+	// loose atlases replace the pack, and a bake may just have rewritten it
+	ReleaseLightGridPack();
 	idStr baseName = mapName;
 	baseName.StripFileExtension();
 	int handleCount = 0;
@@ -2827,11 +2939,39 @@ void idRenderWorldLocal::LoadLightGridImages( bool forceReloadLoaded ) {
 	common->DPrintf( "LightGrid image handles for %s: %i deferred handles in %.3fs\n", mapName.c_str(), handleCount, ( Sys_Milliseconds() - loadStart ) * 0.001f );
 }
 
+/*
+===================
+LightGrid_BackendStreamsAtlases
+
+The GL backend streams an area's atlases the first time the area is drawn.
+The Vulkan backend has no light-grid pass, so holding a pack for it would
+only cost memory.
+===================
+*/
+static bool LightGrid_BackendStreamsAtlases() {
+#if defined( OPENQ4_RENDERER_VK_MODULE )
+	return false;
+#else
+	return r_useLightGrid.GetBool();
+#endif
+}
+
 void idRenderWorldLocal::PreloadLightGridImages() {
 	if ( !tr.IsOpenGLRunning() ) {
 		return;
 	}
 	if ( !r_lightGridPreload.GetBool() ) {
+		// read the pack while the map loads, so the first area to stream in
+		// does not also pay for reading it
+		if ( LightGrid_BackendStreamsAtlases() ) {
+			for ( int i = 0; i < numPortalAreas; i++ ) {
+				const LightGrid &lightGrid = portalAreas[i].lightGrid;
+				if ( lightGrid.IsUsable() && !LightGrid_PackedImagesAreResident( lightGrid ) ) {
+					AcquireLightGridPack( lightGrid.packedIrradianceImage.packFileName );
+					break;
+				}
+			}
+		}
 		common->DPrintf(
 			"LightGrid deferred atlas residency for %s; visible areas will stream on first use.\n",
 			mapName.c_str() );

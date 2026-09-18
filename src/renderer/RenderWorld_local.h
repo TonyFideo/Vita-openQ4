@@ -239,6 +239,8 @@ public:
 
 	int						lightGridAvailabilityFrame;	// tr.frameCount the latch below was evaluated for
 	bool					anyLightGridAvailable;		// any portal area has a usable light grid
+	idFile *				lightGridPackFile;			// whole .lightgridpack in memory while atlases can still stream from it
+	idStr					lightGridPackFileName;		// pack held (or that failed to read) in lightGridPackFile
 
 	idScreenRect *			areaScreenRect;
 
@@ -303,6 +305,9 @@ public:
 	void					LoadLightGridImages( bool forceReloadLoaded = false );
 	void					PreloadLightGridImages();
 	bool					EnsureLightGridAreaImages( int areaIndex );
+	idFile *				AcquireLightGridPack( const char *name );
+	void					ReleaseLightGridPack();
+	void					TrimLightGridPack();
 	bool					AnyLightGridAvailable();
 	bool					LoadLightGridFile( const char *name );
 	bool					LoadLightGridPackFile( const char *name );
