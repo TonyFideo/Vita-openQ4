@@ -74,10 +74,20 @@ static void DrawScissorProbe( int x, int y, float r, float g, float b ) {
 bool VitaRendererSmoke_Init( void ) {
 	RendererLog( "renderer.stage=vitagl-init-begin" );
 
-	// Start with a conservative 8 MiB VitaGL pool. The full engine renderer can
-	// move to custom pools/thresholds once geometry and texture residency are
-	// integrated.
-	vglInit( 8 * 1024 * 1024 );
+	// Keep the first renderer bring-up deliberately minimal: no legacy immediate
+	// pool reservation and no MSAA. This avoids exercising extra GXM resources
+	// before we know the base context/present path is stable on hardware/Vita3K.
+	const GLboolean vglReady = vglInitExtended(
+		0,
+		960,
+		544,
+		8 * 1024 * 1024,
+		SCE_GXM_MULTISAMPLE_NONE );
+	if ( vglReady != GL_TRUE ) {
+		RendererLog( "renderer.stage=vitagl-init-returned-false" );
+		return false;
+	}
+	RendererLog( "renderer.stage=vitagl-context-created" );
 
 	glViewport( 0, 0, 960, 544 );
 	glDisable( GL_DEPTH_TEST );
@@ -92,7 +102,7 @@ bool VitaRendererSmoke_Init( void ) {
 	glLoadIdentity();
 
 	glClearColor( 0.015f, 0.020f, 0.040f, 1.0f );
-	glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT );
+	glClear( GL_COLOR_BUFFER_BIT );
 
 	if ( !CheckGl( "init" ) ) {
 		RendererLog( "renderer.stage=vitagl-init-failed" );
@@ -117,7 +127,7 @@ void VitaRendererSmoke_Run( void ) {
 		glViewport( 0, 0, 960, 544 );
 		glDisable( GL_SCISSOR_TEST );
 		glClearColor( 0.015f, 0.020f, 0.040f, 1.0f );
-		glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT );
+		glClear( GL_COLOR_BUFFER_BIT );
 
 		glMatrixMode( GL_MODELVIEW );
 		glLoadIdentity();
