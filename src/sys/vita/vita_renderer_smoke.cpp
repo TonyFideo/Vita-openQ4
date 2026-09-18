@@ -4,19 +4,27 @@
 
 #include <psp2/kernel/clib.h>
 #include <psp2/io/fcntl.h>
-#include <psp2/kernel/threadmgr/thread.h>
 
 #include <stdint.h>
 
 namespace {
 
 const char *kRendererLog = "ux0:data/Vita-OpenQ4/logs/prerender.log";
+
 uint64_t rendererFrame = 0;
+GLuint smokeProgram = 0;
+GLuint smokePositionBuffer = 0;
+GLuint smokeColorBuffer = 0;
 
 static void RendererLog( const char *text ) {
 	if ( text == NULL ) {
 		return;
 	}
+
+	// Mirror renderer checkpoints to stdout so Vita3K logs contain the actual
+	// stage names instead of only sceIoWrite sizes.
+	sceClibPrintf( "[VOQ4][renderer] %s\n", text );
+
 	SceUID fd = sceIoOpen( kRendererLog, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND, 0666 );
 	if ( fd < 0 ) {
 		return;
@@ -34,6 +42,7 @@ static bool CheckGl( const char *stage ) {
 	if ( error == GL_NO_ERROR ) {
 		return true;
 	}
+
 	char line[160];
 	sceClibSnprintf(
 		line,
@@ -45,20 +54,176 @@ static bool CheckGl( const char *stage ) {
 	return false;
 }
 
-static void DrawMovingQuad( float offset ) {
-	glBegin( GL_QUADS );
-		glColor3f( 0.10f, 0.45f, 1.00f );
-		glVertex3f( 260.0f + offset, 170.0f, 0.0f );
+static bool CheckShader( GLuint shader, const char *name ) {
+	GLint status = GL_FALSE;
+	glGetShaderiv( shader, GL_COMPILE_STATUS, &status );
 
-		glColor3f( 0.10f, 1.00f, 0.45f );
-		glVertex3f( 700.0f + offset, 170.0f, 0.0f );
+	if ( status == GL_TRUE ) {
+		char line[160];
+		sceClibSnprintf(
+			line,
+			sizeof( line ),
+			"renderer.shader.%s=compiled",
+			name != NULL ? name : "unknown" );
+		RendererLog( line );
+		return true;
+	}
 
-		glColor3f( 1.00f, 0.85f, 0.10f );
-		glVertex3f( 700.0f + offset, 374.0f, 0.0f );
+	char line[160];
+	sceClibSnprintf(
+		line,
+		sizeof( line ),
+		"renderer.shader.%s=compile-failed",
+		name != NULL ? name : "unknown" );
+	RendererLog( line );
 
-		glColor3f( 0.95f, 0.15f, 0.55f );
-		glVertex3f( 260.0f + offset, 374.0f, 0.0f );
-	glEnd();
+	GLchar infoLog[512] = {};
+	GLsizei infoLength = 0;
+	glGetShaderInfoLog( shader, sizeof( infoLog ) - 1, &infoLength, infoLog );
+	if ( infoLength > 0 ) {
+		infoLog[sizeof( infoLog ) - 1] = '\0';
+		RendererLog( infoLog );
+	}
+	return false;
+}
+
+static bool CheckProgram( GLuint program ) {
+	GLint status = GL_FALSE;
+	glGetProgramiv( program, GL_LINK_STATUS, &status );
+	if ( status == GL_TRUE ) {
+		RendererLog( "renderer.program=linked" );
+		return true;
+	}
+
+	RendererLog( "renderer.program=link-failed" );
+	GLchar infoLog[512] = {};
+	GLsizei infoLength = 0;
+	glGetProgramInfoLog( program, sizeof( infoLog ) - 1, &infoLength, infoLog );
+	if ( infoLength > 0 ) {
+		infoLog[sizeof( infoLog ) - 1] = '\0';
+		RendererLog( infoLog );
+	}
+	return false;
+}
+
+static bool CreateSmokeProgram( void ) {
+	RendererLog( "renderer.stage=shader-create-begin" );
+
+	static const GLchar *vertexSource =
+		"float4 out vColor : TEXCOORD0; "
+		"float4 out gl_Position : POSITION; "
+		"void main(float2 VertexPosition, float4 VertexColor) { "
+		"    vColor = VertexColor; "
+		"    gl_Position = float4(VertexPosition, 0.0, 1.0); "
+		"}";
+
+	static const GLchar *fragmentSource =
+		"float4 in vColor : TEXCOORD0; "
+		"float4 main() : COLOR { "
+		"    return vColor; "
+		"}";
+
+	const GLuint vertexShader = glCreateShader( GL_CG_VERTEX_SHADER_EXT );
+	const GLuint fragmentShader = glCreateShader( GL_CG_FRAGMENT_SHADER_EXT );
+	if ( vertexShader == 0 || fragmentShader == 0 ) {
+		RendererLog( "renderer.stage=shader-handle-failed" );
+		return false;
+	}
+
+	glShaderSource( vertexShader, 1, &vertexSource, NULL );
+	glCompileShader( vertexShader );
+	if ( !CheckShader( vertexShader, "vertex" ) ) {
+		return false;
+	}
+
+	glShaderSource( fragmentShader, 1, &fragmentSource, NULL );
+	glCompileShader( fragmentShader );
+	if ( !CheckShader( fragmentShader, "fragment" ) ) {
+		return false;
+	}
+
+	smokeProgram = glCreateProgram();
+	if ( smokeProgram == 0 ) {
+		RendererLog( "renderer.stage=program-handle-failed" );
+		return false;
+	}
+
+	glAttachShader( smokeProgram, vertexShader );
+	glAttachShader( smokeProgram, fragmentShader );
+	glBindAttribLocation( smokeProgram, 0, "VertexPosition" );
+	glBindAttribLocation( smokeProgram, 1, "VertexColor" );
+	glLinkProgram( smokeProgram );
+	if ( !CheckProgram( smokeProgram ) ) {
+		return false;
+	}
+
+	glUseProgram( smokeProgram );
+	glDeleteShader( vertexShader );
+	glDeleteShader( fragmentShader );
+
+	RendererLog( "renderer.stage=shader-create-ok" );
+	return CheckGl( "shader-create" );
+}
+
+static bool CreateSmokeGeometry( void ) {
+	RendererLog( "renderer.stage=geometry-create-begin" );
+
+	// Two triangles in normalized device coordinates. This deliberately follows
+	// the VBO + vertex-attrib path used by the GLES_D3 renderer instead of
+	// VitaGL's legacy immediate mode.
+	static const GLfloat positions[] = {
+		-0.62f, -0.48f,
+		 0.62f, -0.48f,
+		 0.62f,  0.48f,
+		-0.62f, -0.48f,
+		 0.62f,  0.48f,
+		-0.62f,  0.48f
+	};
+
+	static const GLfloat colors[] = {
+		0.10f, 0.45f, 1.00f, 1.00f,
+		0.10f, 1.00f, 0.45f, 1.00f,
+		1.00f, 0.85f, 0.10f, 1.00f,
+		0.10f, 0.45f, 1.00f, 1.00f,
+		1.00f, 0.85f, 0.10f, 1.00f,
+		0.95f, 0.15f, 0.55f, 1.00f
+	};
+
+	glGenBuffers( 1, &smokePositionBuffer );
+	glBindBuffer( GL_ARRAY_BUFFER, smokePositionBuffer );
+	glBufferData( GL_ARRAY_BUFFER, sizeof( positions ), positions, GL_STATIC_DRAW );
+
+	glGenBuffers( 1, &smokeColorBuffer );
+	glBindBuffer( GL_ARRAY_BUFFER, smokeColorBuffer );
+	glBufferData( GL_ARRAY_BUFFER, sizeof( colors ), colors, GL_STATIC_DRAW );
+
+	glBindBuffer( GL_ARRAY_BUFFER, 0 );
+
+	if ( smokePositionBuffer == 0 || smokeColorBuffer == 0 ) {
+		RendererLog( "renderer.stage=geometry-buffer-failed" );
+		return false;
+	}
+
+	RendererLog( "renderer.stage=geometry-create-ok" );
+	return CheckGl( "geometry-create" );
+}
+
+static void DrawSmokeGeometry( void ) {
+	glUseProgram( smokeProgram );
+
+	glEnableVertexAttribArray( 0 );
+	glBindBuffer( GL_ARRAY_BUFFER, smokePositionBuffer );
+	glVertexAttribPointer( 0, 2, GL_FLOAT, GL_FALSE, 0, reinterpret_cast<const GLvoid *>( 0 ) );
+
+	glEnableVertexAttribArray( 1 );
+	glBindBuffer( GL_ARRAY_BUFFER, smokeColorBuffer );
+	glVertexAttribPointer( 1, 4, GL_FLOAT, GL_FALSE, 0, reinterpret_cast<const GLvoid *>( 0 ) );
+
+	glDrawArrays( GL_TRIANGLES, 0, 6 );
+
+	glDisableVertexAttribArray( 0 );
+	glDisableVertexAttribArray( 1 );
+	glBindBuffer( GL_ARRAY_BUFFER, 0 );
 }
 
 static void DrawScissorProbe( int x, int y, float r, float g, float b ) {
@@ -74,44 +239,55 @@ static void DrawScissorProbe( int x, int y, float r, float g, float b ) {
 bool VitaRendererSmoke_Init( void ) {
 	RendererLog( "renderer.stage=vitagl-init-begin" );
 
-	// Keep the first renderer bring-up deliberately minimal: no legacy immediate
-	// pool reservation and no MSAA. This avoids exercising extra GXM resources
-	// before we know the base context/present path is stable on hardware/Vita3K.
-	const GLboolean vglReady = vglInitExtended(
+	// vitaGL's return value here reports whether the requested resolution had to
+	// fall back. GL_FALSE means the requested size was accepted; it is not an
+	// initialization failure.
+	const GLboolean resolutionFallback = vglInitExtended(
 		0,
 		960,
 		544,
 		8 * 1024 * 1024,
 		SCE_GXM_MULTISAMPLE_NONE );
-	if ( vglReady != GL_TRUE ) {
-		RendererLog( "renderer.stage=vitagl-init-returned-false" );
-		return false;
-	}
+
+	RendererLog(
+		resolutionFallback == GL_TRUE
+			? "renderer.vitagl.resolution_fallback=1"
+			: "renderer.vitagl.resolution_fallback=0" );
 	RendererLog( "renderer.stage=vitagl-context-created" );
+
+	vglWaitVblankStart( GL_TRUE );
 
 	glViewport( 0, 0, 960, 544 );
 	glDisable( GL_DEPTH_TEST );
 	glDisable( GL_STENCIL_TEST );
 	glDisable( GL_CULL_FACE );
 	glDisable( GL_BLEND );
+	glDisable( GL_SCISSOR_TEST );
 
-	glMatrixMode( GL_PROJECTION );
-	glLoadIdentity();
-	glOrtho( 0.0, 960.0, 544.0, 0.0, -1.0, 1.0 );
-	glMatrixMode( GL_MODELVIEW );
-	glLoadIdentity();
-
-	glClearColor( 0.015f, 0.020f, 0.040f, 1.0f );
+	// First prove that a plain display clear can be presented before touching
+	// shader compilation or geometry.
+	glClearColor( 0.035f, 0.070f, 0.150f, 1.0f );
 	glClear( GL_COLOR_BUFFER_BIT );
-
-	if ( !CheckGl( "init" ) ) {
-		RendererLog( "renderer.stage=vitagl-init-failed" );
+	if ( !CheckGl( "baseline-clear" ) ) {
+		RendererLog( "renderer.stage=baseline-clear-failed" );
 		return false;
 	}
 
 	vglSwapBuffers( GL_FALSE );
+	RendererLog( "renderer.stage=baseline-presented" );
+
+	if ( !CreateSmokeProgram() ) {
+		RendererLog( "renderer.stage=shader-create-failed" );
+		return false;
+	}
+
+	if ( !CreateSmokeGeometry() ) {
+		RendererLog( "renderer.stage=geometry-create-failed" );
+		return false;
+	}
+
 	RendererLog( "renderer.stage=vitagl-init-ok" );
-	RendererLog( "renderer.test=immediate-quad+scissor+swap" );
+	RendererLog( "renderer.test=vbo+shader+scissor+swap" );
 	return true;
 }
 
@@ -119,22 +295,15 @@ void VitaRendererSmoke_Run( void ) {
 	RendererLog( "renderer.stage=frame-loop-enter" );
 
 	for ( ;; ) {
-		const int phase = static_cast<int>( rendererFrame % 240ULL );
-		const float triangular =
-			phase < 120 ? static_cast<float>( phase ) : static_cast<float>( 240 - phase );
-		const float offset = ( triangular - 60.0f ) * 0.45f;
-
 		glViewport( 0, 0, 960, 544 );
 		glDisable( GL_SCISSOR_TEST );
 		glClearColor( 0.015f, 0.020f, 0.040f, 1.0f );
 		glClear( GL_COLOR_BUFFER_BIT );
 
-		glMatrixMode( GL_MODELVIEW );
-		glLoadIdentity();
-		DrawMovingQuad( offset );
+		DrawSmokeGeometry();
 
-		// Four small clears validate scissor coordinates independently from the
-		// immediate-mode geometry path.
+		// Independent clear probes make viewport/scissor failures visible even if
+		// the shader path later needs additional work.
 		DrawScissorProbe( 16, 16, 0.85f, 0.10f, 0.10f );
 		DrawScissorProbe( 896, 16, 0.10f, 0.85f, 0.10f );
 		DrawScissorProbe( 16, 480, 0.10f, 0.25f, 0.95f );
