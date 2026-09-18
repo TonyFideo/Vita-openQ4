@@ -122,10 +122,41 @@ target_compile_options(openq4_vita_system_probe PRIVATE
 )
 
 target_compile_features(openq4_vita_system_probe PRIVATE cxx_std_20)
+
+add_library(openq4_vita_prerender_platform_probe STATIC
+  ${OPENQ4_ROOT}/src/sys/vita/vita_files.cpp
+  ${OPENQ4_ROOT}/src/sys/vita/vita_events.cpp
+  ${OPENQ4_ROOT}/src/sys/vita/vita_network.cpp
+  ${OPENQ4_ROOT}/src/sys/vita/vita_misc.cpp
+)
+
+target_include_directories(openq4_vita_prerender_platform_probe PRIVATE
+  ${CMAKE_CURRENT_BINARY_DIR}
+  ${OPENQ4_ROOT}
+  ${OPENQ4_ROOT}/src
+  ${OPENQ4_ROOT}/.tmp/gamelibs_stage/src/game
+  ${OPENQ4_ROOT}/.tmp/gamelibs_stage/src/mpgame
+)
+
+target_compile_options(openq4_vita_prerender_platform_probe PRIVATE
+  -fsigned-char
+  -DVITA=1
+  -D__DOOM_DLL__
+  -DUSE_OPENAL
+  -DGLEW_NO_GLU
+  -DID_GL_HARDLINK
+  -fno-strict-aliasing
+  -ffp-contract=off
+)
+
+target_compile_features(openq4_vita_prerender_platform_probe PRIVATE cxx_std_20)
 add_executable(openq4_vita_prerender
   ${OPENQ4_ROOT}/src/sys/vita/vita_bootstrap.cpp
   ${OPENQ4_ROOT}/src/sys/vita/vita_system.cpp
   ${OPENQ4_ROOT}/src/sys/vita/vita_threads.cpp
+  ${OPENQ4_ROOT}/src/sys/vita/vita_events.cpp
+  ${OPENQ4_ROOT}/src/sys/vita/vita_network.cpp
+  ${OPENQ4_ROOT}/src/sys/vita/vita_misc.cpp
 )
 
 target_include_directories(openq4_vita_prerender PRIVATE

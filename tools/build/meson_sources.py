@@ -217,6 +217,10 @@ LINUX_PLATFORM_SOURCES = (
 VITA_PLATFORM_SOURCES = (
     "sys/vita/vita_system.cpp",
     "sys/vita/vita_threads.cpp",
+    "sys/vita/vita_files.cpp",
+    "sys/vita/vita_events.cpp",
+    "sys/vita/vita_network.cpp",
+    "sys/vita/vita_misc.cpp",
 )
 
 DARWIN_PLATFORM_SOURCES = (

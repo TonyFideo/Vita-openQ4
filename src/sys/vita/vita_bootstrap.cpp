@@ -40,12 +40,14 @@ int main( int argc, char **argv ) {
 	(void)argv;
 
 	Sys_Init();
+	Sys_InitNetworking();
 	Vita_WriteLogLine( "Vita-OpenQ4 pre-render bootstrap" );
 	Vita_WriteLogLine( "stage=sys-init-ok" );
 	Vita_WriteLogLine( BUILD_STRING );
 
 	Vita_WriteFormatted( "system_ram_mb=", Sys_GetSystemRam() );
 	Vita_WriteFormatted( "video_ram_mb=", Sys_GetVideoRam() );
+	Vita_WriteFormatted( "drive_free_mb=", Sys_GetDriveFreeSpace( Sys_DefaultSavePath() ) );
 
 	uint8_t randomBytes[16] = {};
 	if ( !Sys_GetSecureRandomBytes( randomBytes, sizeof( randomBytes ) ) ) {
@@ -70,11 +72,13 @@ int main( int argc, char **argv ) {
 	Sys_EnterCriticalSection();
 	Sys_LeaveCriticalSection();
 	Vita_WriteLogLine( "stage=threading-ok" );
+	Vita_WriteLogLine( "stage=network-api-ok-sp-stub" );
 
 	Vita_WriteLogLine( "stage=filesystem-ok" );
 	Vita_WriteLogLine( "stage=pre-render-ready" );
 	Vita_WriteLogLine( "next=renderer-bring-up" );
 
+	Sys_ShutdownNetworking();
 	Sys_Shutdown();
 	sceKernelExitProcess( 0 );
 	return 0;
