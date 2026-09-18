@@ -290,7 +290,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--host-system",
-        choices=("windows", "linux", "darwin"),
+        choices=("windows", "linux", "darwin", "vita"),
         default="windows",
         help="Meson host system for source selection.",
     )
@@ -449,6 +449,12 @@ def main(argv: list[str]) -> int:
             )
             for rel_path in platform_sources:
                 add_required_source(source_set, ordered_sources, source_root, rel_path)
+        elif args.host_system == "vita":
+            # Vita source selection is intentionally empty during the first
+            # bring-up stage. The generic engine list is still validated, while
+            # a dedicated sys/vita backend is introduced incrementally.
+            if args.platform_backend != "native":
+                raise SourceListError("Vita source discovery currently requires platform_backend=native")
         else:
             print(f"Unsupported host system: {args.host_system}", file=sys.stderr)
             return 1
