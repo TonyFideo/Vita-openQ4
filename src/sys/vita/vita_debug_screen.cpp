@@ -81,6 +81,8 @@ static const VitaGlyph kGlyphs[] = {
 
 static SceUID vitaDisplayBlock = -1;
 static uint32_t *vitaFrameBuffer = NULL;
+static SceDisplayFrameBuf vitaDisplayFrame;
+static bool vitaDisplayFrameValid = false;
 static int vitaCursorY = VITA_MARGIN_Y;
 
 static const uint8_t *Vita_FindGlyph( char character ) {
@@ -182,21 +184,21 @@ bool VitaDiagScreen_Init( void ) {
 
 	VitaDiagScreen_Clear();
 
-	SceDisplayFrameBuf frame;
-	memset( &frame, 0, sizeof( frame ) );
-	frame.size = sizeof( frame );
-	frame.base = vitaFrameBuffer;
-	frame.pitch = VITA_SCREEN_PITCH;
-	frame.pixelformat = SCE_DISPLAY_PIXELFORMAT_A8B8G8R8;
-	frame.width = VITA_SCREEN_WIDTH;
-	frame.height = VITA_SCREEN_HEIGHT;
+	memset( &vitaDisplayFrame, 0, sizeof( vitaDisplayFrame ) );
+	vitaDisplayFrame.size = sizeof( vitaDisplayFrame );
+	vitaDisplayFrame.base = vitaFrameBuffer;
+	vitaDisplayFrame.pitch = VITA_SCREEN_PITCH;
+	vitaDisplayFrame.pixelformat = SCE_DISPLAY_PIXELFORMAT_A8B8G8R8;
+	vitaDisplayFrame.width = VITA_SCREEN_WIDTH;
+	vitaDisplayFrame.height = VITA_SCREEN_HEIGHT;
 
-	if ( sceDisplaySetFrameBuf( &frame, SCE_DISPLAY_SETBUF_NEXTFRAME ) < 0 ) {
+	if ( sceDisplaySetFrameBuf( &vitaDisplayFrame, SCE_DISPLAY_SETBUF_NEXTFRAME ) < 0 ) {
 		vitaFrameBuffer = NULL;
 		sceKernelFreeMemBlock( vitaDisplayBlock );
 		vitaDisplayBlock = -1;
 		return false;
 	}
+	vitaDisplayFrameValid = true;
 	sceDisplayWaitVblankStart();
 	return true;
 }
@@ -239,11 +241,32 @@ void VitaDiagScreen_PrintLine( vitaDiagColor_t color, const char *text ) {
 	vitaCursorY += VITA_LINE_ADVANCE;
 }
 
-void VitaDiagScreen_Finish( void ) {
-	if ( vitaFrameBuffer != NULL ) {
-		sceDisplaySetFrameBuf( NULL, SCE_DISPLAY_SETBUF_NEXTFRAME );
-		vitaFrameBuffer = NULL;
+void VitaDiagScreen_Present( void ) {
+	if ( !vitaDisplayFrameValid || vitaFrameBuffer == NULL ) {
+		return;
 	}
+
+	// Re-submit the static framebuffer once per vblank. Besides keeping the
+	// diagnostic screen alive on hardware, this prevents emulator watchdogs
+	// from treating the intentionally static pre-render screen as a stalled
+	// renderer.
+	sceDisplaySetFrameBuf( &vitaDisplayFrame, SCE_DISPLAY_SETBUF_NEXTFRAME );
+	sceDisplayWaitVblankStart();
+}
+
+void VitaDiagScreen_Finish( void ) {
+	if ( vitaDisplayFrameValid ) {
+		// The framebuffer lives in CDRAM. Detach it immediately and let a vblank
+		// pass before releasing the memblock so display consumers cannot retain a
+		// pointer to already-freed CDRAM (notably Vita3K's display thread).
+		sceDisplaySetFrameBuf( NULL, SCE_DISPLAY_SETBUF_IMMEDIATE );
+		sceDisplayWaitVblankStart();
+		vitaDisplayFrameValid = false;
+	}
+
+	vitaFrameBuffer = NULL;
+	memset( &vitaDisplayFrame, 0, sizeof( vitaDisplayFrame ) );
+
 	if ( vitaDisplayBlock >= 0 ) {
 		sceKernelFreeMemBlock( vitaDisplayBlock );
 		vitaDisplayBlock = -1;

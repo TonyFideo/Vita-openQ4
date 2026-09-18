@@ -355,15 +355,21 @@ int main( int argc, char **argv ) {
 		Vita_WriteLogLine( "result=errors" );
 	}
 	Vita_WriteLogLine( "next=renderer-bring-up" );
+	Vita_WriteLogLine( "diagnostic.hold=manual-close" );
 
-	// Keep the final diagnostic screen visible long enough to read on hardware.
-	sceKernelDelayThread( 5 * 1000 * 1000 );
+	Vita_Info( "CIERRA LA APP MANUALMENTE PARA SALIR" );
 
-	Sys_ShutdownNetworking();
-	VitaDiagScreen_Finish();
-	Sys_Shutdown();
-
-	const int exitCode = vitaDiagnosticErrors == 0 ? 0 : 1;
-	sceKernelExitProcess( exitCode );
-	return exitCode;
+	// This pre-render diagnostic build intentionally remains alive after all
+	// checks complete. The previous five-second auto-exit released the active
+	// CDRAM framebuffer immediately before process teardown; Vita3K could still
+	// sample that framebuffer and crash while reading the now-unmapped CDRAM
+	// range. Keep presenting the diagnostic surface until the host/user closes
+	// the app. The real renderer will later replace this hold loop.
+	for ( ;; ) {
+		if ( vitaScreenReady ) {
+			VitaDiagScreen_Present();
+		} else {
+			sceKernelDelayThread( 16 * 1000 );
+		}
+	}
 }
