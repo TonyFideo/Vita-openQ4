@@ -36,5 +36,6 @@ Most player-facing options are available directly in the in-game menus:
 - `Settings -> System`
 - `Settings -> Controls`
 - `Settings -> Game Options`
+- `Difficulty` (single-player) - restart the current level at another difficulty; see [Gameplay Settings](gameplay-settings.md#difficulty)
 
 If you want deeper technical details or console-level configuration, see [TECHNICAL.md](../../TECHNICAL.md).

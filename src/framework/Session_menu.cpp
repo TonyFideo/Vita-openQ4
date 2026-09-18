@@ -2081,6 +2081,8 @@ void idSessionLocal::SetMainMenuGuiVars( bool refreshCatalogs ) {
 	const char *inGameState = mapSpawned ? ( IsMultiplayer() ? "2" : "1" ) : "0";
 	guiMainMenu->SetStateString( "inGame", inGameState );
 	guiMainMenu->SetStateString( "ingame", inGameState );
+	// the in-game Difficulty page opens on the difficulty being played
+	guiMainMenu->SetStateInt( "currentSkill", idMath::ClampInt( 0, 4, cvarSystem->GetCVarInteger( "g_skill" ) ) );
 
 #ifdef ID_DEMO_BUILD
 	guiMainMenu->SetStateString( "nightmare", "0" );
@@ -2472,6 +2474,15 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 		// always let the game know the command is being run
 		if ( game ) {
 			game->HandleMainMenuCommands( cmd, guiActive );
+		}
+
+		if ( !idStr::Icmp( cmd, "restartLevel" ) ) {
+			// The in-game Difficulty page only records its choice in
+			// desktop::skill, so backing out of it changes nothing; the choice
+			// takes effect here, with the level restarted around it.
+			const int skill = idMath::ClampInt( 0, 4, MainMenuGetNewGameOption( guiMainMenu, "desktop::skill", "skill", cvarSystem->GetCVarInteger( "g_skill" ) ) );
+			RestartLevelAtSkill( skill );
+			return;
 		}
 
 		if ( !idStr::Icmp( cmd, "startMap" ) ) {

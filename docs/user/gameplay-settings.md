@@ -8,6 +8,7 @@ The auto-skip cinematics, corpse cleanup, and corpse sink controls are also avai
 
 | Setting | Default | Scope | What it does |
 |---|---:|---|---|
+| `g_skill` | `1` | Single-player | Difficulty, `0` Private to `4` Warlord. A saved game brings back its own; change it mid-campaign with [Difficulty](#difficulty). |
 | `g_autoSkipCinematics` | `0` | SP and MP game code | Automatically skips cinematics as soon as they begin. Disabled by default. |
 | `g_corpseRemoveDelaySP` | `0` | Single-player | Controls how long SP corpses remain before disappearing. `0` uses stock timing, `-1` disables corpse removal. |
 | `g_corpseRemoveDelayMP` | `0` | Multiplayer | Controls how long MP corpses remain before disappearing. `0` uses stock timing, `-1` disables corpse removal. |
@@ -42,6 +43,22 @@ Example:
 ```cfg
 seta g_autoSkipCinematics 1
 ```
+
+## Difficulty
+
+During a single-player game the in-game menu has a **Difficulty** entry, between **Settings** and **Return to Game**. It opens the difficulty list from New Game with the difficulty you are playing selected. Pick one and choose **Restart Level**: the level starts again from its beginning at that difficulty, with the weapons, ammo, health and armor you had when you entered it. **Back** changes nothing.
+
+The level has to restart because a saved game keeps the difficulty it was saved at, and a level picks its enemies, their health and its pickups as it loads. Changing `g_skill` in the middle of a level only changes what the game reads as it goes, such as the damage you take.
+
+| `g_skill` | Difficulty | Damage you take from enemies, and enemy health |
+|---:|---|---|
+| `0` | Private | -30% |
+| `1` | Corporal | normal |
+| `2` | Lieutenant | +40% |
+| `3` | General | +80%, and no medkits |
+| `4` | Warlord | +180%, and no medkits |
+
+The console command `restartLevel` does the same: `restartLevel` alone restarts the current level at the current difficulty, and `restartLevel 3` restarts it on General. The loadout comes from the level's start autosave, the same save the death screen's **Restart** loads, and the restart writes a new one at the new difficulty. Anything done in the level since it started is lost.
 
 ## Corpse Cleanup
 

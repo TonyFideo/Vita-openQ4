@@ -407,6 +407,7 @@ def run_python_tests(args: argparse.Namespace, root: Path, env: dict[str, str]) 
         root / "tools" / "tests" / "aas_compiler_contract.py",
         root / "tools" / "tests" / "aas_settings_contract.py",
         root / "tools" / "tests" / "arena_campaign.py",
+        root / "tools" / "tests" / "in_game_difficulty_restart.py",
         root / "tools" / "tests" / "async_drop_client_contract.py",
         root / "tools" / "tests" / "async_client_frame_contract.py",
         root / "tools" / "tests" / "async_session_command_contract.py",

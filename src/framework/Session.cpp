@@ -3429,6 +3429,30 @@ static void Session_Map_f( const idCmdArgs &args ) {
 
 /*
 ==================
+Session_RestartLevel_f
+
+Restart the current single-player level from its beginning, at the current
+difficulty or the one given
+==================
+*/
+static void Session_RestartLevel_f( const idCmdArgs &args ) {
+	int skill = cvarSystem->GetCVarInteger( "g_skill" );
+	if ( args.Argc() == 2 ) {
+		const char *value = args.Argv( 1 );
+		if ( value[0] < '0' || value[0] > '4' || value[1] != '\0' ) {
+			common->Printf( "usage: restartLevel [skill 0-4]\n" );
+			return;
+		}
+		skill = value[0] - '0';
+	} else if ( args.Argc() > 2 ) {
+		common->Printf( "usage: restartLevel [skill 0-4]\n" );
+		return;
+	}
+	sessLocal.RestartLevelAtSkill( skill );
+}
+
+/*
+==================
 Session_DevMap_f
 
 Restart the server on a different map in developer mode
@@ -5046,6 +5070,101 @@ idStr idSessionLocal::GetAutoSaveName( const char *mapName ) const {
 		return va( "Autosave %s %s", mapName, entityFilter );
 	}
 	return va( "Autosave %s", mapName );
+}
+
+#ifndef ID_DEDICATED
+/*
+===============
+Session_ReadSaveGameLoadout
+
+Reads only a savegame's header: the loadout each player carried when it was
+written. Fails unless the save belongs to expectedMap.
+===============
+*/
+static bool Session_ReadSaveGameLoadout( const idStr &savePath, const char *expectedMap, idDict loadout[MAX_ASYNC_CLIENTS] ) {
+	const idStr game = cvarSystem->GetCVarString( "fs_game" );
+	idFile *file = fileSystem->OpenFileRead( savePath, true, game.Length() ? game.c_str() : NULL );
+	if ( file == NULL ) {
+		return false;
+	}
+
+	idStr gameName, saveMap, entityFilter;
+	int version = 0;
+	bool valid = Session_ReadSaveGameString( file, gameName, MAX_STRING_CHARS, "game name", savePath.c_str() ) &&
+		Session_IsSupportedSaveGameName( gameName ) &&
+		Session_ReadSaveGameInt( file, version, "version", savePath.c_str() ) &&
+		Session_IsCompatibleSaveGameVersion( version ) &&
+		Session_ReadSaveGameString( file, saveMap, MAX_STRING_CHARS, "map name", savePath.c_str() );
+	if ( valid && Session_SaveGameHeaderUsesEntityFilter( gameName ) ) {
+		valid = Session_ReadSaveGameString( file, entityFilter, MAX_STRING_CHARS, "entity filter", savePath.c_str() );
+	}
+	for ( int i = 0; valid && i < MAX_ASYNC_CLIENTS; i++ ) {
+		valid = Session_ReadSaveGameDict( file, loadout[i], va( "persistent player info %d", i ), savePath.c_str() );
+	}
+	fileSystem->CloseFile( file );
+
+	if ( valid ) {
+		idStr normalizedSaveMap, normalizedExpectedMap, unusedFilter;
+		Session_NormalizeMapPathAndEntityFilter( saveMap.c_str(), "", normalizedSaveMap, unusedFilter, false );
+		Session_NormalizeMapPathAndEntityFilter( expectedMap, "", normalizedExpectedMap, unusedFilter, false );
+		valid = normalizedSaveMap.Icmp( normalizedExpectedMap ) == 0;
+	}
+	return valid;
+}
+#endif
+
+/*
+===============
+idSessionLocal::RestartLevelAtSkill
+
+Restarts the running single-player level from its beginning at a difficulty.
+Loading a save would bring back the difficulty it was written with, and a map
+picks its enemies, items and their health as it spawns, so only a fresh spawn
+gives a new difficulty its full effect. The player gets back the loadout they
+entered the level with, read from the level's start autosave - the slot the
+death screen's Restart loads. Without one, the loadout from the last save or
+level start is kept.
+===============
+*/
+bool idSessionLocal::RestartLevelAtSkill( int skill ) {
+#ifdef ID_DEDICATED
+	common->Printf( "Dedicated servers cannot restart single-player levels.\n" );
+	return false;
+#else
+	if ( !mapSpawned || IsMultiplayer() || IsDemoPlaybackActive() ) {
+		common->Printf( "restartLevel: only a running single-player level can be restarted\n" );
+		return false;
+	}
+	const idStr mapName = mapSpawnData.serverInfo.GetString( "si_map" );
+	if ( mapName.IsEmpty() ) {
+		common->Printf( "restartLevel: no current map\n" );
+		return false;
+	}
+	skill = idMath::ClampInt( 0, 4, skill );
+
+	idStr autoSave = GetAutoSaveName( mapName.c_str() );
+	ScrubSaveGameFileName( autoSave );
+	autoSave.SetFileExtension( ".save" );
+	const idStr autoSavePath = idStr( "savegames/" ) + autoSave;
+	idDict loadout[MAX_ASYNC_CLIENTS];
+	if ( Session_ReadSaveGameLoadout( autoSavePath, mapName.c_str(), loadout ) ) {
+		for ( int i = 0; i < MAX_ASYNC_CLIENTS; i++ ) {
+			mapSpawnData.persistentPlayerInfo[i] = loadout[i];
+		}
+		common->Printf( "restartLevel: %s at skill %d with the loadout from %s\n", mapName.c_str(), skill, autoSavePath.c_str() );
+	} else {
+		common->Printf( "restartLevel: %s at skill %d; no usable %s, so the loadout from the last save or level start is kept\n",
+			mapName.c_str(), skill, autoSavePath.c_str() );
+	}
+
+	cvarSystem->SetCVarInteger( "g_skill", skill );
+	// Reloading the same map keeps lastCheckPoint, and a checkpoint written
+	// before now holds the old difficulty. Dying should reload the fresh start
+	// autosave instead.
+	lastCheckPoint = -1;
+	MoveToNewMap( mapName.c_str() );
+	return true;
+#endif
 }
 
 /*
@@ -8078,6 +8197,7 @@ void idSessionLocal::Init() {
 	cmdSystem->AddCommand( "map", Session_Map_f, CMD_FL_SYSTEM, "loads a map", idCmdSystem::ArgCompletion_MapName );
 	cmdSystem->AddCommand( "devmap", Session_DevMap_f, CMD_FL_SYSTEM, "loads a map in developer mode", idCmdSystem::ArgCompletion_MapName );
 	cmdSystem->AddCommand( "testmap", Session_TestMap_f, CMD_FL_SYSTEM, "tests a map", idCmdSystem::ArgCompletion_MapName );
+	cmdSystem->AddCommand( "restartLevel", Session_RestartLevel_f, CMD_FL_SYSTEM, "restarts the current single-player level from its beginning: restartLevel [skill 0-4]" );
 	cmdSystem->AddCommand( "framePacingSnapshot", Session_FramePacingSnapshot_f, CMD_FL_SYSTEM, "prints the current frame-pacing diagnostics summary" );
 	cmdSystem->AddCommand( "framePacingReset", Session_FramePacingReset_f, CMD_FL_SYSTEM, "resets frame-pacing diagnostics before a measured window" );
 	cmdSystem->AddCommand( "testWaitBox", Session_TestWaitBox_f, CMD_FL_SYSTEM | CMD_FL_CHEAT, "opens a timed wait box and prints frame-pacing stats: testWaitBox <msec> [network 0/1] [reason]" );

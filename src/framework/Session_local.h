@@ -261,6 +261,8 @@ public:
 	idStr				GetAutoSaveName( const char *mapName ) const;
 
 	bool				LoadGame(const char *saveName);
+	// restarts the running single-player level from its beginning at a difficulty
+	bool				RestartLevelAtSkill( int skill );
 	bool				SaveGame(const char *saveName = NULL, saveType_t saveType = ST_REGULAR);
 	bool				DeleteGame(const char *saveName);
 

@@ -102,6 +102,7 @@ jobs:
             tools/tests/renderer_shadow_mapping_transitions.py \
             tools/tests/server_browser_contract.py \
             tools/tests/arena_campaign.py \
+            tools/tests/in_game_difficulty_restart.py \
             tools/tests/async_drop_client_contract.py \
             tools/tests/async_client_frame_contract.py \
             tools/tests/async_session_command_contract.py \
@@ -299,6 +300,7 @@ jobs:
           python tools/tests/parser_include_paths_contract.py
           python tools/tests/server_browser_contract.py
           python tools/tests/arena_campaign.py
+          python tools/tests/in_game_difficulty_restart.py
           python tools/tests/async_drop_client_contract.py
           python tools/tests/async_client_frame_contract.py
           python tools/tests/async_session_command_contract.py

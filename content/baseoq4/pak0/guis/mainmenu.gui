@@ -37,6 +37,7 @@ windowDef Desktop
 	float	"com_machineSpec"	0
 	float	"skill"	1
 	float	"turboMode"	0
+	float	"difficultyRestart"	0
 	float	"tooltip_x"	0
 	float	"tooltip_y"	0
 	float	"tooltip_w"	0
@@ -161,10 +162,15 @@ windowDef Desktop
 		//resetTime "MenuMusic" "0" ;
 		
 		if ("desktop::curr" == 0) {
+			set "desktop::difficultyRestart" "0" ;
 			resetTime "anim_in" "0" ;
 			namedevent "ingameCheck" ;
 			//} else if ("desktop::curr" != 17 && "desktop::curr" != 0) {
 			//	transition "fade::backcolor_w" "1" "0" "250" ;
+		} else if ("desktop::curr" == 1 && "desktop::difficultyRestart" == 1) {
+			namedevent "p_btns::leaveDifficultyForRestart" ;
+			resetTime "anim_in" "0" ;
+			namedevent "ingameCheck" ;
 		} else if ("desktop::curr" == 17) {
 			set "desktop::curr" "0" ;
 			set "desktop::active" "0" ;
@@ -239,7 +245,11 @@ windowDef Desktop
 		} else if ("desktop::curr" == 1 && "desktop::active" == 0) {
 			set "desktop::active" "1" ;
 			resettime "anim_newOut" "0" ;
-			set "desktop::dest" "37" ;
+			if ("desktop::difficultyRestart" == 0) {
+				set "desktop::dest" "37" ;
+			} else {
+				set "desktop::dest" "0" ;
+			}
 			set "cmd" "play main_menu_selection" ;
 		} else if ("desktop::curr" == 2 && "desktop::active" == 0) {
 			set "desktop::active" "1" ;
@@ -541,6 +551,11 @@ windowDef Desktop
 			set "main_b_disconnect::visible" "0" ;
 			set "main_b_multiplayer::visible" "1" ;
 			set "main_b_return::visible" "0" ;
+			set "main_b_difficulty::visible" "0" ;
+			set "main_b10::matcolor_w" "0" ;
+			set "main_t_b10::forecolor_w" "0" ;
+			set "main_b10_corner::matcolor_w" "0" ;
+			set "main_motd::visible" "1" ;
 			set "main_b_demos::visible" "1" ;
 			set "main_b_mods::visible" "1" ;
 			set "main_b_updates::visible" "1" ;
@@ -576,6 +591,11 @@ windowDef Desktop
 			set "main_b_disconnect::visible" "0" ;
 			set "main_b_multiplayer::visible" "0" ;
 			set "main_b_return::visible" "1" ;
+			set "main_b_difficulty::visible" "1" ;
+			set "main_b10::matcolor_w" "0.4" ;
+			set "main_t_b10::forecolor_w" "0.8" ;
+			set "main_b10_corner::matcolor_w" "0.4" ;
+			set "main_motd::visible" "0" ;
 			set "main_b_demos::visible" "0" ;
 			set "main_b_mods::visible" "0" ;
 			set "main_b_updates::visible" "0" ;
@@ -587,7 +607,8 @@ windowDef Desktop
 			set "main_t_b1::text" "#str_200003" ;
 			set "main_t_b2::text" "#str_200001" ;
 			set "main_t_b3::text" "#str_200004" ;
-			set "main_t_b9::text" "#str_200005" ;
+			set "main_t_b9::text" "#str_42009" ;
+			set "main_t_b10::text" "#str_200005" ;
 			
 			set "desktop::music" "1" ;
 			
@@ -613,6 +634,11 @@ windowDef Desktop
 			set "main_b_disconnect::visible" "1" ;
 			set "main_b_multiplayer::visible" "1" ;
 			set "main_b_return::visible" "0" ;
+			set "main_b_difficulty::visible" "0" ;
+			set "main_b10::matcolor_w" "0" ;
+			set "main_t_b10::forecolor_w" "0" ;
+			set "main_b10_corner::matcolor_w" "0" ;
+			set "main_motd::visible" "1" ;
 			set "main_b_demos::visible" "0" ;
 			set "main_b_mods::visible" "1" ;
 			set "main_b_updates::visible" "1" ;
@@ -1142,6 +1168,13 @@ windowDef Desktop
 				background	"gfx/guis/mainmenu/b1_dark"
 				matcolor	1,1,1,0
 			}
+			windowDef main_b10
+			{
+				rect	0,352,413,52
+				visible	1
+				background	"gfx/guis/mainmenu/b1_dark"
+				matcolor	1,1,1,0
+			}
 			windowDef main_b1_corner
 			{
 				rect	32,221,12,12
@@ -1173,6 +1206,13 @@ windowDef Desktop
 			windowDef main_b9_corner
 			{
 				rect	32,341,12,12
+				visible	1
+				background	"gfx/guis/mainmenu/corner"
+				matcolor	0.564,0.603,0.286,0
+			}
+			windowDef main_b10_corner
+			{
+				rect	32,371,12,12
 				visible	1
 				background	"gfx/guis/mainmenu/corner"
 				matcolor	0.564,0.603,0.286,0
@@ -1216,6 +1256,15 @@ windowDef Desktop
 			windowDef main_t_b9
 			{
 				rect	44,334,314,23
+				visible	1
+				forecolor	1,1,1,0
+				text	"#str_200005"
+				textscale	.33
+				font	"fonts/marine"
+			}
+			windowDef main_t_b10
+			{
+				rect	44,364,314,23
 				visible	1
 				forecolor	1,1,1,0
 				text	"#str_200005"
@@ -12801,6 +12850,10 @@ windowDef Desktop
 			set "main_t_b9::forecolor"  "$desktop::white_0" ; 
 			set "main_b9_corner::matcolor" "$desktop::corner_0" ;
 			set "main_t_b9::textscale" "0.33" ;
+			set "main_b10::matcolor_w" "0" ;
+			set "main_t_b10::forecolor"  "$desktop::white_0" ;
+			set "main_b10_corner::matcolor" "$desktop::corner_0" ;
+			set "main_t_b10::textscale" "0.33" ;
 		}
 
 		onNamedEvent mainReset {
@@ -12827,6 +12880,10 @@ windowDef Desktop
 				set "main_b9_corner::matcolor" "$desktop::corner" ;
 				set "main_t_b9::textscale" "0.33" ;
 				set "main_t_b9::text" "#str_41500" ;
+				set "main_b10::matcolor" "$desktop::white_0" ;
+				set "main_t_b10::forecolor" "$desktop::white_0" ;
+				set "main_b10_corner::matcolor" "$desktop::corner_0" ;
+				set "main_t_b10::textscale" "0.33" ;
 			} else if ("gui::ingame" == 1) {
 				set "main_t_b5::forecolor"  "$desktop::white_0" ; 
 				set "main_b5_corner::matcolor" "$desktop::corner_0" ;
@@ -12845,7 +12902,12 @@ windowDef Desktop
 				set "main_t_b3::forecolor"  "$desktop::white_8" ; 
 				set "main_b3_corner::matcolor" "$desktop::corner" ;
 				set "main_t_b3::textscale" "0.33" ; 
-				set "main_t_b9::text" "#str_200005" ;
+				set "main_t_b9::text" "#str_42009" ;
+				set "main_b10::matcolor" "$desktop::white_4" ;
+				set "main_t_b10::forecolor" "$desktop::white_8" ;
+				set "main_b10_corner::matcolor" "$desktop::corner" ;
+				set "main_t_b10::textscale" "0.33" ;
+				set "main_t_b10::text" "#str_200005" ;
 			}else if ("gui::ingame" == 2) {
 				set "main_t_b5::forecolor"  "$desktop::white_5" ; 
 				set "main_b5_corner::matcolor" "$desktop::corner" ;
@@ -12865,6 +12927,10 @@ windowDef Desktop
 				set "main_b3_corner::matcolor" "$desktop::corner" ;
 				set "main_t_b3::textscale" "0.33" ; 
 				set "main_t_b9::text" "#str_200005" ;
+				set "main_b10::matcolor" "$desktop::white_0" ;
+				set "main_t_b10::forecolor" "$desktop::white_0" ;
+				set "main_b10_corner::matcolor" "$desktop::corner_0" ;
+				set "main_t_b10::textscale" "0.33" ;
 			}
 			
 			set "main_b1::matcolor" "$desktop::white_4" ;
@@ -13390,11 +13456,15 @@ windowDef Desktop
 					transition "main_b9::matcolor_w" "0" "0.4" "150" ;
 					transition "main_t_b9::forecolor_w"  "0" "0.8" "150" ; 
 					transition "main_b9_corner::matcolor_w"  "0" "0.4" "150" ;
+					transition "main_b10::matcolor_w" "0" "0.4" "150" ;
+					transition "main_t_b10::forecolor_w"  "0" "0.8" "150" ;
+					transition "main_b10_corner::matcolor_w"  "0" "0.4" "150" ;
 					
 					set "main_t_b1::text" "#str_200003" ;
 					set "main_t_b2::text" "#str_200001" ;
 					set "main_t_b3::text" "#str_200004" ;	
-					set "main_t_b9::text" "#str_200005" ;
+					set "main_t_b9::text" "#str_42009" ;
+					set "main_t_b10::text" "#str_200005" ;
 					
 				} else	if ("gui::ingame" == 2) {
 					
@@ -13456,6 +13526,7 @@ windowDef Desktop
 				stoptransitions "main_b_disconnect" ;
 				stoptransitions "main_b_quitcurrent" ;
 				stoptransitions "main_b_settings" ;
+				stoptransitions "main_b_difficulty" ;
 				stoptransitions "main_b_demos" ;
 				stoptransitions "main_b_mods" ;
 				stoptransitions "main_b_updates" ;
@@ -13488,6 +13559,9 @@ windowDef Desktop
 					transition "main_b9::matcolor_w" "0.4" "0" "250" ;
 					transition "main_t_b9::forecolor_w"  "0.8" "0" "250" ; 
 					transition "main_b9_corner::matcolor_w"  "0.4" "0" "250" ;
+					transition "main_b10::matcolor_w" "0.4" "0" "250" ;
+					transition "main_t_b10::forecolor_w"  "0.8" "0" "250" ;
+					transition "main_b10_corner::matcolor_w"  "0.4" "0" "250" ;
 				} else	if ("gui::ingame" == 2) {	
 					transition "main_t_b5::forecolor_w"  "0.5" "0" "50" ; 
 					transition "main_b5_corner::matcolor_w"  "0.4" "0" "50" ; 
@@ -13570,10 +13644,18 @@ windowDef Desktop
 			notime	1
 
 			onTime 0 {
-				consoleCMD "g_skill 1" ;
-				consoleCMD "g_turboMode 0" ;
-				set "desktop::skill" "1" ;
-				set "desktop::turboMode" "0" ;
+				if ("desktop::difficultyRestart" == 1) {
+					set "desktop::skill" "$gui::currentSkill" ;
+					set "t_new_title::text" "#str_42009" ;
+					set "new_t_bstart::text" "#str_229983" ;
+				} else {
+					consoleCMD "g_skill 1" ;
+					consoleCMD "g_turboMode 0" ;
+					set "desktop::skill" "1" ;
+					set "desktop::turboMode" "0" ;
+					set "t_new_title::text" "#str_200000" ;
+					set "new_t_bstart::text" "#str_200020" ;
+				}
 				
 				transition "p_newgame::rect" "$d_main_l::rect" "$d_main::rect" "0" ;
 				set "p_newgame::visible" "1" ;
@@ -13581,23 +13663,43 @@ windowDef Desktop
 				transition "grad2::matcolor_w" "0" "0.6" "150" ;
 				
 				namedevent "p_btns::skillCheck" ;
-				namedevent "p_btns::turboCheck" ;
+				if ("desktop::difficultyRestart" == 0) {
+					namedevent "p_btns::turboCheck" ;
+				}
 				
 				
 				// back button
 				transition "new_back::matcolor_w" "0" "0.4" "150" ;
 				transition "new_t_back::forecolor_w"  "0" "0.8" "150" ; 
 				transition "new_back_corner::matcolor_w"  "0" "0.4" "150" ;
-				transition "new_bturbo::matcolor_w" "0" "0.4" "150" ;
-				transition "new_t_turbo::forecolor_w" "0" "0.8" "150" ;
-				transition "new_t_turbo_value::forecolor_w" "0" "0.8" "150" ;
-				transition "new_bturbo_corner::matcolor_w" "0" "0.4" "150" ;
+				if ("desktop::difficultyRestart" == 0) {
+					transition "new_bturbo::matcolor_w" "0" "0.4" "150" ;
+					transition "new_t_turbo::forecolor_w" "0" "0.8" "150" ;
+					transition "new_t_turbo_value::forecolor_w" "0" "0.8" "150" ;
+					transition "new_bturbo_corner::matcolor_w" "0" "0.4" "150" ;
+				} else {
+					set "new_bturbo::matcolor_w" "0" ;
+					set "new_t_turbo::forecolor_w" "0" ;
+					set "new_t_turbo_value::forecolor_w" "0" ;
+					set "new_bturbo_corner::matcolor_w" "0" ;
+				}
 			}
 
 			onTime +150 {
 				set "desktop::active" "0" ;
 				namedevent "p_btns::showNew" ;
 				set "desktop::curr" "1" ;
+			}
+
+		}
+		windowDef anim_restartLevel
+		{
+			rect	0,0,1,1
+			visible	1
+			notime	1
+
+			onTime 0 {
+				set "cmd" "play main_menu_selection ; restartLevel" ;
 			}
 
 		}
@@ -13626,13 +13728,21 @@ windowDef Desktop
 				transition "new_back::matcolor_w" "0.8" "0" "100" ;
 				transition "new_t_back::forecolor_w"  "1" "0" "100" ; 
 				transition "new_back_corner::matcolor_w"  "1" "0" "100" ; 
-				transition "new_bturbo::matcolor_w" "0.8" "0" "100" ;
-				transition "new_t_turbo::forecolor_w" "1" "0" "100" ;
-				transition "new_t_turbo_value::forecolor_w" "1" "0" "100" ;
-				transition "new_bturbo_corner::matcolor_w" "1" "0" "100" ;
+				if ("desktop::difficultyRestart" == 0) {
+					transition "new_bturbo::matcolor_w" "0.8" "0" "100" ;
+					transition "new_t_turbo::forecolor_w" "1" "0" "100" ;
+					transition "new_t_turbo_value::forecolor_w" "1" "0" "100" ;
+					transition "new_bturbo_corner::matcolor_w" "1" "0" "100" ;
+				}
 			}
 
 			onTime +500 {
+				if ("desktop::difficultyRestart" == 1) {
+					set "desktop::difficultyRestart" "0" ;
+					set "t_new_title::text" "#str_200000" ;
+					set "new_t_bstart::text" "#str_200020" ;
+				}
+
 				set "p_newgame::visible" "0" ;
 
 				if ("desktop::dest" == 37) {
@@ -15890,6 +16000,7 @@ windowDef Desktop
 				set "main_b_disconnect::visible" "0" ;
 				set "main_b_multiplayer::visible" "1" ;
 				set "main_b_return::visible" "0" ;
+				set "main_b_difficulty::visible" "0" ;
 				set "main_b_demos::visible" "1" ;
 				set "main_b_mods::visible" "1" ;
 				set "main_b_updates::visible" "1" ;
@@ -15902,6 +16013,7 @@ windowDef Desktop
 				set "main_b_disconnect::visible" "0" ;
 				set "main_b_multiplayer::visible" "0" ;
 				set "main_b_return::visible" "1" ;
+				set "main_b_difficulty::visible" "1" ;
 				set "main_b_demos::visible" "0" ;
 				set "main_b_mods::visible" "0" ;
 				set "main_b_updates::visible" "0" ;
@@ -15914,6 +16026,7 @@ windowDef Desktop
 				set "main_b_disconnect::visible" "1" ;
 				set "main_b_multiplayer::visible" "1" ;
 				set "main_b_return::visible" "0" ;
+				set "main_b_difficulty::visible" "0" ;
 				set "main_b_demos::visible" "0" ;
 				set "main_b_mods::visible" "1" ;
 				set "main_b_updates::visible" "1" ;
@@ -15932,6 +16045,7 @@ windowDef Desktop
 			set "main_b_disconnect::visible" "0" ;
 			set "main_b_multiplayer::visible" "0" ;
 			set "main_b_return::visible" "0" ;
+			set "main_b_difficulty::visible" "0" ;
 			set "main_b_demos::visible" "0" ;
 			set "main_b_mods::visible" "0" ;
 			set "main_b_updates::visible" "0" ;
@@ -16992,7 +17106,9 @@ windowDef Desktop
 			}
 			set "new_b_start::visible" "1" ;
 			set "new_b_back::visible" "1" ;
-			set "new_b_turbo::visible" "1" ;
+			if ("desktop::difficultyRestart" == 0) {
+				set "new_b_turbo::visible" "1" ;
+			}
 		}
 
 		onNamedEvent hideNew {
@@ -17005,6 +17121,50 @@ windowDef Desktop
 			set "new_b_start::visible" "0" ;
 			set "new_b_back::visible" "0" ;
 			set "new_b_turbo::visible" "0" ;
+		}
+
+		onNamedEvent openDifficulty {
+			// In-game Difficulty: the New Game page, retitled, with Start restarting
+			// the level. The choice stays in desktop::skill until Restart Level sends
+			// restartLevel, so backing out changes nothing.
+			if ("desktop::active" == 0) {
+				set "desktop::difficultyRestart" "1" ;
+				set "desktop::active" "1" ;
+				resettime "anim_mainOut" "0" ;
+				set "desktop::dest" "1" ;
+			}
+		}
+
+		onNamedEvent leaveDifficultyForRestart {
+			// The restart closes the menu at once, so put it back on its main page
+			// now; the next Escape then opens it the usual way.
+			set "desktop::difficultyRestart" "0" ;
+			set "t_new_title::text" "#str_200000" ;
+			set "new_t_bstart::text" "#str_200020" ;
+			namedevent "p_btns::hideNew" ;
+			set "p_newgame::visible" "0" ;
+			transition "p_newgame::rect" "$d_main::rect" "$d_main_l::rect" "0" ;
+			set "t_new_title::forecolor_w" "0" ;
+			set "grad2::matcolor_w" "0" ;
+			set "new_back::matcolor_w" "0" ;
+			set "new_t_back::forecolor_w" "0" ;
+			set "new_back_corner::matcolor_w" "0" ;
+			transition "p_main::rect" "$d_main_r::rect" "$d_main::rect" "0" ;
+			transition "topbar::rect" "$d_topbar::rect" "$topbar::rect" "0" ;
+			transition "btmbar::rect" "$d_btmbar::rect" "$btmbar::rect" "0" ;
+			set "p_main::visible" "1" ;
+			set "desktop::curr" "0" ;
+			set "desktop::dest" "0" ;
+			set "desktop::active" "0" ;
+			namedevent "p_anims::mainReset0" ;
+		}
+
+		onNamedEvent restartAtDifficulty {
+			// Restart Level: the restart closes the menu at once, so reset the
+			// page first. A named event cannot issue a session command, so
+			// anim_restartLevel sends restartLevel, which reads desktop::skill.
+			namedevent "p_btns::leaveDifficultyForRestart" ;
+			resettime "anim_restartLevel" "0" ;
 		}
 
 		onNamedEvent skillCheck {	
@@ -17807,14 +17967,14 @@ windowDef Desktop
 			}
 
 		}
-		windowDef main_b_return
+		windowDef main_b_difficulty
 		{
 			rect	24,334,333,26
 			visible	0
 
 			onMouseEnter {
 				if ("desktop::active" == 0) {
-					stoptransitions "main_b_return" ;
+					stoptransitions "main_b_difficulty" ;
 					
 					set "main_b9::matcolor_w" "0.8" ;
 					transition "main_t_b9::forecolor" "$desktop::white_8" "$desktop::orange" "0" ; 
@@ -17833,6 +17993,41 @@ windowDef Desktop
 					transition "main_b9_corner::matcolor"  "$desktop::orange" "$desktop::corner" "300" ;
 					
 					transition "main_t_b9::textscale" "0.34" "0.33" "300" ; 
+				}
+			}
+
+			onAction {
+				namedevent "p_btns::openDifficulty" ;
+				set "cmd" "play main_menu_selection" ;
+			}
+
+		}
+		windowDef main_b_return
+		{
+			rect	24,364,333,26
+			visible	0
+
+			onMouseEnter {
+				if ("desktop::active" == 0) {
+					stoptransitions "main_b_return" ;
+					
+					set "main_b10::matcolor_w" "0.8" ;
+					transition "main_t_b10::forecolor" "$desktop::white_8" "$desktop::orange" "0" ; 
+					transition "main_b10_corner::matcolor" "$desktop::corner" "$desktop::orange" "0" ; 
+					
+					set "main_t_b10::textscale" "0.34" ; 
+					
+					set "cmd" "play main_menu_mouseover" ;
+				}
+			}
+
+			onMouseExit {
+				if ("desktop::active" == 0) {
+					transition "main_b10::matcolor_w" "0.8" "0.4" "300" ;
+					transition "main_t_b10::forecolor"  "$desktop::orange" "$desktop::white_8" "300" ; 
+					transition "main_b10_corner::matcolor"  "$desktop::orange" "$desktop::corner" "300" ;
+					
+					transition "main_t_b10::textscale" "0.34" "0.33" "300" ; 
 				}
 			}
 
@@ -18045,7 +18240,9 @@ windowDef Desktop
 
 			onAction {
 				set "desktop::skill" "0" ;
-				consoleCMD "g_skill 0" ;
+				if ("desktop::difficultyRestart" == 0) {
+					consoleCMD "g_skill 0" ;
+				}
 				namedevent "p_btns::showNew" ;
 				namedevent "p_btns::skillCheck" ;
 				
@@ -18080,7 +18277,9 @@ windowDef Desktop
 
 			onAction {
 				set "desktop::skill" "1" ;
-				consoleCMD "g_skill 1" ;
+				if ("desktop::difficultyRestart" == 0) {
+					consoleCMD "g_skill 1" ;
+				}
 				namedevent "p_btns::showNew" ;
 				namedevent "p_btns::skillCheck" ;
 				
@@ -18115,7 +18314,9 @@ windowDef Desktop
 
 			onAction {
 				set "desktop::skill" "2" ;
-				consoleCMD "g_skill 2" ;
+				if ("desktop::difficultyRestart" == 0) {
+					consoleCMD "g_skill 2" ;
+				}
 				namedevent "p_btns::showNew" ;
 				namedevent "p_btns::skillCheck" ;
 				
@@ -18150,7 +18351,9 @@ windowDef Desktop
 
 			onAction {
 				set "desktop::skill" "3" ;
-				consoleCMD "g_skill 3" ;
+				if ("desktop::difficultyRestart" == 0) {
+					consoleCMD "g_skill 3" ;
+				}
 				namedevent "p_btns::showNew" ;
 				namedevent "p_btns::skillCheck" ;
 				
@@ -18185,7 +18388,9 @@ windowDef Desktop
 
 			onAction {
 				set "desktop::skill" "4" ;
-				consoleCMD "g_skill 4" ;
+				if ("desktop::difficultyRestart" == 0) {
+					consoleCMD "g_skill 4" ;
+				}
 				namedevent "p_btns::showNew" ;
 				namedevent "p_btns::skillCheck" ;
 				
@@ -18223,7 +18428,11 @@ windowDef Desktop
 			}
 
 			onAction {
-				set "cmd" "play main_menu_selection ; startMap game/airdefense1" ;
+				if ("desktop::difficultyRestart" == 1) {
+					namedevent "p_btns::restartAtDifficulty" ;
+				} else {
+					set "cmd" "play main_menu_selection ; startMap game/airdefense1" ;
+				}
 			}
 
 		}
@@ -18307,7 +18516,11 @@ windowDef Desktop
 			onAction {
 				set "desktop::active" "1" ;
 				resettime "anim_newOut" "0" ;
-				set "desktop::dest" "37" ;
+				if ("desktop::difficultyRestart" == 0) {
+					set "desktop::dest" "37" ;
+				} else {
+					set "desktop::dest" "0" ;
+				}
 				
 				set "cmd" "play main_menu_selection" ;
 			}
