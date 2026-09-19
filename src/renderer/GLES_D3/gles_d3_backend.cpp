@@ -274,8 +274,17 @@ answers "is the draw path broken, or is the pass not submitting?" without
 adding instrumentation.
 ====================
 */
+#if defined(VITA) || defined(__vita__)
+static idCVar r_glesD3TestTriangle( "r_glesD3TestTriangle", "1", CVAR_RENDERER | CVAR_BOOL,
+		"gles_d3: draw a test triangle in front of the view through the full draw path" );
+static idCVar r_glesD3BringupStage( "r_glesD3BringupStage", "1", CVAR_RENDERER | CVAR_INTEGER,
+		"Vita GLES_D3 bring-up: 0=full renderer, 1=clear+camera triangle, 2=depth+triangle, 3=depth+materials+triangle, 4=depth+interactions+materials+triangle" );
+#else
 static idCVar r_glesD3TestTriangle( "r_glesD3TestTriangle", "0", CVAR_RENDERER | CVAR_BOOL,
 		"gles_d3: draw a test triangle in front of the view through the full draw path" );
+static idCVar r_glesD3BringupStage( "r_glesD3BringupStage", "0", CVAR_RENDERER | CVAR_INTEGER,
+		"gles_d3 bring-up staging; 0 runs the full renderer" );
+#endif
 
 static GLuint	rb_glesD3TestVbo = 0;
 static GLuint	rb_glesD3TestIbo = 0;
@@ -296,7 +305,11 @@ bool RB_GLESD3_EnsureResources( void ) {
 	}
 
 	R_GLESD3_Draw_Init();
-	if ( !R_GLESD3_Programs_Init() ) {
+	const bool debugOnly = r_glesD3BringupStage.GetInteger() == 1;
+	const bool programsReady = debugOnly
+			? R_GLESD3_Programs_InitDebugOnly()
+			: R_GLESD3_Programs_Init();
+	if ( !programsReady ) {
 		// fail once and stay failed: retrying per frame would flood the log
 		// with the same compile errors at frame rate
 		rb_glesD3ResourcesFailed = true;
@@ -469,36 +482,30 @@ void RB_GLESD3_DrawView( void ) {
 		drawSurf_t **drawSurfs = (drawSurf_t **)&backEnd.viewDef->drawSurfs[0];
 		const int numDrawSurfs = backEnd.viewDef->numDrawSurfs;
 
-		// fill the depth buffer and clear colour to black, except on subviews
-		RB_GLESD3_FillDepthBuffer( drawSurfs, numDrawSurfs );
+		const int bringupStage = r_glesD3BringupStage.GetInteger();
+		int processed = numDrawSurfs;
 
-		// the main light renderer; D5 adds stencil shadows inside it
-		RB_GLESD3_DrawInteractions();
+		// Stage 1 proves only the real OpenQ4 view/camera + VitaGL indexed draw
+		// seam. Later stages progressively admit engine geometry while keeping a
+		// known-good camera-relative triangle visible as a control.
+		if ( bringupStage == 0 || bringupStage >= 2 ) {
+			RB_GLESD3_FillDepthBuffer( drawSurfs, numDrawSurfs );
+		}
+		if ( bringupStage == 0 || bringupStage >= 4 ) {
+			RB_GLESD3_DrawInteractions();
+		}
+		if ( bringupStage == 0 || bringupStage >= 3 ) {
+			processed = RB_GLESD3_DrawShaderPasses( drawSurfs, numDrawSurfs, false );
+		}
 
-		// false: stopping at the first post-process surface is now a DEFERRAL,
-		// not a drop -- the capture below lets the re-entry draw them. The
-		// re-entry does the counting, so a surface only reports as skipped if
-		// it is still refused after the screen copy exists.
-		const int processed = RB_GLESD3_DrawShaderPasses( drawSurfs, numDrawSurfs, false );
-
-		// fog volumes and blend lights, in the slot RB_STD_DrawView gives them
-		// (draw_common.cpp:10803) -- after the ambient/material walk so they
-		// tint what it drew, before the post-process walk so they are part of
-		// the frame those materials sample
-		RB_GLESD3_FogAllLights();
-
-		// post-process materials sample the finished frame, so they draw after
-		// everything that writes it -- and they can only draw once that frame
-		// has been copied into _currentRender.
-		//
-		// This used to CLEAR currentRenderCopied here, which guaranteed the
-		// second walk stopped on the same surface as the first: nothing else in
-		// the backend ever set it, so every SS_POST_PROCESS surface in every
-		// view was dropped. The capture is D7b's prerequisite and it belongs
-		// exactly here, between the fog pass and the re-entry.
-		if ( processed < numDrawSurfs ) {
-			R_GLESD3_CaptureCurrentRender();
-			RB_GLESD3_DrawShaderPasses( drawSurfs + processed, numDrawSurfs - processed, true );
+		// Fog and post-processing stay out of staged bring-up. They join only
+		// when stage 0 requests the complete renderer.
+		if ( bringupStage == 0 ) {
+			RB_GLESD3_FogAllLights();
+			if ( processed < numDrawSurfs ) {
+				R_GLESD3_CaptureCurrentRender();
+				RB_GLESD3_DrawShaderPasses( drawSurfs + processed, numDrawSurfs - processed, true );
+			}
 		}
 
 		if ( is3D && r_glesD3TestTriangle.GetBool() ) {
