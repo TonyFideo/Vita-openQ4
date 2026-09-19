@@ -181,6 +181,24 @@ jobs:
           cp "${VITAGL_REPO}/libvitaGL.a" "${VITASDK}/arm-vita-eabi/lib/libvitaGL.a"
           arm-vita-eabi-ar t "${VITASDK}/arm-vita-eabi/lib/libvitaGL.a" | head
 
+      - name: Configure full Vita engine integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build/vita-engine-config
+          meson setup build/vita-engine-config . \
+            --cross-file tools/vita/meson-vita.ini \
+            --backend ninja \
+            --buildtype release \
+            -Dplatform_backend=native \
+            -Dbuild_engine=true \
+            -Dbuild_games=false \
+            -Dbuild_game_sp=false \
+            -Dbuild_game_mp=false \
+            -Dbuild_renderer_gl=false \
+            -Dbuild_renderer_vk=false \
+            -Duse_pch=false
+
       - name: Build pre-render ELF, SELF, and VPK
         shell: bash
         run: |
