@@ -210,6 +210,7 @@ file(GLOB OPENQ4_VITA_GLESD3_SHADER_SOURCES CONFIGURE_DEPENDS
 
 add_library(openq4_vita_glesd3_probe STATIC
   ${OPENQ4_ROOT}/src/renderer/GLES/gles_Backend.cpp
+  ${OPENQ4_ROOT}/src/renderer/GLES/vita_gles_legacy.cpp
   ${OPENQ4_ROOT}/src/renderer/GLES/vita_glesd3_shader_compat.cpp
   ${OPENQ4_ROOT}/src/renderer/GLES_D3/gles_d3_backend.cpp
   ${OPENQ4_ROOT}/src/renderer/GLES_D3/gles_draw.cpp
@@ -251,6 +252,7 @@ target_compile_features(openq4_vita_glesd3_probe PRIVATE cxx_std_20)
 # view. Keeping this separate makes renderer-integration errors visible before
 # attempting a full engine link.
 add_library(openq4_vita_renderer_frontend_probe STATIC
+  ${OPENQ4_ROOT}/src/renderer/GLES/vita_gles_legacy.cpp
   ${OPENQ4_ROOT}/src/renderer/RenderSystem.cpp
   ${OPENQ4_ROOT}/src/renderer/RenderSystem_init.cpp
   ${OPENQ4_ROOT}/src/renderer/tr_backend.cpp
