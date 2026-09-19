@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Restore the minimal historical Vita3K init path in a pinned current vitaGL."""
+"""Apply the pinned vitaGL compatibility profile required by Vita3K."""
 
 from __future__ import annotations
 
@@ -68,6 +68,43 @@ def main() -> int:
 
     path.write_text(text, encoding="utf-8")
 
+    # Current vitaGL injects helper functions using Cg bit_cast into every
+    # translated GLSL program. The libshacccg path used by Vita3K rejects that
+    # identifier while linking, even when the helpers are dead code. Our
+    # Vita3K profile does not enable HAVE_FIXED_ATTRIBUTES, so vglUnpack is not
+    # injected into shader main() and can safely be an identity helper here.
+    shader_header_path = root / "source" / "shaders" / "glsl_translator_hdr.h"
+    shader_header = shader_header_path.read_text(encoding="utf-8")
+    shader_header = replace_once(
+        shader_header,
+        """#define GLFixedToFloat(fx) (float(bit_cast<short2>(fx).y + (bit_cast<unsigned short2>(fx).x * (1.0f / 65536.0f))))
+inline float vglUnpack(float v) {
+\tint bits = bit_cast<int>(v);
+\tint exponent = (bits >> 23) & 0xFF;
+\tif ((exponent == 0) || (exponent == 255))
+\t\treturn GLFixedToFloat(v);
+\treturn v;
+}
+inline float2 vglUnpack(float2 v) {
+\treturn float2(vglUnpack(v.x), vglUnpack(v.y));
+}
+inline float3 vglUnpack(float3 v) {
+\t\treturn float3(vglUnpack(v.x), vglUnpack(v.y), vglUnpack(v.z));
+}
+inline float4 vglUnpack(float4 v) {
+\t\treturn float4(vglUnpack(v.x), vglUnpack(v.y), vglUnpack(v.z), vglUnpack(v.w));
+}""",
+        """#define GLFixedToFloat(fx) (float(fx))
+inline float vglUnpack(float v) { return v; }
+inline float2 vglUnpack(float2 v) { return v; }
+inline float3 vglUnpack(float3 v) { return v; }
+inline float4 vglUnpack(float4 v) { return v; }""",
+        "Vita3K shader bit_cast helpers",
+    )
+    if "bit_cast" in shader_header:
+        raise SystemExit("Vita3K shader compatibility patch left bit_cast in translator header")
+    shader_header_path.write_text(shader_header, encoding="utf-8")
+
     checks = (
         "shark_init_simple(NULL)",
         "SCE_GXM_INITIALIZE_FLAG_DEFAULT",
@@ -78,6 +115,7 @@ def main() -> int:
             raise SystemExit(f"compat patch verification failed: {token}")
 
     print("Applied Vita3K compatibility init patch to", path)
+    print("Applied Vita3K shader-compiler compatibility patch to", shader_header_path)
     return 0
 
 

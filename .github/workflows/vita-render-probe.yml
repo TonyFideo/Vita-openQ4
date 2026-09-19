@@ -54,7 +54,7 @@ jobs:
           git -C .tmp/vitaGL checkout --detach FETCH_HEAD
           test "$(git -C .tmp/vitaGL rev-parse HEAD)" = "$VITAGL_SHA"
           python3 tools/vita/patch_vitagl_vita3k.py .tmp/vitaGL
-          make -C .tmp/vitaGL -j2 NO_SPLASHSCREEN=1 HAVE_VITA3K_SUPPORT=1 HAVE_CUSTOM_HEAP=1 SINGLE_THREADED_GC=1 LOG_ERRORS=1
+          make -C .tmp/vitaGL -j2 NO_SPLASHSCREEN=1 HAVE_VITA3K_SUPPORT=1 HAVE_CUSTOM_HEAP=1 SINGLE_THREADED_GC=1 LOG_ERRORS=1 DEBUG_GLSL_TRANSLATOR=1
           cp .tmp/vitaGL/source/vitaGL.h "$VITASDK/arm-vita-eabi/include/vitaGL.h"
           cp .tmp/vitaGL/libvitaGL.a "$VITASDK/arm-vita-eabi/lib/libvitaGL.a"
       - name: Compile and package renderer test VPK
