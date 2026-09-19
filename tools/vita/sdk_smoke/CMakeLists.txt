@@ -205,6 +205,7 @@ target_compile_features(openq4_vita_prerender_core_probe PRIVATE cxx_std_20)
 # Android renderer, compiled against VitaGL. It stays a static library for now:
 # unresolved engine globals are expected until the full engine link is enabled.
 add_library(openq4_vita_glesd3_probe STATIC
+  ${OPENQ4_ROOT}/src/renderer/GLES_D3/gles_d3_backend.cpp
   ${OPENQ4_ROOT}/src/renderer/GLES_D3/gles_draw.cpp
   ${OPENQ4_ROOT}/src/renderer/GLES_D3/gles_program.cpp
   ${OPENQ4_ROOT}/src/renderer/GLES_D3/gles_shaders.cpp
