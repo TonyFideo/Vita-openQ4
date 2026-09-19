@@ -22,6 +22,9 @@ PFN_VITA_BIND_TEXTURES glBindTextures = NULL;
 PFN_VITA_BIND_SAMPLERS glBindSamplers = NULL;
 PFN_VITA_BIND_BUFFERS_BASE glBindBuffersBase = NULL;
 
+PFN_VITA_BIND_TEXTURE_UNIT glBindTextureUnit = NULL;
+PFN_VITA_BIND_MULTI_TEXTURE_EXT glBindMultiTextureEXT = NULL;
+
 GLboolean glewExperimental = GL_FALSE;
 
 GLenum glewInit( void ) {

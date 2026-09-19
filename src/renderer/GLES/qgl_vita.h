@@ -229,6 +229,14 @@ extern PFN_VITA_BIND_TEXTURES glBindTextures;
 extern PFN_VITA_BIND_SAMPLERS glBindSamplers;
 extern PFN_VITA_BIND_BUFFERS_BASE glBindBuffersBase;
 
+typedef void ( GL_APIENTRY *PFN_VITA_BIND_TEXTURE_UNIT )(
+	GLuint unit, GLuint texture );
+typedef void ( GL_APIENTRY *PFN_VITA_BIND_MULTI_TEXTURE_EXT )(
+	GLenum texunit, GLenum target, GLuint texture );
+
+extern PFN_VITA_BIND_TEXTURE_UNIT glBindTextureUnit;
+extern PFN_VITA_BIND_MULTI_TEXTURE_EXT glBindMultiTextureEXT;
+
 // ARB shader objects do not map cleanly onto VitaGL's separate shader/program
 // namespaces. They are only part of the disabled legacy probe.
 void GL_APIENTRY glDeleteObjectARB( GLhandleARB obj );
