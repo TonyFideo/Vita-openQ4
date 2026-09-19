@@ -288,6 +288,9 @@ static idCVar r_glesD3BringupStage( "r_glesD3BringupStage", "0", CVAR_RENDERER |
 
 static GLuint	rb_glesD3TestVbo = 0;
 static GLuint	rb_glesD3TestIbo = 0;
+#if defined(VITA) || defined(__vita__)
+static GLuint	rb_glesD3ClearVbo = 0;
+#endif
 static bool		rb_glesD3ResourcesReady = false;
 static bool		rb_glesD3ResourcesFailed = false;
 static int		rb_glesD3ResourcesStage = -1;
@@ -413,6 +416,87 @@ static void RB_GLESD3_DrawTestTriangle( void ) {
 	}
 }
 
+#if defined(VITA) || defined(__vita__)
+/*
+====================
+RB_GLESD3_ClearInteractionTargetVita
+
+vitaGL's glClear(GL_COLOR_BUFFER_BIT) path leaves the previous display-buffer
+colour visible to subsequent additive blending in the GLES_D3 sequence. The
+isolated production-shader probe proved that an opaque fullscreen draw clears
+the exact same target deterministically while preserving the depth prepass.
+
+Keep this Vita-only and immediately before interactions. The debug program is
+already part of every non-stage-1 GLES_D3 program table, so no extra shader is
+introduced.
+====================
+*/
+static void RB_GLESD3_ClearInteractionTargetVita( void ) {
+	if ( backEnd.viewDef == NULL || backEnd.viewDef->viewEntitys == NULL ) {
+		return;
+	}
+
+	const glesProgram_t *program = R_GLESD3_Program( GLESD3_PROGRAM_DEBUG );
+	if ( program == NULL ) {
+		return;
+	}
+	if ( !RB_GLESD3_SetScissor( backEnd.viewDef->scissor ) ) {
+		return;
+	}
+
+	if ( rb_glesD3ClearVbo == 0 ) {
+		idDrawVert verts[ 6 ];
+		memset( verts, 0, sizeof( verts ) );
+		const float xy[ 6 ][ 2 ] = {
+			{ -1.0f,  1.0f }, { -1.0f, -1.0f }, {  1.0f, -1.0f },
+			{ -1.0f,  1.0f }, {  1.0f, -1.0f }, {  1.0f,  1.0f }
+		};
+		for ( int i = 0; i < 6; i++ ) {
+			verts[ i ].xyz.Set( xy[ i ][ 0 ], xy[ i ][ 1 ], 0.0f );
+			verts[ i ].color[ 0 ] = 0;
+			verts[ i ].color[ 1 ] = 0;
+			verts[ i ].color[ 2 ] = 0;
+			verts[ i ].color[ 3 ] = 255;
+		}
+		glGenBuffers( 1, &rb_glesD3ClearVbo );
+		glBindBuffer( GL_ARRAY_BUFFER, rb_glesD3ClearVbo );
+		glBufferData( GL_ARRAY_BUFFER, sizeof( verts ), verts, GL_STATIC_DRAW );
+	} else {
+		glBindBuffer( GL_ARRAY_BUFFER, rb_glesD3ClearVbo );
+	}
+
+	idVertexCache::InvalidateBufferBindings();
+	R_GLESD3_InvalidateAttributeState();
+
+	const GLsizei stride = sizeof( idDrawVert );
+	glEnableVertexAttribArray( GLESD3_ATTR_POSITION );
+	glEnableVertexAttribArray( GLESD3_ATTR_COLOR );
+	glVertexAttribPointer( GLESD3_ATTR_POSITION, 3, GL_FLOAT, GL_FALSE, stride,
+			RB_DrawVertAttributePointer( NULL, offsetof( idDrawVert, xyz ) ) );
+	glVertexAttribPointer( GLESD3_ATTR_COLOR, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride,
+			RB_DrawVertAttributePointer( NULL, offsetof( idDrawVert, color ) ) );
+
+	const float identity[ 16 ] = {
+		1,0,0,0,
+		0,1,0,0,
+		0,0,1,0,
+		0,0,0,1
+	};
+
+	// GLS_DEPTHMASK means depth writes OFF in idTech4's state bits. ALWAYS keeps
+	// the existing depth values untouched while the black quad overwrites colour.
+	GL_State( GLS_DEPTHMASK | GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO | GLS_DEPTHFUNC_ALWAYS );
+	GL_Cull( CT_TWO_SIDED );
+	glDisable( GL_STENCIL_TEST );
+	R_GLESD3_SetupProgramForDraw( program, identity, idVec4( 1, 1, 1, 1 ) );
+	glDrawArrays( GL_TRIANGLES, 0, 6 );
+
+	R_GLESD3_InvalidateAttributeState();
+	glBindBuffer( GL_ARRAY_BUFFER, 0 );
+	idVertexCache::InvalidateBufferBindings();
+}
+#endif
+
 /*
 ====================
 RB_GLESD3_DrawView
@@ -504,6 +588,9 @@ void RB_GLESD3_DrawView( void ) {
 			RB_GLESD3_FillDepthBuffer( drawSurfs, numDrawSurfs );
 		}
 		if ( bringupStage == 0 || bringupStage >= 4 ) {
+#if defined(VITA) || defined(__vita__)
+			RB_GLESD3_ClearInteractionTargetVita();
+#endif
 			RB_GLESD3_DrawInteractions();
 		}
 		if ( bringupStage == 0 || bringupStage >= 3 ) {
