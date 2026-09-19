@@ -5,6 +5,66 @@
 #include "GLDebugScope.h"
 #include "GLStateCache.h"
 
+#if defined(VITA) || defined(__vita__)
+
+// VitaGL does not expose KHR_debug/ARB_debug_output entry points.  These
+// helpers are optional renderer instrumentation, so keep their public API
+// available while compiling them to no-ops on Vita.
+bool R_GLDebugScope_Available( void ) { return false; }
+bool R_GLDebugObjectLabels_Available( void ) { return false; }
+bool R_GLDebugOutput_Available( void ) { return false; }
+bool R_GLDebugOutput_Registered( void ) { return false; }
+
+void R_GLDebugOutput_Init( void ) {}
+void R_GLDebugOutput_Shutdown( void ) {}
+void R_GLDebugOutput_FlushMessages( void ) {}
+
+void R_GLDebug_LabelObject( GLenum identifier, GLuint name, const char *label ) {
+	(void)identifier;
+	(void)name;
+	(void)label;
+}
+
+void R_GLDebug_LabelBuffer( GLuint name, const char *label ) {
+	(void)name;
+	(void)label;
+}
+
+void R_GLDebug_LabelTexture( GLuint name, const char *label ) {
+	(void)name;
+	(void)label;
+}
+
+void R_GLDebug_LabelFramebuffer( GLuint name, const char *label ) {
+	(void)name;
+	(void)label;
+}
+
+void R_GLDebug_LabelProgram( GLuint name, const char *label ) {
+	(void)name;
+	(void)label;
+}
+
+void R_GLDebug_LabelVertexArray( GLuint name, const char *label ) {
+	(void)name;
+	(void)label;
+}
+
+void R_GLDebug_LabelSampler( GLuint name, const char *label ) {
+	(void)name;
+	(void)label;
+}
+
+idGLDebugScope::idGLDebugScope( const char *name, unsigned int id )
+	: active( false ) {
+	(void)name;
+	(void)id;
+}
+
+idGLDebugScope::~idGLDebugScope() {}
+
+#else
+
 static bool R_GLDebug_HasDebugOutput( void ) {
 	return glConfig.backendCaps.hasDebugOutput;
 }
@@ -314,3 +374,5 @@ idGLDebugScope::~idGLDebugScope() {
 		glPopDebugGroup();
 	}
 }
+
+#endif // VITA
