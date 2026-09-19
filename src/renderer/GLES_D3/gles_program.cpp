@@ -429,6 +429,28 @@ static bool GLESD3_BuildProgram( glesD3ProgramId_t id, glesD3ProgramVariant_t va
 
 /*
 ====================
+R_GLESD3_Programs_InitDebugOnly
+
+Minimal D1 bootstrap used by Vita before the full material library is proven.
+It intentionally builds only the debug program needed by the camera-relative
+test triangle, so one unsupported advanced shader cannot turn an otherwise
+working view path into a black screen.
+====================
+*/
+bool R_GLESD3_Programs_InitDebugOnly( void ) {
+	R_GLESD3_Programs_Shutdown();
+
+	if ( !GLESD3_BuildProgram( GLESD3_PROGRAM_DEBUG, GLESD3_VARIANT_BASE ) ) {
+		common->Warning( "gles_d3: debug bring-up program failed to build" );
+		return false;
+	}
+
+	common->Printf( "gles_d3 shader library: debug-only bring-up program ready\n" );
+	return true;
+}
+
+/*
+====================
 R_GLESD3_Programs_Init
 ====================
 */
