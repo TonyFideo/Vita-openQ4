@@ -1,0 +1,14 @@
+#ifndef OPENQ4_PAKS_GENERATED_H
+#define OPENQ4_PAKS_GENERATED_H
+
+// Vita bring-up uses user-supplied Quake 4 data under ux0:data/Vita-OpenQ4.
+// Do not bake repository support packs into the engine build yet; the retail
+// data validation path will be re-enabled once the full client is running.
+#define OPENQ4_PAK0_MD5 "00000000000000000000000000000000"
+#define OPENQ4_PAK0_SIZE_BYTES 0
+#define OPENQ4_PAK0_FILE_COUNT 0
+#define OPENQ4_PAK1_MD5 "00000000000000000000000000000000"
+#define OPENQ4_PAK1_SIZE_BYTES 0
+#define OPENQ4_PAK1_FILE_COUNT 0
+
+#endif
