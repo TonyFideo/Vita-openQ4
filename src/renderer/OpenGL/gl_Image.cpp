@@ -127,9 +127,11 @@ void idImage::SubImageUpload( int mipLevel, int x, int y, int z, int width, int 
 	if ( pixelPitch != 0 ) {
 		glPixelStorei( GL_UNPACK_ROW_LENGTH, pixelPitch );
 	}
+#if !defined(VITA) && !defined(__vita__)
 	if ( opts.format == FMT_RGB565 ) {
 		glPixelStorei( GL_UNPACK_SWAP_BYTES, GL_TRUE );
 	}
+#endif
 #ifdef DEBUG
 	GL_CheckErrors();
 #endif
@@ -172,9 +174,11 @@ void idImage::SubImageUpload( int mipLevel, int x, int y, int z, int width, int 
 #ifdef DEBUG
 	GL_CheckErrors();
 #endif
+#if !defined(VITA) && !defined(__vita__)
 	if ( opts.format == FMT_RGB565 ) {
 		glPixelStorei( GL_UNPACK_SWAP_BYTES, GL_FALSE );
 	}
+#endif
 	if ( pixelPitch != 0 ) {
 		glPixelStorei( GL_UNPACK_ROW_LENGTH, 0 );
 	}
@@ -212,6 +216,7 @@ void idImage::SetTexParameters() {
 	// read Nx from alpha. Keep alpha in sync for TD_BUMP without altering RGB channels.
 	const bool duplicateBumpXToAlpha = ( usage == TD_BUMP && opts.colorFormat != CFM_NORMAL_DXT5 );
 
+#if !defined(VITA) && !defined(__vita__)
 	// ALPHA, LUMINANCE, LUMINANCE_ALPHA, and INTENSITY have been removed
 	// in OpenGL 3.2. In order to mimic those modes, we use the swizzle operators
 	// Exported GL entry points do not imply that a legacy context supports
@@ -276,6 +281,8 @@ void idImage::SetTexParameters() {
 #endif
 	}
 
+#endif
+
 	const bool hasMipChain = opts.numLevels > 1;
 
 	const imageFilterState_t defaultFilter = R_GetDefaultImageFilterState();
@@ -328,6 +335,17 @@ void idImage::SetTexParameters() {
 			glTexParameterf( target, GL_TEXTURE_WRAP_S, GL_MIRRORED_REPEAT );
 			glTexParameterf( target, GL_TEXTURE_WRAP_T, GL_MIRRORED_REPEAT );
 			break;
+#if defined(VITA) || defined(__vita__)
+		case TR_CLAMP_TO_ZERO:
+		case TR_CLAMP_TO_ZERO_ALPHA:
+		case TR_CLAMP:
+			// VitaGL/OES has no texture border colour. The CPU image path already
+			// writes the required zero/alpha border texels before upload, matching
+			// Doom3-ReArmed's Vita path; clamp sampling to that edge instead.
+			glTexParameterf( target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+			glTexParameterf( target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+			break;
+#else
 		case TR_CLAMP_TO_ZERO: {
 			float color[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
 			glTexParameterfv(target, GL_TEXTURE_BORDER_COLOR, color );
@@ -346,6 +364,7 @@ void idImage::SetTexParameters() {
 			glTexParameterf( target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
 			glTexParameterf( target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
 			break;
+#endif
 		default:
 			common->FatalError( "%s: bad texture repeat %d", GetName(), repeat );
 	}
@@ -402,7 +421,10 @@ void idImage::AllocImage() {
 		dataType = GL_UNSIGNED_SHORT_5_6_5;
 		break;
 	case FMT_ALPHA:
-#if defined( USE_CORE_PROFILE )
+#if defined(VITA) || defined(__vita__)
+		internalFormat = GL_ALPHA;
+		dataFormat = GL_ALPHA;
+#elif defined( USE_CORE_PROFILE )
 		internalFormat = GL_R8;
 		dataFormat = GL_RED;
 #else
@@ -412,7 +434,10 @@ void idImage::AllocImage() {
 		dataType = GL_UNSIGNED_BYTE;
 		break;
 	case FMT_L8A8:
-#if defined( USE_CORE_PROFILE )
+#if defined(VITA) || defined(__vita__)
+		internalFormat = GL_LUMINANCE_ALPHA;
+		dataFormat = GL_LUMINANCE_ALPHA;
+#elif defined( USE_CORE_PROFILE )
 		internalFormat = GL_RG8;
 		dataFormat = GL_RG;
 #else
@@ -422,7 +447,10 @@ void idImage::AllocImage() {
 		dataType = GL_UNSIGNED_BYTE;
 		break;
 	case FMT_LUM8:
-#if defined( USE_CORE_PROFILE )
+#if defined(VITA) || defined(__vita__)
+		internalFormat = GL_LUMINANCE;
+		dataFormat = GL_LUMINANCE;
+#elif defined( USE_CORE_PROFILE )
 		internalFormat = GL_R8;
 		dataFormat = GL_RED;
 #else
@@ -432,7 +460,10 @@ void idImage::AllocImage() {
 		dataType = GL_UNSIGNED_BYTE;
 		break;
 	case FMT_INT8:
-#if defined( USE_CORE_PROFILE )
+#if defined(VITA) || defined(__vita__)
+		internalFormat = GL_INTENSITY;
+		dataFormat = GL_LUMINANCE;
+#elif defined( USE_CORE_PROFILE )
 		internalFormat = GL_R8;
 		dataFormat = GL_RED;
 #else
@@ -475,16 +506,31 @@ void idImage::AllocImage() {
 		break;
 	case FMT_DEPTH_STENCIL:
 		internalFormat = GL_DEPTH24_STENCIL8;
+#if defined(VITA) || defined(__vita__)
+		// Vita depth/stencil images are aliases created by vglTexImageDepthBuffer;
+		// these upload fields are not consumed on the Vita path.
+		dataFormat = GL_DEPTH_COMPONENT;
+		dataType = GL_UNSIGNED_BYTE;
+#else
 		dataFormat = GL_DEPTH_STENCIL;
 		dataType = GL_UNSIGNED_INT_24_8;
+#endif
 		break;
 	case FMT_X16:
+#if defined(VITA) || defined(__vita__)
+		internalFormat = GL_INTENSITY;
+#else
 		internalFormat = GL_INTENSITY16;
+#endif
 		dataFormat = GL_LUMINANCE;
 		dataType = GL_UNSIGNED_SHORT;
 		break;
 	case FMT_Y16_X16:
+#if defined(VITA) || defined(__vita__)
+		internalFormat = GL_LUMINANCE_ALPHA;
+#else
 		internalFormat = GL_LUMINANCE16_ALPHA16;
+#endif
 		dataFormat = GL_LUMINANCE_ALPHA;
 		dataType = GL_UNSIGNED_SHORT;
 		break;
@@ -512,6 +558,13 @@ void idImage::AllocImage() {
 	int target;
 	int uploadTarget;
 	bool wantsMSAA = ( opts.textureType == TT_2D && opts.numMSAASamples > 0 );
+#if defined(VITA) || defined(__vita__)
+	if ( wantsMSAA ) {
+		common->Warning( "VitaGL: multisample textures are unsupported, disabling for %s", GetName() );
+		opts.numMSAASamples = 0;
+		wantsMSAA = false;
+	}
+#else
 	if ( wantsMSAA ) {
 		if ( glTexImage2DMultisample == NULL || !( glConfig.backendCaps.glVersion >= 3.2f ||
 			GLCapabilityProbe_HasExtension( "GL_ARB_texture_multisample" ) ) ) {
@@ -520,14 +573,17 @@ void idImage::AllocImage() {
 			wantsMSAA = false;
 		}
 	}
+#endif
 	if ( opts.textureType == TT_2D ) {
 // jmarshall
 		if ( !wantsMSAA ) {
 			target = uploadTarget = GL_TEXTURE_2D;
 		}
+#if !defined(VITA) && !defined(__vita__)
 		else {
 			target = uploadTarget = GL_TEXTURE_2D_MULTISAMPLE;
 		}
+#endif
 // jmarshall end
 		numSides = 1;
 	} else if ( opts.textureType == TT_CUBIC ) {
@@ -559,6 +615,7 @@ void idImage::AllocImage() {
 	}
 #endif
 
+#if !defined(VITA) && !defined(__vita__)
 	if ( wantsMSAA ) {
 		int samples = opts.numMSAASamples;
 #ifdef GL_MAX_SAMPLES
@@ -574,6 +631,7 @@ void idImage::AllocImage() {
 		GL_CheckErrors();
 		return;
 	}
+#endif
 
 	for ( int side = 0; side < numSides; side++ ) {
 		int w = opts.width;
@@ -622,7 +680,9 @@ void idImage::AllocImage() {
 		}
 	}
 
+#if !defined(VITA) && !defined(__vita__)
 	glTexParameteri( target, GL_TEXTURE_MAX_LEVEL, opts.numLevels - 1 );
+#endif
 
 	// see if we messed anything up
 	GL_CheckErrors();
