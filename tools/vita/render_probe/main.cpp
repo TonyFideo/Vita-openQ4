@@ -23,11 +23,13 @@ static GLint interactionLightOrigin = -1, interactionViewOrigin = -1;
 static GLsizei hudCount = 0;
 static bool sceneReady = false, paused = false, lastGlOk = true;
 static int mode = 0;
+static unsigned int modeFrame = 0;
 static const char *modeNames[] = {
     "0 MATERIAL LEQUAL",
     "1 MATERIAL PREPASADA EQUAL",
-    "2 INTERACCION EQUAL",
-    "3 INTERACCION LEQUAL"
+    "2 INTERACCION EQUAL RAW",
+    "3 INTERACCION EQUAL ADD",
+    "4 INTERACCION LEQUAL ADD"
 };
 
 static bool CreateMaterial() {
@@ -255,11 +257,40 @@ static void BindInteractionTextures() {
     glActiveTexture(GL_TEXTURE0 + 5); glBindTexture(GL_TEXTURE_2D, whiteTex);
 }
 
+static void ReloadInteractionUniforms() {
+    // Mirror GLESD3_DrawInteraction: vitaGL's custom-program path is safest
+    // when all per-draw uniforms are refreshed after switching away to the
+    // material program for the depth prepass.
+    const char *samplers[6] = {
+        "uSpecularTableMap", "uBumpMap", "uLightFalloffMap",
+        "uLightProjectionMap", "uDiffuseMap", "uSpecularMap"
+    };
+    for (int i = 0; i < 6; ++i) {
+        const GLint loc = glGetUniformLocation(interaction, samplers[i]);
+        if (loc >= 0) glUniform1i(loc, i);
+    }
+    const char *vec4Names[] = {
+        "uLightProjectionS","uLightProjectionT","uLightProjectionQ","uLightFalloffS",
+        "uBumpMatrixS","uBumpMatrixT","uDiffuseMatrixS","uDiffuseMatrixT",
+        "uSpecularMatrixS","uSpecularMatrixT","uDiffuseColor","uSpecularColor","uVertexColor"
+    };
+    const float values[][4] = {
+        {0,0,0,0.5f},{0,0,0,0.5f},{0,0,0,1},{0,0,0,0.5f},
+        {1,0,0,0},{0,1,0,0},{1,0,0,0},{0,1,0,0},
+        {1,0,0,0},{0,1,0,0},{1,1,1,1},{0.35f,0.35f,0.35f,1},{1,0,1,0}
+    };
+    for (int i = 0; i < 13; ++i) {
+        const GLint loc = glGetUniformLocation(interaction, vec4Names[i]);
+        if (loc >= 0) glUniform4fv(loc, 1, values[i]);
+    }
+    glUniform4f(interactionLightOrigin, 2.5f, 3.5f, 2.5f, 0.0f);
+    glUniform4f(interactionViewOrigin, 0.0f, 1.0f, 4.0f, 1.0f);
+}
+
 static void DrawInteraction(const Matrix &mvp, int first, int count) {
     glUseProgram(interaction);
+    ReloadInteractionUniforms();
     glUniformMatrix4fv(interactionMvp, 1, GL_FALSE, mvp.data());
-    glUniform4f(interactionLightOrigin, 2.5f, 3.5f, 2.5f, 1.0f);
-    glUniform4f(interactionViewOrigin, 0.0f, 1.0f, 4.0f, 1.0f);
     BindInteractionTextures();
     BindVertices(meshVao, meshVbo, true, true);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, meshIbo);
@@ -295,10 +326,23 @@ static void DrawScene(float angle) {
         DrawMaterial(cube, 0, CubeIndexCount);
         DrawMaterial(floor, FloorFirstIndex, FloorIndexCount);
     } else {
-        // One real Quake 4 interaction over a black target. Additive ONE:ONE
-        // matches the backend; with one light this is directly visible.
-        glEnable(GL_BLEND); glBlendFunc(GL_ONE, GL_ONE);
-        glDepthFunc(mode == 2 ? GL_EQUAL : GL_LEQUAL);
+        // Preserve depth but reset destination colour immediately before the
+        // light pass. This makes any frame-to-frame additive accumulation
+        // measurable rather than conflating it with the prepass.
+        glDisable(GL_BLEND);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        if (mode == 2) {
+            // Raw interaction output. If this drifts, the shader/uniform state
+            // is changing; blending cannot be responsible.
+            glDisable(GL_BLEND);
+            glDepthFunc(GL_EQUAL);
+        } else {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_ONE, GL_ONE);
+            glDepthFunc(mode == 3 ? GL_EQUAL : GL_LEQUAL);
+        }
         DrawInteraction(cube, 0, CubeIndexCount);
         DrawInteraction(floor, FloorFirstIndex, FloorIndexCount);
         glDisable(GL_BLEND);
@@ -372,8 +416,8 @@ static void SamplePixels() {
         unsigned char rgba[4] = {};
         glReadPixels(points[i][0], points[i][1], 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
         char line[192];
-        sceClibSnprintf(line, sizeof(line), "probe.sample mode=%d point=%d xy=%d,%d rgba=%u,%u,%u,%u",
-                        mode,i,points[i][0],points[i][1],rgba[0],rgba[1],rgba[2],rgba[3]);
+        sceClibSnprintf(line, sizeof(line), "probe.sample mode=%d frame=%u point=%d xy=%d,%d rgba=%u,%u,%u,%u",
+                        mode,modeFrame,i,points[i][0],points[i][1],rgba[0],rgba[1],rgba[2],rgba[3]);
         RendererLog(line);
     }
     // These are observations, not an automatic image-correctness verdict.
@@ -418,7 +462,8 @@ int main() {
             const unsigned int pressed = pad.buttons & ~previousButtons;
             previousButtons = pad.buttons;
             if (pressed & SCE_CTRL_CROSS) {
-                Probe::mode = (Probe::mode + 1) % 4;
+                Probe::mode = (Probe::mode + 1) % 5;
+                Probe::modeFrame = 0;
                 RendererLog(Probe::modeNames[Probe::mode]);
                 Probe::UpdateHud(); capture = true;
             }
@@ -430,7 +475,11 @@ int main() {
         glClearColor(0.025f, 0.035f, 0.065f, 1);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         if (Probe::sceneReady) Probe::DrawScene(angle);
-        if (capture) {
+        const bool autoCapture = Probe::mode >= 2 &&
+            (Probe::modeFrame == 0 || Probe::modeFrame == 1 || Probe::modeFrame == 2 ||
+             Probe::modeFrame == 3 || Probe::modeFrame == 7 || Probe::modeFrame == 15 ||
+             Probe::modeFrame == 31 || Probe::modeFrame == 63);
+        if (capture || autoCapture) {
             Probe::lastGlOk = CheckGl("probe.scene");
             Probe::SamplePixels(); Probe::UpdateHud(); capture = false;
         }
@@ -438,6 +487,7 @@ int main() {
         if (frame == 0) CheckGl("probe.hud");
         vglSwapBuffers(GL_FALSE);
         if (!Probe::paused && Probe::mode == 0) angle += 0.009f;
+        Probe::modeFrame++;
         if (++frame == 60) RendererLog("probe.presented_60_frames=1");
     }
 }
