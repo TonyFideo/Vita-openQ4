@@ -29,6 +29,9 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "tr_local.h"
+#if defined(VITA) || defined(__vita__)
+#include "../sys/vita/vita_loading_hud.h"
+#endif
 
 /*
 ========================
@@ -522,6 +525,9 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 	if ( !tr.IsOpenGLRunning() ) {
 		return;
 	}
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_SetAssetPhase( GetName(), "IMAGE select" );
+#endif
 
 	// this is the ONLY place generatorFunction will ever be called
 	if ( generatorFunction ) {
@@ -788,8 +794,20 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 			R_GetImageDownsizePolicy( GetName(), usage, allowDownSize, precompressedDownsizePolicy );
 			const bool usePrecompressedMipmaps = ( flags & IMAGEFLAG_NOMIPS ) == 0 && filter != TF_LINEAR && filter != TF_NEAREST;
 			const bool tryDirectDDSLoad = selectedDDSImage && ( explicitDDSImage || preferredDDSPrecompressed );
+			bool directDDSLoaded = false;
+			if ( tryDirectDDSLoad ) {
+#if defined(VITA) || defined(__vita__)
+				VitaLoadingHud_SetAssetPhase( loadSourceName, "DDS decode" );
+#endif
+				directDDSLoaded = R_LoadPrecompressedDDS(
+					loadSourceName, im, &sourceFileTime, usage,
+					precompressedDownsizePolicy, usePrecompressedMipmaps );
+#if defined(VITA) || defined(__vita__)
+				VitaLoadingHud_SetAssetPhase( loadSourceName, directDDSLoaded ? "DDS ready" : "DDS fallback" );
+#endif
+			}
 
-			if ( tryDirectDDSLoad && R_LoadPrecompressedDDS( loadSourceName, im, &sourceFileTime, usage, precompressedDownsizePolicy, usePrecompressedMipmaps ) ) {
+			if ( directDDSLoaded ) {
 				const bimageFile_t &header = im.GetFileHeader();
 				opts.width = header.width;
 				opts.height = header.height;
@@ -824,6 +842,9 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 				}
 
 				// load the full specification, and perform any image program calculations
+#if defined(VITA) || defined(__vita__)
+				VitaLoadingHud_SetAssetPhase( fallbackLoadSourceName, "SOURCE decode" );
+#endif
 				R_LoadImageProgramForDeclaredUsage( fallbackLoadSourceName, &pic, &width, &height, &sourceFileTime, usage );
 				if ( pic == NULL && preferredDDSImage && !preferredDDSPrecompressed ) {
 					common->Warning( "Couldn't decode preferred DDS replacement %s for %s; falling back to original source", loadSourceName, GetName() );
@@ -882,14 +903,23 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 
 	{
 		idScopedImageLoadPhase uploadPhase( imageLoadPhaseTimings.uploadMsec, imageLoadPhaseTimings.uploadCount );
+#if defined(VITA) || defined(__vita__)
+		VitaLoadingHud_SetAssetPhase( GetName(), "GPU alloc" );
+#endif
 		AllocImage();
 
 		const int imageCount = im.NumImages();
+#if defined(VITA) || defined(__vita__)
+		VitaLoadingHud_SetAssetPhase( GetName(), "GPU upload" );
+#endif
 		for ( int i = 0; i < imageCount; i++ ) {
 			const bimageImage_t & img = im.GetImageHeader( i );
 			const byte * data = im.GetImageData( i );
 			SubImageUpload( img.level, 0, 0, img.destZ, img.width, img.height, data );
 		}
+#if defined(VITA) || defined(__vita__)
+		VitaLoadingHud_SetAssetPhase( GetName(), "GPU ready" );
+#endif
 	}
 	loadedSourceName = selectedSourceName;
 }

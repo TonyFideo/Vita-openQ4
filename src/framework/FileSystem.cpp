@@ -2306,6 +2306,17 @@ bool idFileSystemLocal::ResolveCaseInsensitiveOSPath( const char *path, idStr &r
 #ifndef WIN32
 		idStr exactPath = resolvedPath;
 		exactPath.AppendPath( segment );
+#if defined(VITA) || defined(__vita__)
+		// When a logical PK4 tree walks through a loose path whose first missing
+		// directory is already known (for example q4base/gfx), stop at that prefix.
+		// The old negative cache only remembered the complete requested path, so
+		// every sibling below gfx re-enumerated q4base to rediscover the same miss.
+		if ( directoryOnly && VitaDirectoryKnownMissing( exactPath.c_str() ) ) {
+			resolvedPath = normalized;
+			ReplaceSeparators( resolvedPath );
+			return false;
+		}
+#endif
 		struct stat exactStat;
 		const bool exactEntryMatches = stat( exactPath.c_str(), &exactStat ) == 0 &&
 			( directoryOnly ? S_ISDIR( exactStat.st_mode ) : !S_ISDIR( exactStat.st_mode ) );
@@ -2318,6 +2329,11 @@ bool idFileSystemLocal::ResolveCaseInsensitiveOSPath( const char *path, idStr &r
 		if ( exactEntryMatches ) {
 			resolvedSegment = segment;
 		} else if ( !FindCaseInsensitiveOSPathEntry( parentDirectory, segment.c_str(), directoryOnly, resolvedSegment ) ) {
+#if defined(VITA) || defined(__vita__)
+			if ( directoryOnly ) {
+				VitaCacheMissingDirectory( exactPath.c_str() );
+			}
+#endif
 			if ( fs_debug.GetBool() ) {
 				common->Printf( "idFileSystemLocal::ResolveCaseInsensitiveOSPath: could not resolve %s segment '%s' under '%s' while resolving '%s'\n",
 					directoryOnly ? "directory" : "file",

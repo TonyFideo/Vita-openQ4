@@ -29,6 +29,8 @@ struct vitaLoadingHudState_t {
 	SceUID logFd;
 	uint64_t lastNativeDrawUsec;
 	char lastLoggedGuiAsset[128];
+	char lastPhaseAsset[128];
+	char lastPhaseName[64];
 	vitaLoadingHudSnapshot_t snapshot;
 };
 
@@ -330,14 +332,14 @@ void VitaLoadingHud_Init( void ) {
 	HudCopy( hud.snapshot.lastAsset, sizeof( hud.snapshot.lastAsset ), "-" );
 	HudCopy( hud.snapshot.lastPak, sizeof( hud.snapshot.lastPak ), "-" );
 
-	HudInitStage( VITA_LOAD_ENGINE, "MOTOR", 10 );
+	HudInitStage( VITA_LOAD_ENGINE, "MOTOR", 11 );
 	HudInitStage( VITA_LOAD_Q4_PAKS, "PK4 QUAKE4", 0 );
 	HudInitStage( VITA_LOAD_OPENQ4_PAKS, "PK4 OPENQ4", 0 );
 	HudInitStage( VITA_LOAD_MATERIALS, "MATERIALES", 0 );
 	HudInitStage( VITA_LOAD_IMAGES, "IMAGENES/DDS", 0 );
 	HudInitStage( VITA_LOAD_GUI, "GUI", 0 );
 	HudInitStage( VITA_LOAD_SOUND, "SONIDO", 0 );
-	HudInitStage( VITA_LOAD_SESSION, "SESION", 1 );
+	HudInitStage( VITA_LOAD_SESSION, "SESION", 2 );
 
 	sceIoMkdir( VITA_OPENQ4_WRITABLE_ROOT, 0777 );
 	sceIoMkdir( VITA_OPENQ4_WRITABLE_ROOT "/logs", 0777 );
@@ -464,6 +466,38 @@ void VitaLoadingHud_SetAssetContext( const char *relativePath, const char *pakPa
 		 !HudEqualsIgnoreCase( hud.lastLoggedGuiAsset, relativePath != NULL ? relativePath : "" ) ) {
 		HudCopy( hud.lastLoggedGuiAsset, sizeof( hud.lastLoggedGuiAsset ), relativePath );
 		VitaLoadingHud_LogInfo( "GUI abre: %s", relativePath != NULL ? relativePath : "?" );
+	} else {
+		VitaLoadingHud_TickNative( false );
+	}
+}
+
+void VitaLoadingHud_SetAssetPhase( const char *relativePath, const char *phase ) {
+	if ( !hud.initialized ) {
+		return;
+	}
+
+	if ( relativePath != NULL && relativePath[0] != '\0' ) {
+		HudCopy( hud.snapshot.lastAsset, sizeof( hud.snapshot.lastAsset ), relativePath );
+	}
+	if ( phase != NULL && phase[0] != '\0' ) {
+		HudCopy( hud.snapshot.lastStage, sizeof( hud.snapshot.lastStage ), phase );
+		char status[128];
+		sceClibSnprintf( status, sizeof( status ), "%s: %s",
+			phase, relativePath != NULL ? relativePath : "?" );
+		HudCopy( hud.snapshot.status, sizeof( hud.snapshot.status ), status );
+	}
+
+	const bool diagnosticAsset = HudAssetStage( relativePath ) == VITA_LOAD_GUI ||
+		HudContainsIgnoreCase( relativePath, "mainmenu" );
+	const bool phaseChanged =
+		!HudEqualsIgnoreCase( hud.lastPhaseAsset, relativePath != NULL ? relativePath : "" ) ||
+		!HudEqualsIgnoreCase( hud.lastPhaseName, phase != NULL ? phase : "" );
+	if ( diagnosticAsset && phaseChanged ) {
+		HudCopy( hud.lastPhaseAsset, sizeof( hud.lastPhaseAsset ), relativePath );
+		HudCopy( hud.lastPhaseName, sizeof( hud.lastPhaseName ), phase );
+		VitaLoadingHud_LogInfo( "%s: %s",
+			phase != NULL ? phase : "ASSET",
+			relativePath != NULL ? relativePath : "?" );
 	} else {
 		VitaLoadingHud_TickNative( false );
 	}

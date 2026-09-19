@@ -6873,6 +6873,10 @@ void idCommonLocal::Init( int argc, const char **argv, const char *cmdline ) {
 			// if the user didn't give any commands, run default action
 			session->StartMenu( true );
 		}
+#if defined(VITA) || defined(__vita__)
+		VitaLoadingHud_SetStageProgress( VITA_LOAD_SESSION, 2, 2, "Frontend listo" );
+		VitaLoadingHud_SetEngineProgress( 11, 11, "Frontend/menu", true );
+#endif
 
 		if ( com_WriteSingleDeclFile.GetBool() ) {
 			declManager->WriteDeclFile();
@@ -6983,11 +6987,11 @@ void idCommonLocal::InitGame( void ) {
 
 	// initialize the file system
 #if defined(VITA) || defined(__vita__)
-	VitaLoadingHud_SetEngineProgress( 0, 10, "Filesystem", false );
+	VitaLoadingHud_SetEngineProgress( 0, 11, "Filesystem", false );
 #endif
 	fileSystem->Init();
 #if defined(VITA) || defined(__vita__)
-	VitaLoadingHud_SetEngineProgress( 1, 10, "Filesystem", true );
+	VitaLoadingHud_SetEngineProgress( 1, 11, "Filesystem", true );
 #endif
 
 	// attach the integrated BSE manager before decl initialization so DECL_EFFECT
@@ -7002,11 +7006,11 @@ void idCommonLocal::InitGame( void ) {
 
 	// initialize the declaration manager
 #if defined(VITA) || defined(__vita__)
-	VitaLoadingHud_SetEngineProgress( 1, 10, "Declaraciones", false );
+	VitaLoadingHud_SetEngineProgress( 1, 11, "Declaraciones", false );
 #endif
 	declManager->Init();
 #if defined(VITA) || defined(__vita__)
-	VitaLoadingHud_SetEngineProgress( 2, 10, "Declaraciones", true );
+	VitaLoadingHud_SetEngineProgress( 2, 11, "Declaraciones", true );
 #endif
 
 	// force r_fullscreen 0 if running a tool
@@ -7029,11 +7033,11 @@ void idCommonLocal::InitGame( void ) {
 
 	// initialize the renderSystem data structures, but don't start OpenGL yet
 #if defined(VITA) || defined(__vita__)
-	VitaLoadingHud_SetEngineProgress( 2, 10, "Renderer datos", false );
+	VitaLoadingHud_SetEngineProgress( 2, 11, "Renderer datos", false );
 #endif
 	renderSystem->Init();
 #if defined(VITA) || defined(__vita__)
-	VitaLoadingHud_SetEngineProgress( 3, 10, "Renderer datos", true );
+	VitaLoadingHud_SetEngineProgress( 3, 11, "Renderer datos", true );
 #endif
 
 	// The render-geometry library is linked independently into module-only
@@ -7129,7 +7133,7 @@ void idCommonLocal::InitGame( void ) {
 	Common_MigrateLegacyNetworkRateCaps();
 
 #if defined(VITA) || defined(__vita__)
-	VitaLoadingHud_SetEngineProgress( 4, 10, "Configuracion e idioma", true );
+	VitaLoadingHud_SetEngineProgress( 4, 11, "Configuracion e idioma", true );
 #endif
 	// cvars are initialized, but not the rendering system. Allow preference startup dialog
 	Sys_DoPreferences();
@@ -7137,7 +7141,7 @@ void idCommonLocal::InitGame( void ) {
 	// init the user command input code
 	usercmdGen->Init();
 #if defined(VITA) || defined(__vita__)
-	VitaLoadingHud_SetEngineProgress( 5, 10, "Entrada", true );
+	VitaLoadingHud_SetEngineProgress( 5, 11, "Entrada", true );
 #endif
 
 	PrintLoadingMessage( common->GetLanguageDict()->GetString( "#str_104346" ) );
@@ -7145,7 +7149,7 @@ void idCommonLocal::InitGame( void ) {
 	// start the sound system, but don't do any hardware operations yet
 	soundSystem->Init();
 #if defined(VITA) || defined(__vita__)
-	VitaLoadingHud_SetEngineProgress( 6, 10, "Sonido", true );
+	VitaLoadingHud_SetEngineProgress( 6, 11, "Sonido", true );
 #endif
 
 	PrintLoadingMessage( common->GetLanguageDict()->GetString( "#str_104347" ) );
@@ -7153,7 +7157,7 @@ void idCommonLocal::InitGame( void ) {
 	// init async network
 	idAsyncNetwork::Init();
 #if defined(VITA) || defined(__vita__)
-	VitaLoadingHud_SetEngineProgress( 7, 10, "Red", true );
+	VitaLoadingHud_SetEngineProgress( 7, 11, "Red", true );
 #endif
 
 #ifdef	ID_DEDICATED
@@ -7168,7 +7172,7 @@ void idCommonLocal::InitGame( void ) {
 		PrintLoadingMessage( common->GetLanguageDict()->GetString( "#str_104348" ) );
 		InitRenderSystem();
 #if defined(VITA) || defined(__vita__)
-		VitaLoadingHud_SetEngineProgress( 8, 10, "VitaGL renderer", true );
+		VitaLoadingHud_SetEngineProgress( 8, 11, "VitaGL renderer", true );
 #endif
 	}
 #endif
@@ -7191,7 +7195,7 @@ void idCommonLocal::InitGame( void ) {
 	// load the game dll
 	LoadGameDLL();
 #if defined(VITA) || defined(__vita__)
-	VitaLoadingHud_SetEngineProgress( 9, 10, "UI y juego", true );
+	VitaLoadingHud_SetEngineProgress( 9, 11, "UI y juego", true );
 #endif
 	
 	PrintLoadingMessage( common->GetLanguageDict()->GetString( "#str_104351" ) );
@@ -7199,8 +7203,8 @@ void idCommonLocal::InitGame( void ) {
 	// init the session
 	session->Init();
 #if defined(VITA) || defined(__vita__)
-	VitaLoadingHud_SetStageProgress( VITA_LOAD_SESSION, 1, 1, "Lista" );
-	VitaLoadingHud_SetEngineProgress( 10, 10, "Sesion", true );
+	VitaLoadingHud_SetStageProgress( VITA_LOAD_SESSION, 1, 2, "Inicializada" );
+	VitaLoadingHud_SetEngineProgress( 10, 11, "Sesion", true );
 #endif
 
 	// have to do this twice.. first one sets the correct r_mode for the renderer init

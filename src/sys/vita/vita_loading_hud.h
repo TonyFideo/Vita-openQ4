@@ -60,6 +60,7 @@ void VitaLoadingHud_PakDirectoryDiscovered( const char *gameDir, int count );
 void VitaLoadingHud_PakProcessed( const char *gameDir, const char *pakName, bool loaded, bool skipped );
 void VitaLoadingHud_IndexAsset( const char *relativePath );
 void VitaLoadingHud_SetAssetContext( const char *relativePath, const char *pakPath );
+void VitaLoadingHud_SetAssetPhase( const char *relativePath, const char *phase );
 void VitaLoadingHud_AssetLoaded( const char *relativePath, const char *pakPath, bool firstLoad );
 void VitaLoadingHud_AssetError( const char *relativePath, const char *pakPath, const char *reason );
 
