@@ -99,9 +99,11 @@ def validate_every_unload_restores() -> None:
         "Com_UnloadGameModuleBinary",
     )
 
-    # a new load site has to capture before its GetGameAPI; count them so it
-    # cannot appear without this test being revisited
-    for function, expected in (("DLL_Load", 1), ("Sys_DLL_Load", 0), ("GetGameAPI", 1)):
+    # A new load site has to capture before invoking the resolved entry point.
+    # Count the common GetGameAPIEntry invocation rather than the literal
+    # GetGameAPI symbol: Vita assigns the statically linked ::GetGameAPI while
+    # desktop resolves the same callable through Sys_DLL_GetProcAddress.
+    for function, expected in (("DLL_Load", 1), ("Sys_DLL_Load", 0), ("GetGameAPIEntry", 1)):
         found = call_count(common, function)
         if found != expected:
             raise AssertionError(f"expected {expected} {function} calls in {COMMON}, found {found}")
@@ -114,7 +116,7 @@ def validate_every_unload_restores() -> None:
             "gameDLL = sys->DLL_Load( dllPath );",
             "gameModuleCompletions.Capture();",
             'Sys_DLL_GetProcAddress( gameDLL, "GetGameAPI" )',
-            "GetGameAPI( &gameImport )",
+            "GetGameAPIEntry( &gameImport )",
             "game->Init();",
         ),
         context,
