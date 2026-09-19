@@ -216,37 +216,35 @@ static bool CreateSmokeProgram( void ) {
 }
 
 static bool CreateSmokeGeometry( void ) {
-	RendererLog( "renderer.stage=geometry-create-begin" );
+	RendererLog( "renderer.stage=glesd3-indexed-geometry-begin" );
 
-	// Two triangles in normalized device coordinates. This deliberately follows
-	// the VBO + vertex-attrib path used by the GLES_D3 renderer instead of
-	// VitaGL's legacy immediate mode.
+	// Four vertices + six indexes deliberately match the indexed submission shape
+	// used by RB_GLESD3_DrawTestTriangle / R_GLESD3_DrawElements.
 	static const GLfloat positions[] = {
-		-0.62f, -0.48f,
-		 0.62f, -0.48f,
-		 0.62f,  0.48f,
-		-0.62f, -0.48f,
-		 0.62f,  0.48f,
-		-0.62f,  0.48f
+		-0.62f, -0.48f, 0.0f,
+		 0.62f, -0.48f, 0.0f,
+		 0.62f,  0.48f, 0.0f,
+		-0.62f,  0.48f, 0.0f
 	};
 
 	static const GLfloat fullScreenPositions[] = {
-		-1.0f, -1.0f,
-		 1.0f, -1.0f,
-		 1.0f,  1.0f,
-		-1.0f, -1.0f,
-		 1.0f,  1.0f,
-		-1.0f,  1.0f
+		-1.0f, -1.0f, 0.0f,
+		 1.0f, -1.0f, 0.0f,
+		 1.0f,  1.0f, 0.0f,
+		-1.0f,  1.0f, 0.0f
 	};
 
 	static const GLfloat colors[] = {
 		0.10f, 0.45f, 1.00f, 1.00f,
 		0.10f, 1.00f, 0.45f, 1.00f,
 		1.00f, 0.85f, 0.10f, 1.00f,
-		0.10f, 0.45f, 1.00f, 1.00f,
-		1.00f, 0.85f, 0.10f, 1.00f,
 		0.95f, 0.15f, 0.55f, 1.00f
 	};
+
+	static const GLushort indexes[] = { 0, 1, 2, 0, 2, 3 };
+
+	glGenVertexArrays( 1, &smokeVao );
+	glBindVertexArray( smokeVao );
 
 	glGenBuffers( 1, &smokePositionBuffer );
 	glBindBuffer( GL_ARRAY_BUFFER, smokePositionBuffer );
@@ -260,62 +258,62 @@ static bool CreateSmokeGeometry( void ) {
 	glBindBuffer( GL_ARRAY_BUFFER, smokeColorBuffer );
 	glBufferData( GL_ARRAY_BUFFER, sizeof( colors ), colors, GL_STATIC_DRAW );
 
-	glBindBuffer( GL_ARRAY_BUFFER, 0 );
+	glGenBuffers( 1, &smokeIndexBuffer );
+	glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, smokeIndexBuffer );
+	glBufferData( GL_ELEMENT_ARRAY_BUFFER, sizeof( indexes ), indexes, GL_STATIC_DRAW );
 
-	if ( smokePositionBuffer == 0 || smokeFullScreenPositionBuffer == 0 || smokeColorBuffer == 0 ) {
+	glBindBuffer( GL_ARRAY_BUFFER, 0 );
+	glBindVertexArray( 0 );
+
+	if ( smokeVao == 0 || smokePositionBuffer == 0 || smokeFullScreenPositionBuffer == 0
+			|| smokeColorBuffer == 0 || smokeIndexBuffer == 0 ) {
 		RendererLog( "renderer.stage=geometry-buffer-failed" );
 		return false;
 	}
 
-	RendererLog( "renderer.stage=geometry-create-ok" );
-	return CheckGl( "geometry-create" );
+	RendererLog( "renderer.stage=glesd3-indexed-geometry-ok" );
+	return CheckGl( "glesd3-indexed-geometry" );
+}
+
+static void BindSmokeDrawState( GLuint positionBuffer ) {
+	glUseProgram( smokeProgram );
+	glBindVertexArray( smokeVao );
+
+	glEnableVertexAttribArray( 0 );
+	glBindBuffer( GL_ARRAY_BUFFER, positionBuffer );
+	glVertexAttribPointer( 0, 3, GL_FLOAT, GL_FALSE, 0, reinterpret_cast<const GLvoid *>( 0 ) );
+
+	glEnableVertexAttribArray( 1 );
+	glBindBuffer( GL_ARRAY_BUFFER, smokeColorBuffer );
+	glVertexAttribPointer( 1, 4, GL_FLOAT, GL_FALSE, 0, reinterpret_cast<const GLvoid *>( 0 ) );
+
+	glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, smokeIndexBuffer );
+}
+
+static void EndSmokeDrawState( void ) {
+	glDisableVertexAttribArray( 0 );
+	glDisableVertexAttribArray( 1 );
+	glBindBuffer( GL_ARRAY_BUFFER, 0 );
+	glBindVertexArray( 0 );
 }
 
 static void DrawSmokeGeometry( void ) {
-	glUseProgram( smokeProgram );
-
-	glEnableVertexAttribArray( 0 );
-	glBindBuffer( GL_ARRAY_BUFFER, smokePositionBuffer );
-	glVertexAttribPointer( 0, 2, GL_FLOAT, GL_FALSE, 0, reinterpret_cast<const GLvoid *>( 0 ) );
-
-	glEnableVertexAttribArray( 1 );
-	glBindBuffer( GL_ARRAY_BUFFER, smokeColorBuffer );
-	glVertexAttribPointer( 1, 4, GL_FLOAT, GL_FALSE, 0, reinterpret_cast<const GLvoid *>( 0 ) );
-
-	glDrawArrays( GL_TRIANGLES, 0, 6 );
-
-	glDisableVertexAttribArray( 0 );
-	glDisableVertexAttribArray( 1 );
-	glBindBuffer( GL_ARRAY_BUFFER, 0 );
+	BindSmokeDrawState( smokePositionBuffer );
+	glDrawElements( GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, reinterpret_cast<const GLvoid *>( 0 ) );
+	EndSmokeDrawState();
 }
 
 static void DrawScissorProbe( int x, int y ) {
-	// Do not use glClear for this validation. On VitaGL the clear path has its
-	// own internal shader/state handling; OpenQ4 primarily needs scissor to
-	// constrain normal surface draws. A fullscreen draw clipped to a 64x64 box
-	// tests that exact path.
 	glEnable( GL_SCISSOR_TEST );
 	glScissor( x, y, 64, 64 );
 
-	glUseProgram( smokeProgram );
+	BindSmokeDrawState( smokeFullScreenPositionBuffer );
+	glDrawElements( GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, reinterpret_cast<const GLvoid *>( 0 ) );
+	EndSmokeDrawState();
 
-	glEnableVertexAttribArray( 0 );
-	glBindBuffer( GL_ARRAY_BUFFER, smokeFullScreenPositionBuffer );
-	glVertexAttribPointer( 0, 2, GL_FLOAT, GL_FALSE, 0, reinterpret_cast<const GLvoid *>( 0 ) );
-
-	glEnableVertexAttribArray( 1 );
-	glBindBuffer( GL_ARRAY_BUFFER, smokeColorBuffer );
-	glVertexAttribPointer( 1, 4, GL_FLOAT, GL_FALSE, 0, reinterpret_cast<const GLvoid *>( 0 ) );
-
-	glDrawArrays( GL_TRIANGLES, 0, 6 );
-
-	glDisableVertexAttribArray( 0 );
-	glDisableVertexAttribArray( 1 );
-	glBindBuffer( GL_ARRAY_BUFFER, 0 );
 	glDisable( GL_SCISSOR_TEST );
 }
 
-}
 
 bool VitaRendererSmoke_Init( void ) {
 	RendererLog( "renderer.stage=vitagl-init-begin" );
