@@ -128,24 +128,20 @@ static bool CheckProgram( GLuint program ) {
 }
 
 static bool CreateSmokeProgram( void ) {
-	RendererLog( "renderer.stage=shader-create-begin" );
+	RendererLog( "renderer.stage=glesd3-debug-shader-begin" );
 
-	static const GLchar *vertexSource =
-		"float4 out vColor : TEXCOORD0; "
-		"float4 out gl_Position : POSITION; "
-		"void main(float2 VertexPosition, float4 VertexColor) { "
-		"    vColor = VertexColor; "
-		"    gl_Position = float4(VertexPosition, 0.0, 1.0); "
-		"}";
+	// Exercise the actual OpenQ4 GLES_D3 debug shader. The Android source stays
+	// byte-for-byte intact; only GLES3 declaration syntax is normalized at the
+	// VitaGL boundary.
+	const std::string vertexNormalized =
+		Vita_GLESD3_NormalizeShaderSource( glesDebugShaderVP, GL_VERTEX_SHADER );
+	const std::string fragmentNormalized =
+		Vita_GLESD3_NormalizeShaderSource( glesDebugShaderFP, GL_FRAGMENT_SHADER );
+	const GLchar *vertexSource = vertexNormalized.c_str();
+	const GLchar *fragmentSource = fragmentNormalized.c_str();
 
-	static const GLchar *fragmentSource =
-		"float4 in vColor : TEXCOORD0; "
-		"float4 main() : COLOR { "
-		"    return vColor; "
-		"}";
-
-	const GLuint vertexShader = glCreateShader( GL_CG_VERTEX_SHADER_EXT );
-	const GLuint fragmentShader = glCreateShader( GL_CG_FRAGMENT_SHADER_EXT );
+	const GLuint vertexShader = glCreateShader( GL_VERTEX_SHADER );
+	const GLuint fragmentShader = glCreateShader( GL_FRAGMENT_SHADER );
 	if ( vertexShader == 0 || fragmentShader == 0 ) {
 		RendererLog( "renderer.stage=shader-handle-failed" );
 		return false;
@@ -153,13 +149,13 @@ static bool CreateSmokeProgram( void ) {
 
 	glShaderSource( vertexShader, 1, &vertexSource, NULL );
 	glCompileShader( vertexShader );
-	if ( !CheckShader( vertexShader, "vertex" ) ) {
+	if ( !CheckShader( vertexShader, "glesd3-debug-vertex" ) ) {
 		return false;
 	}
 
 	glShaderSource( fragmentShader, 1, &fragmentSource, NULL );
 	glCompileShader( fragmentShader );
-	if ( !CheckShader( fragmentShader, "fragment" ) ) {
+	if ( !CheckShader( fragmentShader, "glesd3-debug-fragment" ) ) {
 		return false;
 	}
 
@@ -171,19 +167,52 @@ static bool CreateSmokeProgram( void ) {
 
 	glAttachShader( smokeProgram, vertexShader );
 	glAttachShader( smokeProgram, fragmentShader );
-	glBindAttribLocation( smokeProgram, 0, "VertexPosition" );
-	glBindAttribLocation( smokeProgram, 1, "VertexColor" );
+	glBindAttribLocation( smokeProgram, 0, "inPosition" );
+	glBindAttribLocation( smokeProgram, 1, "inColor" );
+	glBindAttribLocation( smokeProgram, 2, "inNormal" );
+	glBindAttribLocation( smokeProgram, 3, "inTangent" );
+	glBindAttribLocation( smokeProgram, 4, "inBitangent" );
+	glBindAttribLocation( smokeProgram, 5, "inTexCoord" );
 	glLinkProgram( smokeProgram );
 	if ( !CheckProgram( smokeProgram ) ) {
 		return false;
 	}
 
 	glUseProgram( smokeProgram );
+	smokeMvpUniform = glGetUniformLocation( smokeProgram, "uMVP" );
+	smokeColorUniform = glGetUniformLocation( smokeProgram, "uColor" );
+	smokeAlphaTestUniform = glGetUniformLocation( smokeProgram, "uAlphaTest" );
+
+	static const GLfloat identityMvp[16] = {
+		1.0f, 0.0f, 0.0f, 0.0f,
+		0.0f, 1.0f, 0.0f, 0.0f,
+		0.0f, 0.0f, 1.0f, 0.0f,
+		0.0f, 0.0f, 0.0f, 1.0f
+	};
+	if ( smokeMvpUniform >= 0 ) {
+		glUniformMatrix4fv( smokeMvpUniform, 1, GL_FALSE, identityMvp );
+	}
+	if ( smokeColorUniform >= 0 ) {
+		glUniform4f( smokeColorUniform, 1.0f, 1.0f, 1.0f, 1.0f );
+	}
+	if ( smokeAlphaTestUniform >= 0 ) {
+		glUniform1f( smokeAlphaTestUniform, -1.0f );
+	}
+
 	glDeleteShader( vertexShader );
 	glDeleteShader( fragmentShader );
 
-	RendererLog( "renderer.stage=shader-create-ok" );
-	return CheckGl( "shader-create" );
+	char line[192];
+	sceClibSnprintf(
+		line,
+		sizeof( line ),
+		"renderer.glesd3.debug.uniforms mvp=%d color=%d alpha=%d",
+		static_cast<int>( smokeMvpUniform ),
+		static_cast<int>( smokeColorUniform ),
+		static_cast<int>( smokeAlphaTestUniform ) );
+	RendererLog( line );
+	RendererLog( "renderer.stage=glesd3-debug-shader-ok" );
+	return CheckGl( "glesd3-debug-shader" );
 }
 
 static bool CreateSmokeGeometry( void ) {
