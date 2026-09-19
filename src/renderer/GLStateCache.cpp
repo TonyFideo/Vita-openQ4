@@ -1026,10 +1026,17 @@ bool RendererGLStateCache_RunSelfTest( void ) {
 		cache.BindTextures( 0, 2, textureNames );
 	}
 	{
+#if defined(VITA) || defined(__vita__)
+		GLuint textureNames[2] = { 0, 0 };
+		GLenum textureTargets[2] = { GL_TEXTURE_2D, GL_TEXTURE_CUBE_MAP };
+		cache.BindTextures( 0, 2, textureNames, textureTargets );
+		cache.BindTextures( 0, 2, textureNames, textureTargets );
+#else
 		GLuint textureNames[3] = { 0, 0, 0 };
 		GLenum textureTargets[3] = { GL_TEXTURE_2D, GL_TEXTURE_CUBE_MAP, GL_TEXTURE_2D_ARRAY };
 		cache.BindTextures( 0, 3, textureNames, textureTargets );
 		cache.BindTextures( 0, 3, textureNames, textureTargets );
+#endif
 	}
 	if ( glBindSamplers != NULL ) {
 		GLuint samplerNames[2] = { 0, 0 };
