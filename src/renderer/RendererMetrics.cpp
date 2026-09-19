@@ -824,6 +824,10 @@ static const char *R_RendererMetrics_ScenePacketSourceName( const rendererMetric
 }
 
 static bool R_RendererMetrics_GpuPassTimersAvailable( void ) {
+#if defined(VITA) || defined(__vita__)
+	// vitaGL does not expose the elapsed/timestamp query contract used here.
+	return false;
+#else
 	return glConfig.backendCaps.hasTimerQuery &&
 		glGenQueries != NULL &&
 		glDeleteQueries != NULL &&
@@ -831,6 +835,7 @@ static bool R_RendererMetrics_GpuPassTimersAvailable( void ) {
 		glEndQuery != NULL &&
 		glGetQueryObjectiv != NULL &&
 		glGetQueryObjectuiv != NULL;
+#endif
 }
 
 static bool R_RendererMetrics_GpuTimersEnabled( void ) {
@@ -864,6 +869,31 @@ static const char *R_RendererMetrics_FormatGpuMsec( const rendererMetricsFrame_t
 }
 
 #ifndef OPENQ4_RENDERER_VK_MODULE
+#if defined(VITA) || defined(__vita__)
+static bool R_RendererMetrics_GlTimestampQueriesSupported( void ) {
+	return false;
+}
+
+static void R_RendererMetrics_PollGpuTimerFrame( rendererGpuTimerFrame_t &frame ) {
+	frame.numQueries = 0;
+	memset( &rg_gpuTimerLatest, 0, sizeof( rg_gpuTimerLatest ) );
+}
+
+static bool R_RendererMetrics_GlFullFrameTimingAvailable( void ) {
+	return false;
+}
+
+static bool R_RendererMetrics_PollGlFullFrameTiming( rendererGpuTimerFrame_t &frame ) {
+	frame.fullFramePending = false;
+	frame.fullFrameOpen = false;
+	return true;
+}
+
+static bool R_RendererMetrics_BeginGlFullFrameTiming( rendererGpuTimerFrame_t &frame ) {
+	frame.fullFrameOpen = false;
+	return false;
+}
+#else
 static bool R_RendererMetrics_GlTimestampQueriesSupported( void ) {
 	// EXT_timer_query only provides elapsed queries. Timestamp pairs require
 	// OpenGL 3.3 or ARB_timer_query, regardless of exported loader functions.
@@ -990,6 +1020,7 @@ static bool R_RendererMetrics_BeginGlFullFrameTiming( rendererGpuTimerFrame_t &f
 	glQueryCounter( frame.fullFrameBeginQuery, GL_TIMESTAMP );
 	return true;
 }
+#endif
 #endif
 
 void R_RendererMetrics_BeginFrame( int frameCount ) {
@@ -2562,6 +2593,57 @@ void R_RendererMetrics_EndFrame( int frontEndMsec, int backEndMsec, int viewCoun
 	}
 }
 
+#if defined(VITA) || defined(__vita__)
+void R_RendererMetrics_BeginGpuBackendFrame( void ) {
+	rg_gpuTimerQueryActive = false;
+	rg_gpuTimerActiveQuery = NULL;
+	rg_gpuTimerOverflowThisFrame = false;
+	R_RendererMetrics_SetGpuFrameTimingBackend( RENDER_GPU_TIMING_BACKEND_NONE, false );
+}
+
+void R_RendererMetrics_EndGpuBackendFrame( void ) {
+}
+
+void R_RendererMetrics_BeginGpuTimer( rendererGpuTimerSlot_t slot ) {
+	(void)slot;
+}
+
+void R_RendererMetrics_EndGpuTimer( void ) {
+	rg_gpuTimerQueryActive = false;
+	rg_gpuTimerActiveQuery = NULL;
+}
+
+bool R_RendererMetrics_PauseGpuTimer( rendererGpuTimerSlot_t slot ) {
+	(void)slot;
+	return false;
+}
+
+void R_RendererMetrics_ResumeGpuTimer( rendererGpuTimerSlot_t slot, bool resume ) {
+	(void)slot;
+	(void)resume;
+}
+
+void R_RendererMetrics_ShutdownGpuTimers( void ) {
+	memset( &rg_gpuTimerLatest, 0, sizeof( rg_gpuTimerLatest ) );
+	rg_gpuTimerQueryActive = false;
+	rg_gpuTimerActiveQuery = NULL;
+	rg_gpuTimerFrameCursor = 0;
+	rg_gpuTimerBackendFrameCount = 0;
+	rg_gpuFullFrameEnabledLastFrame = false;
+	rg_gpuFullFrameEnableStateKnown = false;
+	rg_gpuFullFrameContextGeneration = -1;
+	R_RendererMetrics_SetGpuFrameTimingBackend( RENDER_GPU_TIMING_BACKEND_NONE, false );
+}
+
+bool R_RendererMetrics_GpuTimersAvailable( void ) {
+	return false;
+}
+
+bool RendererGpuTimer_RunSelfTest( void ) {
+	common->Printf( "RendererGpuTimer self-test skipped: timer queries are unavailable on VitaGL\n" );
+	return true;
+}
+#else
 void R_RendererMetrics_BeginGpuBackendFrame( void ) {
 #ifdef OPENQ4_RENDERER_VK_MODULE
 	// Vulkan brackets its true command-buffer lifetime in vk_GuiExecutor;
@@ -2786,3 +2868,4 @@ bool RendererGpuTimer_RunSelfTest( void ) {
 	return true;
 #endif
 }
+#endif

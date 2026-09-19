@@ -108,28 +108,48 @@ static const char* R_FramebufferStatusName( GLenum status ) {
 	switch ( status ) {
 		case GL_FRAMEBUFFER_COMPLETE:
 			return "GL_FRAMEBUFFER_COMPLETE";
+#ifdef GL_FRAMEBUFFER_UNDEFINED
 		case GL_FRAMEBUFFER_UNDEFINED:
 			return "GL_FRAMEBUFFER_UNDEFINED";
+#endif
+#ifdef GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT
 		case GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT:
 			return "GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT";
+#endif
 		case GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT:
 			return "GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT";
+#ifdef GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER
 		case GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER:
 			return "GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER";
+#endif
+#ifdef GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER
 		case GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER:
 			return "GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER";
+#endif
+#ifdef GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS_EXT
 		case GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS_EXT:
 			return "GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS_EXT";
+#endif
+#ifdef GL_FRAMEBUFFER_INCOMPLETE_FORMATS_EXT
 		case GL_FRAMEBUFFER_INCOMPLETE_FORMATS_EXT:
 			return "GL_FRAMEBUFFER_INCOMPLETE_FORMATS_EXT";
+#endif
+#ifdef GL_FRAMEBUFFER_UNSUPPORTED
 		case GL_FRAMEBUFFER_UNSUPPORTED:
 			return "GL_FRAMEBUFFER_UNSUPPORTED";
+#endif
+#ifdef GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE
 		case GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE:
 			return "GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE";
+#endif
+#ifdef GL_FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS
 		case GL_FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS:
 			return "GL_FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS";
+#endif
+#ifdef GL_FRAMEBUFFER_INCOMPLETE_LAYER_COUNT_ARB
 		case GL_FRAMEBUFFER_INCOMPLETE_LAYER_COUNT_ARB:
 			return "GL_FRAMEBUFFER_INCOMPLETE_LAYER_COUNT_ARB";
+#endif
 		default:
 			return "GL_FRAMEBUFFER_STATUS_UNKNOWN";
 	}
@@ -484,6 +504,14 @@ bool idRenderTexture::InitRenderTexture(void) {
 	if (!isTexture3D)
 	{
 		for (int i = 0; i < colorImages.Num(); i++) {
+#if defined(VITA) || defined(__vita__)
+			if ( colorImages[i]->GetOpts().numMSAASamples != 0 ) {
+				common->Warning( "idRenderTexture: multisample color attachments are unavailable on VitaGL for '%s'", debugLabel.c_str() );
+				return FailFramebuffer( GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT, "Vita multisample color attachment" );
+			}
+			glFramebufferTexture2D( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i, GL_TEXTURE_2D,
+				colorImages[i]->GetDeviceHandle(), 0 );
+#else
 			if (colorImages[i]->GetOpts().numMSAASamples == 0)
 			{
 				glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i, GL_TEXTURE_2D, colorImages[i]->GetDeviceHandle(), 0);
@@ -492,6 +520,7 @@ bool idRenderTexture::InitRenderTexture(void) {
 			{
 				glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i, GL_TEXTURE_2D_MULTISAMPLE, colorImages[i]->GetDeviceHandle(), 0);
 			}
+#endif
 		}
 
 		if (depthImage != nullptr) {
@@ -503,7 +532,7 @@ bool idRenderTexture::InitRenderTexture(void) {
 			// descriptor path instead. Depth textures used by post effects are
 			// populated later by the engine's explicit copy-depth commands.
 			if ( !R_ConfigureVitaFramebufferDepth( depthImage ) ) {
-				return FailFramebuffer( GL_FRAMEBUFFER_UNSUPPORTED, "Vita depth/stencil" );
+				return FailFramebuffer( GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT, "Vita depth/stencil" );
 			}
 #else
 			if (depthImage->GetOpts().numMSAASamples == 0)
@@ -550,7 +579,13 @@ bool idRenderTexture::InitRenderTexture(void) {
 		}
 
 		if (depthImage != nullptr) {
+#if defined(VITA) || defined(__vita__)
+			if ( !R_ConfigureVitaFramebufferDepth( depthImage ) ) {
+				return FailFramebuffer( GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT, "Vita cube depth/stencil" );
+			}
+#else
 			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_CUBE_MAP_POSITIVE_X, depthImage->GetDeviceHandle(), 0);
+#endif
 		}
 	}
 
