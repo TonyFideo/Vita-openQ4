@@ -765,6 +765,8 @@ const int MAX_GUI_SURFACES	= 1024;		// default size of the drawSurfs list for gu
 
 typedef enum {
 	BE_ARB2,
+	// Vita/Android Doom 3-shaped programmable backend.
+	BE_GLES_D3,
 	BE_BAD
 } backEndName_t;
 
