@@ -1427,6 +1427,10 @@ engine_objc_args = shared_objc_args
 bse_cpp_args = shared_cpp_args + common_header_cpp_args + linux_cross_dso_sanitizer_cpp_args
 bse_c_args = shared_c_args
 bse_library = disabler()
+
+# Game modules, including Vita's statically linked SP game, keep the game ABI's
+# C++17 baseline even though the engine itself builds as C++20.
+game_target_override_options = ['cpp_std=c++17']
 vita_game_sp_library = disabler()
 
 if host_system == 'vita' and build_engine and build_games and build_game_sp
@@ -1642,7 +1646,6 @@ endif
 
 game_common_cpp_args = shared_cpp_args + common_header_cpp_args + ['-DGAME_DLL'] + linux_cross_dso_sanitizer_cpp_args
 game_common_c_args = shared_c_args
-game_target_override_options = ['cpp_std=c++17']
 game_module_link_args = []
 game_module_link_depends = []
 if host_system == 'windows'
