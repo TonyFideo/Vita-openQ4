@@ -256,19 +256,35 @@ void VitaDiagScreen_Present( void ) {
 
 void VitaDiagScreen_Finish( void ) {
 	if ( vitaDisplayFrameValid ) {
-		// The framebuffer lives in CDRAM. Detach it immediately and let a vblank
-		// pass before releasing the memblock so display consumers cannot retain a
-		// pointer to already-freed CDRAM (notably Vita3K's display thread).
-		sceDisplaySetFrameBuf( NULL, SCE_DISPLAY_SETBUF_IMMEDIATE );
+		// Do not free or detach the backing store here. Vita3K currently treats
+		// sceDisplaySetFrameBuf(NULL, ...) as a successful no-op and keeps the old
+		// sce_frame.base pointer. Freeing this CDRAM block at that point leaves the
+		// display thread pointing at the now-unmapped 0x60000000 region.
+		//
+		// Keep the diagnostic framebuffer alive across VitaGL initialization.
+		// VitaGL's first successful swap installs its own framebuffer; the bootstrap
+		// then calls VitaDiagScreen_ReleaseBacking() after that handoff.
 		sceDisplayWaitVblankStart();
 		vitaDisplayFrameValid = false;
 	}
 
+	// Stop all CPU-side drawing immediately, but intentionally retain
+	// vitaDisplayFrame/vitaDisplayBlock until the renderer has presented.
 	vitaFrameBuffer = NULL;
-	memset( &vitaDisplayFrame, 0, sizeof( vitaDisplayFrame ) );
+}
 
-	if ( vitaDisplayBlock >= 0 ) {
-		sceKernelFreeMemBlock( vitaDisplayBlock );
-		vitaDisplayBlock = -1;
+void VitaDiagScreen_ReleaseBacking( void ) {
+	if ( vitaDisplayBlock < 0 ) {
+		return;
 	}
+
+	// VitaGL queues its display callback asynchronously. Give the queue two
+	// vblanks after the first VitaGL swap so both Vita3K and hardware have stopped
+	// consuming the diagnostic framebuffer before its CDRAM block is released.
+	sceDisplayWaitVblankStart();
+	sceDisplayWaitVblankStart();
+
+	sceKernelFreeMemBlock( vitaDisplayBlock );
+	vitaDisplayBlock = -1;
+	memset( &vitaDisplayFrame, 0, sizeof( vitaDisplayFrame ) );
 }

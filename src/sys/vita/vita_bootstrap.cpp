@@ -360,8 +360,10 @@ int main( int argc, char **argv ) {
 
 	Vita_Info( "INICIANDO VITAGL..." );
 
-	// The diagnostic framebuffer owns a CDRAM display surface. Fully detach and
-	// release it before VitaGL takes control of SceGxm/display resources.
+	// The diagnostic framebuffer owns a CDRAM display surface. Stop writing to
+	// it now, but keep its backing block alive until VitaGL has successfully
+	// presented a replacement framebuffer. Vita3K does not actually detach the
+	// old framebuffer when sceDisplaySetFrameBuf(NULL, ...) is used.
 	if ( vitaScreenReady ) {
 		VitaDiagScreen_Present();
 		VitaDiagScreen_Finish();
@@ -375,11 +377,15 @@ int main( int argc, char **argv ) {
 	Vita_WriteLogLine( rendererReady ? "renderer.ready=1" : "renderer.ready=0" );
 
 	if ( rendererReady ) {
+		Vita_WriteLogLine( "diagnostic.handoff=vitagl-presented" );
+		VitaDiagScreen_ReleaseBacking();
+		Vita_WriteLogLine( "diagnostic.backing=released" );
 		VitaRendererSmoke_Run();
 	}
 
-	// A failed graphics bring-up must stay alive long enough for Vita3K/hardware
-	// logs to be retrieved. No display surface is owned here after Finish().
+	// On renderer failure the diagnostic CDRAM backing is intentionally retained:
+	// Vita3K may still reference it because a NULL framebuffer update is a no-op.
+	// Keeping the block mapped is safer than freeing memory still owned by display.
 	for ( ;; ) {
 		sceKernelDelayThread( 100 * 1000 );
 	}

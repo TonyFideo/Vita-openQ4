@@ -12,5 +12,6 @@ void VitaDiagScreen_Clear( void );
 void VitaDiagScreen_PrintLine( vitaDiagColor_t color, const char *text );
 void VitaDiagScreen_Present( void );
 void VitaDiagScreen_Finish( void );
+void VitaDiagScreen_ReleaseBacking( void );
 
 #endif
