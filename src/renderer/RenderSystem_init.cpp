@@ -1232,7 +1232,16 @@ static void R_CheckPortableExtensions( void ) {
 	// GL 1.3/GL_ARB_texture_compression + GL_S3_s3tc
 	// DRI drivers may have GL_ARB_texture_compression but no GL_EXT_texture_compression_s3tc
 	const bool textureCompressionAdvertised = glConfig.glVersion >= 1.3f || R_CheckExtension( "GL_ARB_texture_compression" );
-	const bool textureCompressionEntryPointsAvailable = glCompressedTexImage2DARB != NULL && glCompressedTexSubImage2DARB != NULL;
+	bool textureCompressionEntryPointsAvailable = glCompressedTexImage2DARB != NULL && glCompressedTexSubImage2DARB != NULL;
+#if defined(VITA) || defined(__vita__)
+	// VitaGL exposes native S3TC allocation/upload through glCompressedTexImage2D,
+	// but intentionally has no glCompressedTexSubImage2D entry point. The image
+	// backend below replaces complete compressed mip levels with TexImage2D, which
+	// is sufficient for Quake 4's DDS path without pretending partial updates work.
+	if ( glConfig.backendCaps.profile == RENDERER_CONTEXT_PROFILE_ES ) {
+		textureCompressionEntryPointsAvailable = glCompressedTexImage2DARB != NULL;
+	}
+#endif
 	if ( textureCompressionAdvertised && !textureCompressionEntryPointsAvailable ) {
 		common->Printf( "X..texture compression entry points incomplete\n" );
 	}

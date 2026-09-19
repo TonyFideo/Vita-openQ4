@@ -134,7 +134,27 @@ void idImage::SubImageUpload( int mipLevel, int x, int y, int z, int width, int 
 	GL_CheckErrors();
 #endif
 	if ( IsCompressed() ) {
+#if defined(VITA) || defined(__vita__)
+		// VitaGL maps DXT1/DXT5 directly to GXM UBC1/UBC3, but it does not expose
+		// compressed sub-image updates. Quake 4 loads DDS data a complete mip at
+		// a time, so replacing that mip is equivalent and keeps the compressed
+		// payload native all the way to GXM.
+		const int mipWidth = Max( 1, opts.width >> mipLevel );
+		const int mipHeight = Max( 1, opts.height >> mipLevel );
+		if ( x == 0 && y == 0 && width == mipWidth && height == mipHeight ) {
+			glCompressedTexImage2DARB( uploadTarget, mipLevel, internalFormat,
+					width, height, 0, compressedSize, pic );
+		} else {
+			static bool warnedPartialCompressedUpload = false;
+			if ( !warnedPartialCompressedUpload ) {
+				warnedPartialCompressedUpload = true;
+				common->Warning( "VitaGL: partial compressed texture updates are unsupported; "
+						"leaving the existing mip unchanged" );
+			}
+		}
+#else
 		glCompressedTexSubImage2DARB( uploadTarget, mipLevel, x, y, width, height, internalFormat, compressedSize, pic );
+#endif
 	} else {
 
 		// make sure the pixel store alignment is correct so that lower mips get created
