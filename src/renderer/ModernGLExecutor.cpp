@@ -21,6 +21,129 @@
 
 #include <cmath>
 
+#if defined(VITA) || defined(__vita__)
+
+// Vita deliberately selects BE_GLES_D3. Keep the modern executor's public
+// contract linkable, but fail closed so no modern ownership decision can ever
+// suppress a legacy/GLES_D3 pass.
+static modernGLExecutorStats_t rg_vitaModernGLStats = {};
+
+static void R_VitaModernGL_ResetStats( void ) {
+	rg_vitaModernGLStats = modernGLExecutorStats_t();
+	rg_vitaModernGLStats.available = false;
+	rg_vitaModernGLStats.enabled = false;
+	rg_vitaModernGLStats.initialized = false;
+	rg_vitaModernGLStats.legacyFallback = true;
+	idStr::Copynz( rg_vitaModernGLStats.status, "vita-gles-d3", sizeof( rg_vitaModernGLStats.status ) );
+}
+
+void R_ModernGLExecutor_Init( const renderBackendCaps_t &caps, const renderFeatureSet_t &features ) {
+	(void)caps;
+	(void)features;
+	R_VitaModernGL_ResetStats();
+}
+
+void R_ModernGLExecutor_Shutdown( void ) {
+	R_VitaModernGL_ResetStats();
+}
+
+void R_ModernGLExecutor_SkipFrame( void ) {}
+void R_ModernGLExecutor_InvalidatePlans( void ) {}
+
+void R_ModernGLExecutor_PrepareFrame( const idScenePacketFrame &packetFrame, const idRenderGraph &graph ) {
+	(void)packetFrame;
+	(void)graph;
+	R_VitaModernGL_ResetStats();
+}
+
+void R_ModernGLExecutor_DrawDepthDebugOverlay( void ) {}
+void R_ModernGLExecutor_DrawGBufferDebugOverlay( void ) {}
+void R_ModernGLExecutor_DrawDeferredDebugOverlay( void ) {}
+
+bool R_ModernGLExecutor_SubmitForwardPlusDecalSurface( const viewDef_t *viewDef, const drawSurf_t *sourceSurface ) {
+	(void)viewDef;
+	(void)sourceSurface;
+	return false;
+}
+
+void R_ModernGLExecutor_ComposeVisibleSceneForPost( void ) {}
+void R_ModernGLExecutor_ComposeVisibleFrame( void ) {}
+
+const modernGLExecutorStats_t &R_ModernGLExecutor_Stats( void ) {
+	return rg_vitaModernGLStats;
+}
+
+bool R_ModernGLExecutor_ModernVisibleRequestedForPost( void ) {
+	return false;
+}
+
+bool R_ModernGLExecutor_ModernVisiblePostProcessHandoffActive( void ) {
+	return false;
+}
+
+bool R_ModernGLExecutor_LegacyPassCanSkip( renderPassCategory_t category ) {
+	(void)category;
+	return false;
+}
+
+bool R_ModernGLExecutor_LegacyPassCanSkipForView( renderPassCategory_t category, const viewDef_t *viewDef ) {
+	(void)category;
+	(void)viewDef;
+	return false;
+}
+
+void R_ModernGLExecutor_RecordLegacyPassSkipped( renderPassCategory_t category ) {
+	(void)category;
+}
+
+void R_ModernGLExecutor_PrintGfxInfo( void ) {
+	common->Printf( "Modern GL executor: unavailable on Vita; GLES_D3 owns all renderer passes\n" );
+}
+
+static bool R_VitaModernGL_SelfTestSkipped( const char *name ) {
+	common->Printf( "%s self-test passed (Vita GLES_D3: modern executor unavailable)\n", name );
+	return true;
+}
+
+bool RendererModernGLExecutor_RunSelfTest( void ) {
+	return R_VitaModernGL_SelfTestSkipped( "RendererModernGLExecutor" );
+}
+bool RendererGpuDriven_RunSelfTest( void ) {
+	return R_VitaModernGL_SelfTestSkipped( "RendererGpuDriven" );
+}
+bool RendererVisiblePath_RunSelfTest( void ) {
+	return R_VitaModernGL_SelfTestSkipped( "RendererVisiblePath" );
+}
+bool RendererGBuffer_RunSelfTest( void ) {
+	return R_VitaModernGL_SelfTestSkipped( "RendererGBuffer" );
+}
+bool RendererPBRVisible_RunSelfTest( void ) {
+	return R_VitaModernGL_SelfTestSkipped( "RendererPBRVisible" );
+}
+bool RendererDeferredResolve_RunSelfTest( void ) {
+	return R_VitaModernGL_SelfTestSkipped( "RendererDeferredResolve" );
+}
+bool RendererForwardPlus_RunSelfTest( void ) {
+	return R_VitaModernGL_SelfTestSkipped( "RendererForwardPlus" );
+}
+bool RendererModernVisible_RunSelfTest( void ) {
+	return R_VitaModernGL_SelfTestSkipped( "RendererModernVisible" );
+}
+bool RendererLowOverhead_RunSelfTest( void ) {
+	return R_VitaModernGL_SelfTestSkipped( "RendererLowOverhead" );
+}
+bool RendererModernCompatibility_RunSelfTest( void ) {
+	return R_VitaModernGL_SelfTestSkipped( "RendererModernCompatibility" );
+}
+bool RendererPassOwnership_RunSelfTest( void ) {
+	return R_VitaModernGL_SelfTestSkipped( "RendererPassOwnership" );
+}
+bool RendererModernVisibility_RunSelfTest( void ) {
+	return R_VitaModernGL_SelfTestSkipped( "RendererModernVisibility" );
+}
+
+#else
+
 typedef struct modernGLFrameConstants_s {
 	float	viewport[4];
 	float	frame[4];
@@ -12806,3 +12929,5 @@ bool RendererLowOverhead_RunSelfTest( void ) {
 		uploadStats.frameFenceWaitFailures );
 	return true;
 }
+
+#endif // VITA modern executor stub
