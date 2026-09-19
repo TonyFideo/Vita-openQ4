@@ -123,7 +123,7 @@ jobs:
   engine-integration:
     name: Full engine integration
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     container: vitasdk/vitasdk:latest
     env:
       OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}/../openQ4-game
