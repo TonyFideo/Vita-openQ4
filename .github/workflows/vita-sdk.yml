@@ -14,6 +14,7 @@ on:
       - src/sys/vita/**
       - src/framework/**
       - src/renderer/**
+      - src/sound/**
       - src/idlib/precompiled.h
       - src/idlib/CryptoHash.*
   workflow_dispatch:
@@ -207,11 +208,19 @@ jobs:
           set -euo pipefail
           meson setup build/vita-engine-config .             --cross-file tools/vita/meson-vita.ini             --backend ninja             --buildtype release             -Dplatform_backend=native             -Dbuild_engine=true             -Dbuild_games=true             -Dbuild_game_sp=true             -Dbuild_game_mp=false             -Dbuild_renderer_gl=false             -Dbuild_renderer_vk=false             -Duse_pch=false
 
+      - name: Test silent backend and build driver
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tools/vita/tests -p 'test_*.py' -v
+          c++ -std=c++17 -Wall -Wextra -Werror tools/vita/tests/sound_stub_test.cpp -o build/sound_stub_test
+          build/sound_stub_test
+
       - name: Compile full Vita engine client
         shell: bash
         run: |
           set -euo pipefail
-          meson compile -C build/vita-engine-config openQ4-client_armv7 -j2
+          python3 tools/vita/build_engine.py --build-dir build/vita-engine-config --jobs 2
 
       - name: Package full Vita engine
         shell: bash
@@ -240,3 +249,14 @@ jobs:
             build/vita-engine-package/eboot.bin
             build/vita-engine-package/Vita-OpenQ4-engine.vpk
           if-no-files-found: error
+
+      - name: Upload Vita build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vita-openq4-diagnostics-${{ github.sha }}
+          path: |
+            build/vita-diagnostics/
+            build/vita-engine-config/meson-logs/meson-log.txt
+            build/vita-engine-config/compile_commands.json
+          if-no-files-found: warn
