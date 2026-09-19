@@ -36,6 +36,8 @@ If you have questions concerning this license or the applicable additional terms
 #include "../sys/URLPolicy.h"
 #if defined( __vita__ ) || defined( VITA )
 #include "../sys/vita/vita_public.h"
+#include <psp2/kernel/clib.h>
+#include <psp2/kernel/processmgr.h>
 #endif
 
 #include <errno.h>
@@ -1604,6 +1606,10 @@ private:
 
 	int						d3xp;	// 0: didn't check, -1: not installed, 1: installed
 
+#if defined(VITA) || defined(__vita__)
+	uint32_t				vitaOverflowGuard[ 64 ];
+#endif
+
 private:
 	void					ReplaceSeparators( idStr &path, char sep = PATHSEPERATOR_CHAR );
 	bool					FindCaseInsensitiveOSPathEntry( const char *directory, const char *segment, bool directoryOnly, idStr &resolvedSegment );
@@ -1696,6 +1702,11 @@ idFileSystemLocal::idFileSystemLocal( void ) {
 	dir_cache_index = 0;
 	dir_cache_count = 0;
 	d3xp = 0;
+#if defined(VITA) || defined(__vita__)
+	for ( int i = 0; i < 64; ++i ) {
+		vitaOverflowGuard[ i ] = 0x564F5134u ^ static_cast<uint32_t>( i * 0x01010101u );
+	}
+#endif
 	loadedFileFromDir = false;
 	restartGamePakChecksum = 0;
 	gameDLLChecksum = 0;
@@ -4922,6 +4933,49 @@ void idFileSystemLocal::AddGameDirectory( const char *path, const char *dir ) {
 	idStr			pakfile;
 	idStrList		pakfiles;
 
+#if defined(VITA) || defined(__vita__)
+	const idCVar *const vitaGameInternal0 = fs_game.VitaDebugInternalVar();
+	const idCVar *const vitaGameBaseInternal0 = fs_game_base.VitaDebugInternalVar();
+	const char *const vitaGameValue0 = fs_game.VitaDebugRawValuePointer();
+	const char *const vitaGameBaseValue0 = fs_game_base.VitaDebugRawValuePointer();
+
+	auto vitaCheckFilesystemIntegrity = [&]( const char *stage, const char *name, int index ) -> bool {
+		for ( int guardIndex = 0; guardIndex < 64; ++guardIndex ) {
+			const uint32_t expected = 0x564F5134u ^ static_cast<uint32_t>( guardIndex * 0x01010101u );
+			if ( vitaOverflowGuard[ guardIndex ] != expected ) {
+				sceClibPrintf( "[VOQ4][fsdiag] CORRUPTION stage=%s pak_index=%d file=%s guard=%d got=0x%08x expected=0x%08x\n",
+						stage, index, name != NULL ? name : "<none>", guardIndex,
+						(unsigned int)vitaOverflowGuard[ guardIndex ], (unsigned int)expected );
+				return false;
+			}
+		}
+
+		const idCVar *const gameInternal = fs_game.VitaDebugInternalVar();
+		const idCVar *const gameBaseInternal = fs_game_base.VitaDebugInternalVar();
+		if ( gameInternal != vitaGameInternal0 || gameBaseInternal != vitaGameBaseInternal0 ) {
+			sceClibPrintf( "[VOQ4][fsdiag] CORRUPTION stage=%s pak_index=%d file=%s cvar-internal game=%p/%p game_base=%p/%p\n",
+					stage, index, name != NULL ? name : "<none>",
+					gameInternal, vitaGameInternal0, gameBaseInternal, vitaGameBaseInternal0 );
+			return false;
+		}
+
+		const char *const gameValue = fs_game.VitaDebugRawValuePointer();
+		const char *const gameBaseValue = fs_game_base.VitaDebugRawValuePointer();
+		if ( gameValue != vitaGameValue0 || gameBaseValue != vitaGameBaseValue0 ) {
+			sceClibPrintf( "[VOQ4][fsdiag] CORRUPTION stage=%s pak_index=%d file=%s cvar-value game=%p/%p game_base=%p/%p\n",
+					stage, index, name != NULL ? name : "<none>",
+					gameValue, vitaGameValue0, gameBaseValue, vitaGameBaseValue0 );
+			return false;
+		}
+		return true;
+	};
+
+	auto vitaAbortFilesystemDiagnostic = [&]() {
+		sceClibPrintf( "[VOQ4][fsdiag] aborting before corrupted filesystem state is consumed\n" );
+		sceKernelExitProcess( 0x46534449 );
+	};
+#endif
+
 	// check if the search path already exists
 	for ( search = searchPaths; search; search = search->next ) {
 		// if this element is a pak file
@@ -4961,6 +5015,12 @@ void idFileSystemLocal::AddGameDirectory( const char *path, const char *dir ) {
 	FS_SortPk4FilesForLoadOrder( pakfiles );
 
 	for ( i = 0; i < pakfiles.Num(); i++ ) {
+#if defined(VITA) || defined(__vita__)
+		if ( !vitaCheckFilesystemIntegrity( "before-load", pakfiles[ i ].c_str(), i ) ) {
+			vitaAbortFilesystemDiagnostic();
+			return;
+		}
+#endif
 		if ( !idStr::Icmp( dir, BASE_GAMEDIR ) && FS_IsIgnoredOfficialGameBinaryPk4( pakfiles[ i ] ) ) {
 			common->Printf( "Ignoring unneeded game binary pk4 %s\n", BuildOSPath( path, dir, pakfiles[ i ] ) );
 			continue;
@@ -4968,6 +5028,14 @@ void idFileSystemLocal::AddGameDirectory( const char *path, const char *dir ) {
 
 		pakfile = BuildOSPath( path, dir, pakfiles[i] );
 		pak = LoadZipFile( pakfile );
+#if defined(VITA) || defined(__vita__)
+		if ( !vitaCheckFilesystemIntegrity( "after-load", pakfiles[ i ].c_str(), i ) ) {
+			vitaAbortFilesystemDiagnostic();
+			return;
+		}
+		sceClibPrintf( "[VOQ4][fsdiag] loaded pak_index=%d file=%s result=%s\n",
+				i, pakfiles[ i ].c_str(), pak != NULL ? "ok" : "rejected" );
+#endif
 		if ( !pak ) {
 			continue;
 		}
@@ -4979,6 +5047,13 @@ void idFileSystemLocal::AddGameDirectory( const char *path, const char *dir ) {
 		searchPaths->next = search;
 		common->Printf( "Loaded pk4 %s with checksum 0x%x\n", pakfile.c_str(), pak->checksum );
 	}
+#if defined(VITA) || defined(__vita__)
+	if ( !vitaCheckFilesystemIntegrity( "directory-complete", dir, pakfiles.Num() ) ) {
+		vitaAbortFilesystemDiagnostic();
+		return;
+	}
+	sceClibPrintf( "[VOQ4][fsdiag] directory-complete path=%s dir=%s paks=%d\n", path, dir, pakfiles.Num() );
+#endif
 }
 
 /*

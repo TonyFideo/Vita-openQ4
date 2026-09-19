@@ -132,6 +132,13 @@ public:
 
 	void					SetInternalVar( idCVar *cvar ) { internalVar = cvar; }
 
+#if defined(VITA) || defined(__vita__)
+	const idCVar *			VitaDebugInternalVar( void ) const { return internalVar; }
+	const char *			VitaDebugRawValuePointer( void ) const {
+		return internalVar != NULL ? internalVar->value : NULL;
+	}
+#endif
+
 	void					SetFlag( const cvarFlags_t flag ) { internalVar->flags |= flag; }
 	void					RemoveFlag( const cvarFlags_t flag ) { internalVar->flags &= ~flag; }
 
