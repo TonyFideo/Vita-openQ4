@@ -470,10 +470,17 @@ unsigned int	com_msgID = -1;
 #endif
 
 #ifdef __DOOM_DLL__
+#if defined(VITA) || defined(__vita__)
+// In the Vita monolithic client the SP game object is linked into the process.
+// Its Game_local.cpp / GameEdit.cpp own these two interface pointers; keeping a
+// second engine definition would both collide at link time and discard the
+// game module's statically initialized gameLocal/gameEditLocal instances.
+extern idGame *		game;
+extern idGameEdit *	gameEdit;
+extern "C" gameExport_t *GetGameAPI( gameImport_t *import );
+#else
 idGame *		game = NULL;
 idGameEdit *	gameEdit = NULL;
-#if defined(VITA) || defined(__vita__)
-extern "C" gameExport_t *GetGameAPI( gameImport_t *import );
 #endif
 #endif
 
