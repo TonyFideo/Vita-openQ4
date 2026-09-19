@@ -221,7 +221,7 @@ glconfig_t	glConfig;
 
 static void GfxInfo_f( void );
 
-const char *r_rendererArgs[] = { "best", "arb", "arb2", "Cg", "exp", "nv10", "nv20", "r200", NULL };
+const char *r_rendererArgs[] = { "best", "arb2", "glesd3", "arb", "Cg", "exp", "nv10", "nv20", "r200", NULL };
 const char *r_glTierArgs[] = { "auto", "legacy", "gl33", "gl41", "gl43", "gl45", "gl46", NULL };
 const char *r_rendererBenchmarkPresetArgs[] = { "low", "baseline", "modern", "high-end", NULL };
 const char *r_multiSamplesArgs[] = { "0", "2", "4", "8", "16", NULL };
@@ -1948,19 +1948,33 @@ void R_InitOpenGL( void ) {
 	// parse our vertex and fragment programs, possibly disably support for
 	// one of the paths if there was an error
 	R_ARB2_Init();
+#ifdef OPENQ4_RENDERER_GLES_MODULE
+	// The Vita/ES backend owns the whole Doom 3 pass chain. The desktop modern
+	// executor's shader library targets desktop GLSL and is neither required nor
+	// useful on this path.
+	RendererBootstrap_SetModernExecutorAvailable( false );
+#else
 	R_ModernGLExecutor_Init( glConfig.backendCaps, glConfig.renderFeatures );
 	RendererBootstrap_SetModernExecutorAvailable( R_ModernGLExecutor_Stats().available );
+#endif
 	RendererBootstrap_FinalizeLegacyBridge( glConfig.allowARB2Path );
 	glConfig.rendererTier = RendererBootstrap_GetState().selectedTier;
 	glConfig.renderFeatures = RendererBootstrap_GetState().features;
+
+#ifdef OPENQ4_RENDERER_GLES_MODULE
+	// No ARB assembly programs exist on VitaGL. GLES_D3 is the intentional
+	// programmable fallback, so absence of the desktop bridge is not fatal.
+	if ( !glConfig.allowARB2Path ) {
+		common->Printf( "Renderer: ARB2 unavailable; GLES_D3 owns the Vita frame\n" );
+	}
+#else
 	// ARB2 is only *required* while it is the renderer that draws. Once the
 	// modern visible path is promoted it can own the frame without the
-	// compatibility bridge, so a context that cannot host ARB2 stops being
-	// fatal. While no parity contract is proven the promotion state is false,
-	// which keeps this exactly as strict as before.
+	// compatibility bridge.
 	if ( !glConfig.allowARB2Path && !RendererBootstrap_ShouldAutoPromoteModernVisible() ) {
 		R_ErrorForMissingRequiredOpenGLFeatures();
 	}
+#endif
 	R_RenderGraphResources_Init( glConfig.backendCaps, glConfig.renderFeatures );
 	R_MaterialResourceTable_Init( glConfig.backendCaps, glConfig.renderFeatures );
 
