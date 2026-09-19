@@ -4,8 +4,6 @@
 
 #include <psp2/io/fcntl.h>
 #include <psp2/kernel/clib.h>
-#include <psp2/kernel/sysmem.h>
-
 #include <stdint.h>
 
 namespace {
@@ -293,6 +291,7 @@ bool VitaRendererSmoke_Init( void ) {
 	// renderer bootstrap and can be relaxed once real-hardware validation starts.
 	const int kRamReserveBytes = 10 * 1024 * 1024;
 	const int kDisableCdramThresholdBytes = 128 * 1024 * 1024;
+	const int kDisableCommonDialogThresholdBytes = 0x8C6000;
 
 	// Match the proven idTech 4 Vita configuration for the transient command
 	// pools while keeping MSAA disabled for the smoke renderer.
@@ -312,7 +311,7 @@ bool VitaRendererSmoke_Init( void ) {
 		kRamReserveBytes,
 		kDisableCdramThresholdBytes,
 		0,
-		SCE_KERNEL_MAX_MAIN_CDIALOG_MEM_SIZE,
+		kDisableCommonDialogThresholdBytes,
 		SCE_GXM_MULTISAMPLE_NONE );
 
 	RendererLog(
