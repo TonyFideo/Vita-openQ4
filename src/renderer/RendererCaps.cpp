@@ -331,6 +331,8 @@ const char *RendererContextProfile_Name( rendererContextProfile_t profile ) {
 		return "compatibility";
 	case RENDERER_CONTEXT_PROFILE_CORE:
 		return "core";
+	case RENDERER_CONTEXT_PROFILE_ES:
+		return "es";
 	case RENDERER_CONTEXT_PROFILE_UNKNOWN:
 	default:
 		return "unknown";
@@ -1104,7 +1106,19 @@ void GLCapabilityProbe_Build( renderBackendCaps_t &caps, const char *versionStri
 
 	caps.contextCreated = true;
 	caps.profile = RENDERER_CONTEXT_PROFILE_UNKNOWN;
-	caps.glVersion = versionString ? static_cast<float>( atof( versionString ) ) : 0.0f;
+
+	const bool isESVersionString =
+		versionString != NULL && idStr::Cmpn( versionString, "OpenGL ES", 9 ) == 0;
+	if ( isESVersionString ) {
+		const char *esVersion = versionString + 9;
+		while ( *esVersion != '\0' && ( *esVersion < '0' || *esVersion > '9' ) ) {
+			esVersion++;
+		}
+		caps.profile = RENDERER_CONTEXT_PROFILE_ES;
+		caps.glVersion = static_cast<float>( atof( esVersion ) );
+	} else {
+		caps.glVersion = versionString ? static_cast<float>( atof( versionString ) ) : 0.0f;
+	}
 	caps.glMajor = static_cast<int>( caps.glVersion );
 	caps.glMinor = static_cast<int>( ( caps.glVersion - static_cast<float>( caps.glMajor ) ) * 10.0f + 0.5f );
 
@@ -1120,7 +1134,7 @@ void GLCapabilityProbe_Build( renderBackendCaps_t &caps, const char *versionStri
 		}
 	}
 
-	if ( caps.glVersion >= 3.2f ) {
+	if ( caps.glVersion >= 3.2f && !isESVersionString ) {
 		GLint profileMask = 0;
 		GLint contextFlags = 0;
 		glGetIntegerv( GL_CONTEXT_PROFILE_MASK, &profileMask );
@@ -1147,7 +1161,9 @@ void GLCapabilityProbe_Build( renderBackendCaps_t &caps, const char *versionStri
 		GLCapabilityProbe_AddLegacyExtensions( legacyExtensionsString );
 	}
 
-	caps.hasFixedFunctionCompatibility = caps.profile != RENDERER_CONTEXT_PROFILE_CORE;
+	caps.hasFixedFunctionCompatibility =
+		caps.profile != RENDERER_CONTEXT_PROFILE_CORE &&
+		caps.profile != RENDERER_CONTEXT_PROFILE_ES;
 	caps.hasARBVertexProgram = GLCapabilityProbe_HasExtension( "GL_ARB_vertex_program" );
 	caps.hasARBFragmentProgram = GLCapabilityProbe_HasExtension( "GL_ARB_fragment_program" );
 	caps.hasARBShaderObjects =
@@ -1180,11 +1196,45 @@ void GLCapabilityProbe_Build( renderBackendCaps_t &caps, const char *versionStri
 	caps.hasBindlessTexture = GLCapabilityProbe_HasExtension( "GL_ARB_bindless_texture" ) || GLCapabilityProbe_HasExtension( "GL_NV_bindless_texture" );
 	caps.hasDebugOutput = caps.glVersion >= 4.3f || GLCapabilityProbe_HasExtension( "GL_KHR_debug" ) || GLCapabilityProbe_HasExtension( "GL_ARB_debug_output" );
 
+	if ( caps.profile == RENDERER_CONTEXT_PROFILE_ES ) {
+		// VitaGL reports an ES 2.0 compatibility string but exposes the
+		// programmable primitives GLES_D3 already validated in the smoke path.
+		caps.hasFixedFunctionCompatibility = false;
+		caps.hasARBVertexProgram = false;
+		caps.hasARBFragmentProgram = false;
+		caps.hasARBShaderObjects = false;
+		caps.hasGLSL = true;
+		caps.hasVBO = true;
+		caps.hasFBO = true;
+		caps.hasVAO = true;
+		caps.hasPBO = false;
+		caps.hasUBO = false;
+		caps.hasInstancing = false;
+		caps.hasTextureArrays = false;
+		caps.hasTimerQuery = false;
+		caps.hasSync = false;
+		caps.hasMapBufferRange = false;
+		caps.hasBufferStorage = false;
+		caps.hasDSA = false;
+		caps.hasMultiBind = false;
+		caps.hasCompute = false;
+		caps.hasSSBO = false;
+		caps.hasDrawIndirect = false;
+		caps.hasMultiDrawIndirect = false;
+		caps.hasTextureViews = false;
+		caps.hasGLSpirv = false;
+		caps.hasBindlessTexture = false;
+	}
+
 	GLCapabilityProbe_QueryInt( GL_MAX_TEXTURE_SIZE, caps.maxTextureSize );
 	if ( caps.maxTextureSize <= 0 ) {
 		caps.maxTextureSize = 256;
 	}
-	if ( caps.glVersion >= 1.3f || GLCapabilityProbe_HasExtension( "GL_ARB_multitexture" ) ) {
+	if ( caps.profile == RENDERER_CONTEXT_PROFILE_ES ) {
+		GLCapabilityProbe_QueryInt( GL_MAX_TEXTURE_IMAGE_UNITS, caps.maxTextureImageUnits );
+		caps.maxTextureUnits = caps.maxTextureImageUnits;
+		caps.maxTextureCoords = caps.maxTextureImageUnits;
+	} else if ( caps.glVersion >= 1.3f || GLCapabilityProbe_HasExtension( "GL_ARB_multitexture" ) ) {
 		GLCapabilityProbe_QueryInt( GL_MAX_TEXTURE_UNITS_ARB, caps.maxTextureUnits );
 		GLCapabilityProbe_QueryInt( GL_MAX_TEXTURE_COORDS_ARB, caps.maxTextureCoords );
 		GLCapabilityProbe_QueryInt( GL_MAX_TEXTURE_IMAGE_UNITS_ARB, caps.maxTextureImageUnits );
@@ -1201,7 +1251,8 @@ void GLCapabilityProbe_Build( renderBackendCaps_t &caps, const char *versionStri
 
 	caps.maxDrawBuffers = 1;
 	caps.maxColorAttachments = 1;
-	if ( caps.glVersion >= 2.0f || GLCapabilityProbe_HasExtension( "GL_ARB_draw_buffers" ) ) {
+	if ( caps.profile != RENDERER_CONTEXT_PROFILE_ES &&
+		( caps.glVersion >= 2.0f || GLCapabilityProbe_HasExtension( "GL_ARB_draw_buffers" ) ) ) {
 		GLCapabilityProbe_QueryInt( GL_MAX_DRAW_BUFFERS_ARB, caps.maxDrawBuffers );
 	}
 	if ( caps.hasFBO ) {
