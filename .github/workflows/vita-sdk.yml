@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - vita-port
+      - vita-pk4-on-demand
     paths:
       - .github/workflows/vita-sdk.yml
       - tools/vita/**
