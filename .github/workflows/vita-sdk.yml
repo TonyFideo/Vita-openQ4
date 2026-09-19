@@ -88,7 +88,7 @@ jobs:
           arm-vita-eabi-g++ --version | head -n 1
           cmake --version | head -n 1
 
-      - name: Build pinned VitaGL in Vita3K-safe mode
+      - name: Stage pinned VitaGL header
         shell: bash
         run: |
           set -euo pipefail
@@ -99,27 +99,11 @@ jobs:
           git -C "${VITAGL_REPO}" checkout --detach FETCH_HEAD
           test "$(git -C "${VITAGL_REPO}" rev-parse HEAD)" = "${VITAGL_SHA}"
 
-          # VitaGL removed the historical HAVE_VITA3K_SUPPORT init path in June
-          # 2026, while vitaShaRK still documents shark_init_simple as its
-          # Vita3K-compatible path. Restore only the init behavior on top of the
-          # pinned current VitaGL instead of downgrading the whole library.
           python3 tools/vita/patch_vitagl_vita3k.py "${VITAGL_REPO}"
           grep -q "shark_init_simple" "${VITAGL_REPO}/source/gxm.c"
           grep -q "SCE_GXM_INITIALIZE_FLAG_DEFAULT" "${VITAGL_REPO}/source/gxm.c"
           grep -q "sceGxmInitialize(&gxm_init_params)" "${VITAGL_REPO}/source/gxm.c"
-
-          # The custom heap avoids sceClibMspace for GPU pools, and the
-          # single-threaded collector removes an unnecessary bring-up thread.
-          make -C "${VITAGL_REPO}" -j2 \
-            NO_SPLASHSCREEN=1 \
-            HAVE_VITA3K_SUPPORT=1 \
-            HAVE_CUSTOM_HEAP=1 \
-            SINGLE_THREADED_GC=1 \
-            LOG_ERRORS=1
-
-          cp "${VITAGL_REPO}/libvitaGL.a" "${VITASDK}/arm-vita-eabi/lib/libvitaGL.a"
           cp "${VITAGL_REPO}/source/vitaGL.h" "${VITASDK}/arm-vita-eabi/include/vitaGL.h"
-          arm-vita-eabi-ar t "${VITASDK}/arm-vita-eabi/lib/libvitaGL.a" | head
 
       - name: Install Meson bring-up dependencies
         shell: bash
@@ -175,6 +159,19 @@ jobs:
               openq4_vita_prerender_core_probe \
               openq4_vita_filesystem_probe \
             --parallel 2
+
+      - name: Build pinned VitaGL in Vita3K-safe mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C "${VITAGL_REPO}" -j2 \
+            NO_SPLASHSCREEN=1 \
+            HAVE_VITA3K_SUPPORT=1 \
+            HAVE_CUSTOM_HEAP=1 \
+            SINGLE_THREADED_GC=1 \
+            LOG_ERRORS=1
+          cp "${VITAGL_REPO}/libvitaGL.a" "${VITASDK}/arm-vita-eabi/lib/libvitaGL.a"
+          arm-vita-eabi-ar t "${VITASDK}/arm-vita-eabi/lib/libvitaGL.a" | head
 
       - name: Build pre-render ELF, SELF, and VPK
         shell: bash
