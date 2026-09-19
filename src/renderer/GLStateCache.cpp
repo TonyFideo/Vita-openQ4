@@ -151,6 +151,19 @@ int idGLStateCache::ShaderStorageBindingCount( void ) const {
 }
 
 int idGLStateCache::TextureTargetSlot( GLenum target ) const {
+#if defined(VITA) || defined(__vita__)
+	// VitaGL exposes the texture targets used by the GLES_D3 path.  Do not
+	// manufacture desktop-only target enums just to populate unused cache
+	// slots: unsupported targets must fail closed.
+	switch ( target ) {
+	case GL_TEXTURE_2D:
+		return 0;
+	case GL_TEXTURE_CUBE_MAP:
+		return 1;
+	default:
+		return -1;
+	}
+#else
 	switch ( target ) {
 	case GL_TEXTURE_2D:
 		return 0;
@@ -177,15 +190,20 @@ int idGLStateCache::TextureTargetSlot( GLenum target ) const {
 	default:
 		return -1;
 	}
+#endif
 }
 
 static bool R_GLStateCache_TextureTargetSupported( GLenum target ) {
+#if defined(VITA) || defined(__vita__)
+	return target == GL_TEXTURE_2D || target == GL_TEXTURE_CUBE_MAP;
+#else
 	if ( target == GL_TEXTURE_CUBE_MAP_ARRAY ) {
 		return glConfig.backendCaps.glVersion >= 4.0f || GLEW_ARB_texture_cube_map_array;
 	}
 	// BindTextures is part of the modern renderer contract (GL 3.3+); every
 	// other standard multi-bind texture target is core by that baseline.
 	return true;
+#endif
 }
 
 idGLStateCache::cachedGLuint_t *idGLStateCache::BufferBindingForTarget( GLenum target ) {
@@ -196,10 +214,12 @@ idGLStateCache::cachedGLuint_t *idGLStateCache::BufferBindingForTarget( GLenum t
 		return &elementArrayBuffer;
 	case GL_UNIFORM_BUFFER:
 		return &uniformBuffer;
+#if !defined(VITA) && !defined(__vita__)
 	case GL_SHADER_STORAGE_BUFFER:
 		return &shaderStorageBuffer;
 	case GL_DRAW_INDIRECT_BUFFER:
 		return &drawIndirectBuffer;
+#endif
 	default:
 		return NULL;
 	}
@@ -212,11 +232,13 @@ idGLStateCache::cachedBufferBaseBinding_t *idGLStateCache::BufferBaseBindingForT
 			return &uniformBufferBase[index];
 		}
 		break;
+#if !defined(VITA) && !defined(__vita__)
 	case GL_SHADER_STORAGE_BUFFER:
 		if ( index < static_cast<GLuint>( ShaderStorageBindingCount() ) ) {
 			return &shaderStorageBufferBase[index];
 		}
 		break;
+#endif
 	default:
 		break;
 	}
@@ -228,8 +250,10 @@ int *idGLStateCache::BufferMissBucketForTarget( GLenum target ) {
 	case GL_ARRAY_BUFFER:
 	case GL_ELEMENT_ARRAY_BUFFER:
 	case GL_UNIFORM_BUFFER:
+#if !defined(VITA) && !defined(__vita__)
 	case GL_SHADER_STORAGE_BUFFER:
 	case GL_DRAW_INDIRECT_BUFFER:
+#endif
 		return &stats.bufferMisses;
 	default:
 		return &stats.bufferMisses;
@@ -451,7 +475,13 @@ bool idGLStateCache::BindTextures( GLuint first, GLsizei count, const GLuint *te
 		return false;
 	}
 	if ( glBindTextures == NULL ) {
-		static const GLenum knownTargets[GL_STATE_CACHE_TEXTURE_TARGET_SLOTS] = {
+#if defined(VITA) || defined(__vita__)
+		static const GLenum knownTargets[] = {
+			GL_TEXTURE_2D,
+			GL_TEXTURE_CUBE_MAP
+		};
+#else
+		static const GLenum knownTargets[] = {
 			GL_TEXTURE_2D,
 			GL_TEXTURE_3D,
 			GL_TEXTURE_CUBE_MAP,
@@ -464,6 +494,8 @@ bool idGLStateCache::BindTextures( GLuint first, GLsizei count, const GLuint *te
 			GL_TEXTURE_2D_MULTISAMPLE_ARRAY,
 			GL_TEXTURE_CUBE_MAP_ARRAY
 		};
+#endif
+		const int knownTargetCount = static_cast<int>( sizeof( knownTargets ) / sizeof( knownTargets[0] ) );
 		bool issued = false;
 		for ( GLsizei i = 0; i < clampedCount; ++i ) {
 			const int unit = static_cast<int>( first + i );
@@ -471,7 +503,7 @@ bool idGLStateCache::BindTextures( GLuint first, GLsizei count, const GLuint *te
 			// A zero multi-bind entry clears every target on the unit.  A non-zero
 			// entry changes only the target with which that texture was created.
 			if ( textureNames[i] == 0 ) {
-				for ( int targetIndex = 0; targetIndex < GL_STATE_CACHE_TEXTURE_TARGET_SLOTS; ++targetIndex ) {
+				for ( int targetIndex = 0; targetIndex < knownTargetCount; ++targetIndex ) {
 					if ( R_GLStateCache_TextureTargetSupported( knownTargets[targetIndex] ) ) {
 						issued = BindTexture( unit, knownTargets[targetIndex], 0 ) || issued;
 					}
