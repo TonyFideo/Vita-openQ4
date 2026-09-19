@@ -7,7 +7,11 @@
 #ifndef __QGL_H__
 #define __QGL_H__
 
+#if defined(OPENQ4_RENDERER_GLES_MODULE) && (defined(VITA) || defined(__vita__))
+#include "GLES/qgl_vita.h"
+#else
 #include "../external/glew/glew.h"
+#endif
 
 #if defined(_WIN32) || defined(_WINDOWS)
 // RAVEN BEGIN
