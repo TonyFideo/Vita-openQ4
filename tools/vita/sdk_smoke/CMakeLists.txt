@@ -302,40 +302,65 @@ target_compile_options(openq4_vita_glesd3_probe PRIVATE
 target_compile_features(openq4_vita_glesd3_probe PRIVATE cxx_std_20)
 
 
-# Front-end/backend seam compile gate. These are the shared idTech 4 files that
-# choose BE_GLES_D3 and execute render commands before gles_Backend.cpp takes a
-# view. Keeping this separate makes renderer-integration errors visible before
-# attempting a full engine link.
-add_library(openq4_vita_renderer_frontend_probe STATIC
+# Front-end/backend seam compile gates.
+#
+# Keep the large idTech 4 translation units separate. During renderer bring-up
+# we want the first incompatible file to fail immediately instead of spending
+# minutes compiling unrelated front-end code that will be cancelled by the
+# next fix/commit.
+
+function(openq4_vita_renderer_probe target)
+  add_library(${target} STATIC ${ARGN})
+  target_include_directories(${target} PRIVATE
+    ${CMAKE_CURRENT_BINARY_DIR}
+    ${OPENQ4_ROOT}
+    ${OPENQ4_ROOT}/src
+    ${OPENQ4_ROOT}/.tmp/gamelibs_stage/src/game
+    ${OPENQ4_ROOT}/.tmp/gamelibs_stage/src/mpgame
+    $ENV{VITASDK}/arm-vita-eabi/include
+  )
+  target_compile_options(${target} PRIVATE
+    -fsigned-char
+    -DVITA=1
+    -D__DOOM_DLL__
+    -DUSE_OPENAL
+    -DOPENQ4_RENDERER_GLES_MODULE=1
+    -fno-strict-aliasing
+    -ffp-contract=off
+    -include
+    ${OPENQ4_ROOT}/src/idlib/precompiled.h
+  )
+  target_compile_features(${target} PRIVATE cxx_std_20)
+endfunction()
+
+# Fastest and most likely to expose fixed-function leakage.
+openq4_vita_renderer_probe(openq4_vita_renderer_state_probe
   ${OPENQ4_ROOT}/src/renderer/GLES/vita_gles_legacy.cpp
-  ${OPENQ4_ROOT}/src/renderer/RendererCaps.cpp
-  ${OPENQ4_ROOT}/src/renderer/RenderSystem.cpp
-  ${OPENQ4_ROOT}/src/renderer/RenderSystem_init.cpp
   ${OPENQ4_ROOT}/src/renderer/tr_backend.cpp
 )
 
-target_include_directories(openq4_vita_renderer_frontend_probe PRIVATE
-  ${CMAKE_CURRENT_BINARY_DIR}
-  ${OPENQ4_ROOT}
-  ${OPENQ4_ROOT}/src
-  ${OPENQ4_ROOT}/.tmp/gamelibs_stage/src/game
-  ${OPENQ4_ROOT}/.tmp/gamelibs_stage/src/mpgame
-  $ENV{VITASDK}/arm-vita-eabi/include
+# Renderer capability/startup negotiation. This TU is large, so do it only
+# after the state layer is known to compile.
+openq4_vita_renderer_probe(openq4_vita_renderer_init_probe
+  ${OPENQ4_ROOT}/src/renderer/GLES/vita_gles_legacy.cpp
+  ${OPENQ4_ROOT}/src/renderer/RenderSystem_init.cpp
 )
 
-target_compile_options(openq4_vita_renderer_frontend_probe PRIVATE
-  -fsigned-char
-  -DVITA=1
-  -D__DOOM_DLL__
-  -DUSE_OPENAL
-  -DOPENQ4_RENDERER_GLES_MODULE=1
-  -fno-strict-aliasing
-  -ffp-contract=off
-  -include
-  ${OPENQ4_ROOT}/src/idlib/precompiled.h
+# Renderer selection/API layer and capability model.
+openq4_vita_renderer_probe(openq4_vita_renderer_system_probe
+  ${OPENQ4_ROOT}/src/renderer/GLES/vita_gles_legacy.cpp
+  ${OPENQ4_ROOT}/src/renderer/RendererCaps.cpp
+  ${OPENQ4_ROOT}/src/renderer/RenderSystem.cpp
 )
 
-target_compile_features(openq4_vita_renderer_frontend_probe PRIVATE cxx_std_20)
+# Aggregate target retained for local/full verification after the fast gates
+# are green.
+add_custom_target(openq4_vita_renderer_frontend_probe
+  DEPENDS
+    openq4_vita_renderer_state_probe
+    openq4_vita_renderer_init_probe
+    openq4_vita_renderer_system_probe
+)
 
 add_library(openq4_vita_filesystem_probe STATIC
   ${OPENQ4_ROOT}/src/framework/File.cpp
