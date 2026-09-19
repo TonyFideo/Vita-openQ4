@@ -99,15 +99,16 @@ jobs:
           test "$(git -C "${VITAGL_REPO}" rev-parse HEAD)" = "${VITAGL_SHA}"
 
           # VitaGL removed the historical HAVE_VITA3K_SUPPORT init path in June
-          # 2026, but the flag is still accepted by its Makefile. Re-apply only
-          # that compatibility init behavior to the pinned current VitaGL:
-          # shark_init_simple + normal sceGxmInitialize + default GXM flags.
-          git -C "${VITAGL_REPO}" apply --check "${GITHUB_WORKSPACE}/tools/vita/vitagl-vita3k-compat.patch"
-          git -C "${VITAGL_REPO}" apply "${GITHUB_WORKSPACE}/tools/vita/vitagl-vita3k-compat.patch"
+          # 2026, while vitaShaRK still documents shark_init_simple as its
+          # Vita3K-compatible path. Restore only the init behavior on top of the
+          # pinned current VitaGL instead of downgrading the whole library.
+          python3 tools/vita/patch_vitagl_vita3k.py "${VITAGL_REPO}"
           grep -q "shark_init_simple" "${VITAGL_REPO}/source/gxm.c"
+          grep -q "SCE_GXM_INITIALIZE_FLAG_DEFAULT" "${VITAGL_REPO}/source/gxm.c"
+          grep -q "sceGxmInitialize(&gxm_init_params)" "${VITAGL_REPO}/source/gxm.c"
 
           # The custom heap avoids sceClibMspace for GPU pools, and the
-          # single-threaded collector removes a bring-up race from the emulator.
+          # single-threaded collector removes an unnecessary bring-up thread.
           make -C "${VITAGL_REPO}" -j2 \
             NO_SPLASHSCREEN=1 \
             HAVE_VITA3K_SUPPORT=1 \
