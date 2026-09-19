@@ -344,6 +344,15 @@ void idUploadManager::Init( const renderBackendCaps_t &caps ) {
 
 	const bool driverQuirkPersistentDisabled =
 		( RendererDriverQuirks_LastReport().flags & RENDERER_DRIVER_QUIRK_DISABLE_PERSISTENT_UPLOADS ) != 0;
+#if defined(VITA) || defined(__vita__)
+	// VitaGL does not expose sync objects, buffer storage, or the persistent
+	// mapping contract. Keep the renderer on the orphaned/subdata stream used
+	// by Doom3-ReArmed instead of compiling dead GL4.x paths.
+	const bool lowOverheadPersistentDefault = false;
+	const bool syncAvailable = false;
+	const bool usePersistent = false;
+	const bool useMapRange = false;
+#else
 	const bool lowOverheadPersistentDefault =
 		glConfig.renderFeatures.persistentMappedUploads &&
 		r_rendererUploadPersistent.GetBool() &&
@@ -353,6 +362,7 @@ void idUploadManager::Init( const renderBackendCaps_t &caps ) {
 	// contract the CPU can overwrite bytes that the GPU is still consuming.
 	const bool usePersistent = lowOverheadPersistentDefault && syncAvailable && caps.hasBufferStorage && caps.hasMapBufferRange && glBufferStorage != NULL && glMapBufferRange != NULL;
 	const bool useMapRange = caps.hasMapBufferRange && glMapBufferRange != NULL;
+#endif
 	const int ringMegs = idMath::ClampInt( RENDERER_UPLOAD_MIN_MEGS, RENDERER_UPLOAD_MAX_MEGS, r_rendererUploadMegs.GetInteger() );
 	const int ringBytes = ringMegs * 1024 * 1024;
 	frameBufferCount = idMath::ClampInt( RENDERER_UPLOAD_MIN_FRAME_BUFFERS, RENDERER_UPLOAD_MAX_FRAME_BUFFERS, r_rendererUploadFrameBuffers.GetInteger() );
@@ -640,6 +650,16 @@ bool idUploadManager::CreateFrameBuffers( uploadPath_t requestedPath ) {
 		return false;
 	}
 
+#if defined(VITA) || defined(__vita__)
+	// The Vita path is always SUBDATA. Allocate orphanable stream buffers with
+	// the GL2/VBO API that VitaGL implements.
+	for ( int i = 0; i < frameBufferCount; ++i ) {
+		glGenBuffersARB( 1, &frameBuffers[i].vbo );
+		idVertexCache::InvalidateBufferBindings();
+		idVertexCache::BindArrayBuffer( frameBuffers[i].vbo );
+		glBufferDataARB( GL_ARRAY_BUFFER_ARB, (GLsizeiptrARB)stats.ringSizeBytes, NULL, GL_STREAM_DRAW_ARB );
+	}
+#else
 	const GLbitfield persistentFlags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT | GL_DYNAMIC_STORAGE_BIT;
 	const GLbitfield mapFlags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
 
@@ -658,6 +678,7 @@ bool idUploadManager::CreateFrameBuffers( uploadPath_t requestedPath ) {
 			glBufferDataARB( GL_ARRAY_BUFFER_ARB, (GLsizeiptrARB)stats.ringSizeBytes, NULL, GL_STREAM_DRAW_ARB );
 		}
 	}
+#endif
 
 	idVertexCache::BindArrayBuffer( 0 );
 	R_GLStateCache_InvalidateBufferBinding( GL_ARRAY_BUFFER, "renderer upload init" );
@@ -669,10 +690,14 @@ void idUploadManager::ShutdownFrameBuffers( void ) {
 	// GL_ARRAY_BUFFER behind it), so force the unmap binds below to be real
 	idVertexCache::InvalidateBufferBindings();
 	for ( int i = 0; i < RENDERER_UPLOAD_MAX_FRAME_BUFFERS; ++i ) {
+#if !defined(VITA) && !defined(__vita__)
 		if ( frameBuffers[i].fence != NULL && glDeleteSync != NULL ) {
 			glDeleteSync( frameBuffers[i].fence );
 			frameBuffers[i].fence = NULL;
 		}
+#else
+		frameBuffers[i].fence = NULL;
+#endif
 		if ( frameBuffers[i].vbo != 0 ) {
 			if ( frameBuffers[i].mapped != NULL ) {
 				idVertexCache::BindArrayBuffer( frameBuffers[i].vbo );
@@ -687,6 +712,13 @@ void idUploadManager::ShutdownFrameBuffers( void ) {
 	R_GLStateCache_InvalidateBufferBinding( GL_ARRAY_BUFFER, "renderer upload shutdown" );
 }
 
+#if defined(VITA) || defined(__vita__)
+bool idUploadManager::RetireFrameFence( frameBuffer_t &frame, bool allowBlocking ) {
+	(void)frame;
+	(void)allowBlocking;
+	return true;
+}
+#else
 static bool R_RendererUpload_FenceSignaled( GLenum result ) {
 	return result == GL_ALREADY_SIGNALED || result == GL_CONDITION_SATISFIED;
 }
@@ -767,6 +799,8 @@ bool idUploadManager::RetireFrameFence( frameBuffer_t &frame, bool allowBlocking
 	return true;
 }
 
+#endif
+
 bool idUploadManager::SelectFrameBufferForFrame( int preferredFrameBuffer ) {
 	if ( frameBufferCount <= 0 ) {
 		return false;
@@ -792,6 +826,11 @@ bool idUploadManager::SelectFrameBufferForFrame( int preferredFrameBuffer ) {
 	return RetireFrameFence( frameBuffers[currentFrameBuffer], true );
 }
 
+#if defined(VITA) || defined(__vita__)
+void idUploadManager::FenceCurrentFrame( void ) {
+	// SUBDATA/orphaning does not reuse persistently mapped storage.
+}
+#else
 void idUploadManager::FenceCurrentFrame( void ) {
 	if ( path == UPLOAD_PATH_DISABLED || !hasSync ) {
 		return;
@@ -813,6 +852,8 @@ void idUploadManager::FenceCurrentFrame( void ) {
 		glFinish();
 	}
 }
+
+#endif
 
 void idUploadManager::UpdateAllocatorStats( void ) {
 	stats.frameStaticUploadBytes = allocator.FrameStaticUploadBytes();
