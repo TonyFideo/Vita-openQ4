@@ -421,6 +421,7 @@ void GL_State( int stateBits ) {
 	//
 	// alpha test
 	//
+#ifndef OPENQ4_RENDERER_GLES_MODULE
 	if ( diff & GLS_ATEST_BITS ) {
 		switch ( stateBits & GLS_ATEST_BITS ) {
 		case 0:
@@ -443,6 +444,10 @@ void GL_State( int stateBits ) {
 			break;
 		}
 	}
+#else
+	// GLES/VitaGL has no fixed-function alpha test. GLES_D3 translates the same
+	// GLS_ATEST_BITS into uAlphaTest/discard in its material shaders.
+#endif
 
 	backEnd.glState.glStateBits = stateBits;
 }
