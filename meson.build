@@ -1530,82 +1530,84 @@ if build_engine
     )
   endif
 
-  dedicated_engine_cpp_args = engine_cpp_args
-  dedicated_engine_c_args = engine_c_args
-  if host_system == 'linux'
-    dedicated_engine_cpp_args = []
-    foreach arg : engine_cpp_args
-      if not ['-DUSE_SDL3=1', '-DOPENQ4_HAVE_X11_HELPERS=1'].contains(arg)
-        dedicated_engine_cpp_args += arg
-      endif
-    endforeach
-    dedicated_engine_c_args = []
-    foreach arg : engine_c_args
-      if not ['-DUSE_SDL3=1', '-DOPENQ4_HAVE_X11_HELPERS=1'].contains(arg)
-        dedicated_engine_c_args += arg
-      endif
-    endforeach
-  endif
-
-  dedicated_cpp_args = dedicated_engine_cpp_args + ['-DID_DEDICATED']
-  dedicated_c_args = dedicated_engine_c_args + ['-DID_DEDICATED']
-  if windows_gl_free_ded
-    # GLAPI=extern strips the dllimport decoration from GLEW's GL 1.1
-    # declarations so the dedicated GL stub's plain definitions link cleanly
-    dedicated_cpp_args += ['-DGLAPI=extern']
-    dedicated_c_args += ['-DGLAPI=extern']
-  endif
-  dedicated_objcpp_args = engine_objcpp_args + ['-DID_DEDICATED']
-  dedicated_objc_args = engine_objc_args + ['-DID_DEDICATED']
-
-  if host_system == 'windows'
-    executable(
-      engine_ded_binary_name,
-      openq4_dedicated_sources,
-      include_directories: engine_include_dirs,
-      dependencies: dedicated_deps,
-      link_with: dedicated_link_with,
-      cpp_args: dedicated_cpp_args,
-      c_args: dedicated_c_args,
-      cpp_pch: pch_headers,
-      win_subsystem: 'windows',
-      link_args: engine_link_args,
-      install: true,
-      install_dir: install_root_dir,
-    )
-  elif host_system == 'darwin'
-    executable(
-      engine_ded_binary_name,
-      openq4_dedicated_sources,
-      include_directories: engine_include_dirs,
-      dependencies: dedicated_deps,
-      link_with: dedicated_link_with,
-      cpp_args: dedicated_cpp_args,
-      c_args: dedicated_c_args,
-      objcpp_args: dedicated_objcpp_args,
-      objc_args: dedicated_objc_args,
-      cpp_pch: pch_headers,
-      link_args: engine_link_args,
-      install_rpath: macos_openal_install_rpath,
-      install: true,
-      install_dir: install_root_dir,
-    )
-  else
-    executable(
-      engine_ded_binary_name,
-      openq4_dedicated_sources,
-      include_directories: engine_include_dirs,
-      dependencies: dedicated_deps,
-      link_with: dedicated_link_with,
-      cpp_args: dedicated_cpp_args,
-      c_args: dedicated_c_args,
-      cpp_pch: pch_headers,
-      link_args: engine_link_args,
-      pie: linux_executable_pie,
-      install: true,
-      install_dir: install_root_dir,
-    )
-  endif
+  if host_system != 'vita'
+    dedicated_engine_cpp_args = engine_cpp_args
+    dedicated_engine_c_args = engine_c_args
+    if host_system == 'linux'
+      dedicated_engine_cpp_args = []
+      foreach arg : engine_cpp_args
+        if not ['-DUSE_SDL3=1', '-DOPENQ4_HAVE_X11_HELPERS=1'].contains(arg)
+          dedicated_engine_cpp_args += arg
+        endif
+      endforeach
+      dedicated_engine_c_args = []
+      foreach arg : engine_c_args
+        if not ['-DUSE_SDL3=1', '-DOPENQ4_HAVE_X11_HELPERS=1'].contains(arg)
+          dedicated_engine_c_args += arg
+        endif
+      endforeach
+    endif
+  
+    dedicated_cpp_args = dedicated_engine_cpp_args + ['-DID_DEDICATED']
+    dedicated_c_args = dedicated_engine_c_args + ['-DID_DEDICATED']
+    if windows_gl_free_ded
+      # GLAPI=extern strips the dllimport decoration from GLEW's GL 1.1
+      # declarations so the dedicated GL stub's plain definitions link cleanly
+      dedicated_cpp_args += ['-DGLAPI=extern']
+      dedicated_c_args += ['-DGLAPI=extern']
+    endif
+    dedicated_objcpp_args = engine_objcpp_args + ['-DID_DEDICATED']
+    dedicated_objc_args = engine_objc_args + ['-DID_DEDICATED']
+  
+    if host_system == 'windows'
+      executable(
+        engine_ded_binary_name,
+        openq4_dedicated_sources,
+        include_directories: engine_include_dirs,
+        dependencies: dedicated_deps,
+        link_with: dedicated_link_with,
+        cpp_args: dedicated_cpp_args,
+        c_args: dedicated_c_args,
+        cpp_pch: pch_headers,
+        win_subsystem: 'windows',
+        link_args: engine_link_args,
+        install: true,
+        install_dir: install_root_dir,
+      )
+    elif host_system == 'darwin'
+      executable(
+        engine_ded_binary_name,
+        openq4_dedicated_sources,
+        include_directories: engine_include_dirs,
+        dependencies: dedicated_deps,
+        link_with: dedicated_link_with,
+        cpp_args: dedicated_cpp_args,
+        c_args: dedicated_c_args,
+        objcpp_args: dedicated_objcpp_args,
+        objc_args: dedicated_objc_args,
+        cpp_pch: pch_headers,
+        link_args: engine_link_args,
+        install_rpath: macos_openal_install_rpath,
+        install: true,
+        install_dir: install_root_dir,
+      )
+    else
+      executable(
+        engine_ded_binary_name,
+        openq4_dedicated_sources,
+        include_directories: engine_include_dirs,
+        dependencies: dedicated_deps,
+        link_with: dedicated_link_with,
+        cpp_args: dedicated_cpp_args,
+        c_args: dedicated_c_args,
+        cpp_pch: pch_headers,
+        link_args: engine_link_args,
+        pie: linux_executable_pie,
+        install: true,
+        install_dir: install_root_dir,
+      )
+    endif
+    endif
 endif
 
 game_common_cpp_args = shared_cpp_args + common_header_cpp_args + ['-DGAME_DLL'] + linux_cross_dso_sanitizer_cpp_args
