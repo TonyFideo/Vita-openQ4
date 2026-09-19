@@ -205,7 +205,7 @@ static void HudLogV( vitaLoadingLogColor_t color, const char *fmt, va_list args 
 		return;
 	}
 	char text[160];
-	vsnprintf( text, sizeof( text ), fmt, args );
+	idStr::vsnPrintf( text, sizeof( text ), fmt, args );
 	text[ sizeof( text ) - 1 ] = '\0';
 	HudPushLogText( color, text );
 	VitaLoadingHud_TickNative( false );
