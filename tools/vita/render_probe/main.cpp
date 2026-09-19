@@ -252,11 +252,11 @@ int main() {
         for (;;) sceKernelDelayThread(100000);
     }
     const bool gpu = Probe::CreateSceneGpu();
-    if (!gpu) Probe::RendererLog("probe.scene.gpu=failed");
+    if (!gpu) RendererLog("probe.scene.gpu=failed");
     const bool materialOk = gpu ? Probe::CreateMaterial() : false;
-    if (gpu && !materialOk) Probe::RendererLog("probe.scene.material=failed");
+    if (gpu && !materialOk) RendererLog("probe.scene.material=failed");
     Probe::sceneReady = gpu && materialOk;
-    Probe::RendererLog(Probe::sceneReady ? "probe.scene.ready=1" : "probe.scene.ready=0");
+    RendererLog(Probe::sceneReady ? "probe.scene.ready=1" : "probe.scene.ready=0");
     if (!Probe::hudVao || !Probe::hudVbo) {
         RendererLog("probe.hud.allocation_failed");
         VitaRendererSmoke_Run();
