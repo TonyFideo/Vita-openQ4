@@ -314,6 +314,7 @@ static void DrawScissorProbe( int x, int y ) {
 	glDisable( GL_SCISSOR_TEST );
 }
 
+}
 
 bool VitaRendererSmoke_Init( void ) {
 	RendererLog( "renderer.stage=vitagl-init-begin" );
@@ -410,7 +411,7 @@ bool VitaRendererSmoke_Init( void ) {
 	}
 
 	RendererLog( "renderer.stage=vitagl-init-ok" );
-	RendererLog( "renderer.test=vbo+shader+scissor-draw+swap" );
+	RendererLog( "renderer.test=glesd3-debug+vao+ibo+drawelements+scissor+swap" );
 	RendererLog( "renderer.note=scissor-clear-path-deferred" );
 	return true;
 }
