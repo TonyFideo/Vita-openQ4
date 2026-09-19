@@ -166,7 +166,9 @@ discovers it is already committed; every frame after it renders unscaled.
 */
 static void RB_GLES_AbandonSceneResolutionScale( void ) {
 	rb_glesResolutionScaleUnavailable = true;
+#if !defined(VITA) && !defined(__vita__)
 	tr.resolutionScaleSuppressed = true;
+#endif
 }
 
 static bool RB_GLES_EnsureResolutionScaleTarget( int width, int height ) {
@@ -214,6 +216,14 @@ static bool RB_GLES_EnsureResolutionScaleTarget( int width, int height ) {
 }
 
 void RB_GLES_ResolveSceneResolutionScale( void ) {
+#if defined(VITA) || defined(__vita__)
+	// Vita bring-up currently renders at the native target size. The Android
+	// resolution-scaling path depends on front-end bookkeeping fields that are
+	// not part of the Vita branch yet and is not required for D1/D2 renderer
+	// validation. Keep the seam present but inert until the real scene path is
+	// stable, then add a Vita-specific scaler deliberately.
+	return;
+#else
 	if ( rb_glesResolutionScaleUnavailable || backEnd.viewDef == NULL ) {
 		return;
 	}
@@ -318,7 +328,7 @@ void RB_GLES_ResolveSceneResolutionScale( void ) {
 	// glColorMask was issued behind GL_State's back, the same way
 	// RB_ForceOpaquePresentAlpha does it, so the cached mask bits no longer
 	// describe the driver.
-	backEnd.glState.forceGlState = true;
+	backEnd.glState.forceGlState = true;#endif
 }
 
 /*
