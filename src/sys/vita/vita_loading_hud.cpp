@@ -176,7 +176,26 @@ static void HudWritePersistentLine( vitaLoadingLogColor_t color, const char *tex
 	sceClibSnprintf( line, sizeof( line ), "[%s] %s\n", HudLogPrefix( color ), text );
 	const SceSize length = static_cast<SceSize>( sceClibStrnlen( line, sizeof( line ) ) );
 	if ( length > 0 ) {
-		sceIoWrite( hud.logFd, line, length );
+		const SceSSize written = sceIoWrite( hud.logFd, line, length );
+		if ( written != static_cast<SceSSize>( length ) ) {
+			sceClibPrintf(
+				"[VOQ4][load] persistent log write failed fd=%d wrote=%d wanted=%u\n",
+				static_cast<int>( hud.logFd ),
+				static_cast<int>( written ),
+				static_cast<unsigned int>( length ) );
+			return;
+		}
+
+		// Vita3K can terminate the process on a guest memory exception before an
+		// open descriptor is closed. Sync each short diagnostic line so the log
+		// remains useful even when the renderer crashes abruptly.
+		const int syncResult = sceIoSyncByFd( hud.logFd, 0 );
+		if ( syncResult < 0 ) {
+			sceClibPrintf(
+				"[VOQ4][load] persistent log sync failed fd=%d result=0x%08x\n",
+				static_cast<int>( hud.logFd ),
+				static_cast<unsigned int>( syncResult ) );
+		}
 	}
 }
 

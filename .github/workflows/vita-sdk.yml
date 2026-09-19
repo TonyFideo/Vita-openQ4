@@ -166,11 +166,13 @@ jobs:
           restore-keys: |
             vita-engine-ccache-v1-${{ env.OPENQ4_GAMELIBS_SHA }}-
 
-      - name: Restore pinned VitaGL build
+      - name: Restore pinned VitaGL mspace build
         uses: actions/cache@v4
         with:
-          path: .ci-cache/vitagl
-          key: vita-vitagl-v1-${{ env.VITAGL_SHA }}-${{ hashFiles('tools/vita/patch_vitagl_vita3k.py') }}
+          # Deliberately separate from the old HAVE_CUSTOM_HEAP cache. Action
+          # #216 symbolicated a deterministic corruption inside heap_blk_*.
+          path: .ci-cache/vitagl-mspace
+          key: vita-vitagl-mspace-v1-${{ env.VITAGL_SHA }}-${{ hashFiles('tools/vita/patch_vitagl_vita3k.py') }}
 
       - name: Restore Vita runtime pak0
         uses: actions/cache@v4
@@ -241,20 +243,33 @@ jobs:
           ccache --max-size=1536M
           ccache --zero-stats
 
-      - name: Build or restore pinned VitaGL in Vita3K-safe mode
+      - name: Build or restore pinned VitaGL in Vita3K-safe mspace mode
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p .ci-cache/vitagl
-          if [ -f .ci-cache/vitagl/libvitaGL.a ]; then
-            echo "Using cached libvitaGL.a"
+          mkdir -p .ci-cache/vitagl-mspace
+          if [ -f .ci-cache/vitagl-mspace/libvitaGL.a ]; then
+            echo "Using cached mspace libvitaGL.a"
           else
+            # Action #216 crashes deterministically in vitaGL's custom
+            # heap_blk_* allocator. Keep every other bring-up option stable and
+            # use VitaSDK's sceClibMspace allocator for the same memory pools.
             make -C "${VITAGL_REPO}" -j"${VITA_BUILD_JOBS}" \
-              NO_SPLASHSCREEN=1 HAVE_VITA3K_SUPPORT=1 HAVE_CUSTOM_HEAP=1 \
+              NO_SPLASHSCREEN=1 HAVE_VITA3K_SUPPORT=1 \
               SINGLE_THREADED_GC=1 LOG_ERRORS=1
-            cp "${VITAGL_REPO}/libvitaGL.a" .ci-cache/vitagl/libvitaGL.a
+            cp "${VITAGL_REPO}/libvitaGL.a" .ci-cache/vitagl-mspace/libvitaGL.a
           fi
-          cp .ci-cache/vitagl/libvitaGL.a "$VITASDK/arm-vita-eabi/lib/libvitaGL.a"
+
+          # Do not silently reuse a custom-heap archive. The custom allocator
+          # contains this diagnostic string; the mspace build compiles that
+          # entire implementation out.
+          if "$VITASDK/bin/arm-vita-eabi-strings" .ci-cache/vitagl-mspace/libvitaGL.a | \
+              grep -q "Extending heap headers list"; then
+            echo "::error::Cached vitaGL still contains HAVE_CUSTOM_HEAP implementation"
+            exit 1
+          fi
+          echo "Verified vitaGL allocator profile: sceClibMspace"
+          cp .ci-cache/vitagl-mspace/libvitaGL.a "$VITASDK/arm-vita-eabi/lib/libvitaGL.a"
 
       - name: Configure full Vita engine integration
         shell: bash
