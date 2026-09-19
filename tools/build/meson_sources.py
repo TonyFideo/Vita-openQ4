@@ -237,6 +237,7 @@ LINUX_PLATFORM_SOURCES = (
 )
 
 VITA_PLATFORM_SOURCES = (
+    "sys/vita/vita_main.cpp",
     "sys/vita/vita_glimp.cpp",
     "sys/vita/vita_system.cpp",
     "sys/vita/vita_threads.cpp",
@@ -490,6 +491,22 @@ def main(argv: list[str]) -> int:
                 raise SourceListError("Vita source discovery currently requires platform_backend=native")
             for rel_path in VITA_PLATFORM_SOURCES:
                 add_required_source(source_set, ordered_sources, source_root, rel_path)
+
+            # The engine glob already owns the shared renderer front end and
+            # renderer/OpenGL image/cache support. Add the Vita/Android GLES
+            # backend beneath it and remove the desktop draw backends that
+            # implement the same symbols.
+            for pattern in (
+                "renderer/GLES/*.cpp",
+                "renderer/GLES_D3/*.cpp",
+                "renderer/GLES_D3/glsl/*.cpp",
+            ):
+                add_globbed_sources(source_set, ordered_sources, source_root, pattern)
+            for path in RENDERER_GLES_EXCLUDED_SOURCES:
+                # RendererModule.cpp remains engine-owned in a static Vita
+                # build; only remove it from the split renderer manifest.
+                if path != "src/renderer/RendererModule.cpp":
+                    remove_source(source_set, ordered_sources, path)
         else:
             print(f"Unsupported host system: {args.host_system}", file=sys.stderr)
             return 1
