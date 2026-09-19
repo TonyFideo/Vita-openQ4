@@ -101,6 +101,28 @@ RENDERER_GL_EXCLUDED_SOURCES = (
     "src/renderer/RendererModule.cpp",
 )
 
+
+# renderer sources for the GLES/VitaGL module. This mirrors the Android
+# renderer-gles source ownership: the shared front end plus OpenGL image/cache
+# support, GLES frame-loop seams and the Doom 3-shaped GLES_D3 passes. Legacy
+# ARB2/draw_common/tr_render implementations are replaced by GLES equivalents.
+RENDERER_GLES_SOURCE_GLOBS = [
+    "renderer/*.cpp",
+    "renderer/OpenGL/*.cpp",
+    "renderer/GLES/*.cpp",
+    "renderer/GLES_D3/*.cpp",
+    "renderer/GLES_D3/glsl/*.cpp",
+]
+
+RENDERER_GLES_EXCLUDED_SOURCES = (
+    "src/renderer/RendererModule.cpp",
+    "src/renderer/draw_arb2.cpp",
+    "src/renderer/draw_common.cpp",
+    "src/renderer/tr_render.cpp",
+    "src/renderer/tr_rendertools.cpp",
+    "src/renderer/GLES/gles_clear_probe.cpp",
+)
+
 # renderer sources for the renderer-vk dynamic module (Phase C): the shared
 # front-end plus renderer/Vulkan/*, minus the loader and the GL-backend TUs
 # (replaced by Vulkan equivalents; mixed front-end TUs keep their GL call
@@ -329,7 +351,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--emit",
-        choices=("engine", "imagetools", "render_geo", "renderer_gl", "renderer_vk"),
+        choices=("engine", "imagetools", "render_geo", "renderer_gl", "renderer_gles", "renderer_vk"),
         default="engine",
         help="Emit engine target sources or one of the split library/module source lists.",
     )
@@ -361,11 +383,12 @@ def main(argv: list[str]) -> int:
 
     include_game = args.include_game == "true"
 
-    if args.emit in ("imagetools", "render_geo", "renderer_gl", "renderer_vk"):
+    if args.emit in ("imagetools", "render_geo", "renderer_gl", "renderer_gles", "renderer_vk"):
         globs = {
             "imagetools": IMAGETOOLS_SOURCE_GLOBS,
             "render_geo": RENDER_GEO_SOURCE_GLOBS,
             "renderer_gl": RENDERER_GL_SOURCE_GLOBS,
+            "renderer_gles": RENDERER_GLES_SOURCE_GLOBS,
             "renderer_vk": RENDERER_VK_SOURCE_GLOBS,
         }[args.emit]
         try:
@@ -376,6 +399,9 @@ def main(argv: list[str]) -> int:
             return 1
         if args.emit == "renderer_gl":
             for path in RENDERER_GL_EXCLUDED_SOURCES:
+                remove_source(source_set, ordered_sources, path)
+        if args.emit == "renderer_gles":
+            for path in RENDERER_GLES_EXCLUDED_SOURCES:
                 remove_source(source_set, ordered_sources, path)
         if args.emit == "renderer_vk":
             try:
