@@ -14,6 +14,7 @@ const char *kRendererLog = "ux0:data/Vita-OpenQ4/logs/prerender.log";
 uint64_t rendererFrame = 0;
 GLuint smokeProgram = 0;
 GLuint smokePositionBuffer = 0;
+GLuint smokeFullScreenPositionBuffer = 0;
 GLuint smokeColorBuffer = 0;
 
 static void RendererLog( const char *text ) {
@@ -180,6 +181,15 @@ static bool CreateSmokeGeometry( void ) {
 		-0.62f,  0.48f
 	};
 
+	static const GLfloat fullScreenPositions[] = {
+		-1.0f, -1.0f,
+		 1.0f, -1.0f,
+		 1.0f,  1.0f,
+		-1.0f, -1.0f,
+		 1.0f,  1.0f,
+		-1.0f,  1.0f
+	};
+
 	static const GLfloat colors[] = {
 		0.10f, 0.45f, 1.00f, 1.00f,
 		0.10f, 1.00f, 0.45f, 1.00f,
@@ -193,13 +203,17 @@ static bool CreateSmokeGeometry( void ) {
 	glBindBuffer( GL_ARRAY_BUFFER, smokePositionBuffer );
 	glBufferData( GL_ARRAY_BUFFER, sizeof( positions ), positions, GL_STATIC_DRAW );
 
+	glGenBuffers( 1, &smokeFullScreenPositionBuffer );
+	glBindBuffer( GL_ARRAY_BUFFER, smokeFullScreenPositionBuffer );
+	glBufferData( GL_ARRAY_BUFFER, sizeof( fullScreenPositions ), fullScreenPositions, GL_STATIC_DRAW );
+
 	glGenBuffers( 1, &smokeColorBuffer );
 	glBindBuffer( GL_ARRAY_BUFFER, smokeColorBuffer );
 	glBufferData( GL_ARRAY_BUFFER, sizeof( colors ), colors, GL_STATIC_DRAW );
 
 	glBindBuffer( GL_ARRAY_BUFFER, 0 );
 
-	if ( smokePositionBuffer == 0 || smokeColorBuffer == 0 ) {
+	if ( smokePositionBuffer == 0 || smokeFullScreenPositionBuffer == 0 || smokeColorBuffer == 0 ) {
 		RendererLog( "renderer.stage=geometry-buffer-failed" );
 		return false;
 	}
@@ -226,11 +240,29 @@ static void DrawSmokeGeometry( void ) {
 	glBindBuffer( GL_ARRAY_BUFFER, 0 );
 }
 
-static void DrawScissorProbe( int x, int y, float r, float g, float b ) {
+static void DrawScissorProbe( int x, int y ) {
+	// Do not use glClear for this validation. On VitaGL the clear path has its
+	// own internal shader/state handling; OpenQ4 primarily needs scissor to
+	// constrain normal surface draws. A fullscreen draw clipped to a 64x64 box
+	// tests that exact path.
 	glEnable( GL_SCISSOR_TEST );
-	glScissor( x, y, 48, 48 );
-	glClearColor( r, g, b, 1.0f );
-	glClear( GL_COLOR_BUFFER_BIT );
+	glScissor( x, y, 64, 64 );
+
+	glUseProgram( smokeProgram );
+
+	glEnableVertexAttribArray( 0 );
+	glBindBuffer( GL_ARRAY_BUFFER, smokeFullScreenPositionBuffer );
+	glVertexAttribPointer( 0, 2, GL_FLOAT, GL_FALSE, 0, reinterpret_cast<const GLvoid *>( 0 ) );
+
+	glEnableVertexAttribArray( 1 );
+	glBindBuffer( GL_ARRAY_BUFFER, smokeColorBuffer );
+	glVertexAttribPointer( 1, 4, GL_FLOAT, GL_FALSE, 0, reinterpret_cast<const GLvoid *>( 0 ) );
+
+	glDrawArrays( GL_TRIANGLES, 0, 6 );
+
+	glDisableVertexAttribArray( 0 );
+	glDisableVertexAttribArray( 1 );
+	glBindBuffer( GL_ARRAY_BUFFER, 0 );
 	glDisable( GL_SCISSOR_TEST );
 }
 
@@ -287,7 +319,8 @@ bool VitaRendererSmoke_Init( void ) {
 	}
 
 	RendererLog( "renderer.stage=vitagl-init-ok" );
-	RendererLog( "renderer.test=vbo+shader+scissor+swap" );
+	RendererLog( "renderer.test=vbo+shader+scissor-draw+swap" );
+	RendererLog( "renderer.note=scissor-clear-path-deferred" );
 	return true;
 }
 
@@ -302,12 +335,12 @@ void VitaRendererSmoke_Run( void ) {
 
 		DrawSmokeGeometry();
 
-		// Independent clear probes make viewport/scissor failures visible even if
-		// the shader path later needs additional work.
-		DrawScissorProbe( 16, 16, 0.85f, 0.10f, 0.10f );
-		DrawScissorProbe( 896, 16, 0.10f, 0.85f, 0.10f );
-		DrawScissorProbe( 16, 480, 0.10f, 0.25f, 0.95f );
-		DrawScissorProbe( 896, 480, 0.95f, 0.80f, 0.10f );
+		// Validate scissor on the regular shader/VBO draw path. Each call draws a
+		// fullscreen gradient but should expose only a 64x64 corner region.
+		DrawScissorProbe( 16, 16 );
+		DrawScissorProbe( 880, 16 );
+		DrawScissorProbe( 16, 464 );
+		DrawScissorProbe( 880, 464 );
 
 		if ( rendererFrame == 0 ) {
 			const bool firstFrameOk = CheckGl( "first-frame" );
