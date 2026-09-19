@@ -654,10 +654,15 @@ bool idJobSystem::Initialize( const idJobSystemConfig &requestedConfig ) {
 		return false;
 	}
 	impl->config = requestedConfig;
-	if ( impl->config.workerThreads == 0 ) {
+	impl->config.synchronous = requestedConfig.synchronous;
+	if ( impl->config.synchronous ) {
+		// The inline scheduler needs no hardware-thread discovery. Besides being
+		// cheaper, this keeps Vita's bring-up path entirely away from the
+		// std::thread/pthread worker backend.
+		impl->config.workerThreads = 0;
+	} else if ( impl->config.workerThreads == 0 ) {
 		impl->config.workerThreads = ResolveWorkerThreadCount( 0 );
 	}
-	impl->config.synchronous = requestedConfig.synchronous;
 	try {
 		// All scheduler-owned vectors are reserved before admission or worker
 		// creation begins.  Accepted submissions and teardown therefore require

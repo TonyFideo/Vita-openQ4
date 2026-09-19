@@ -105,25 +105,25 @@ jobs:
 
       - name: Gate 1 - renderer state bridge
         shell: bash
-        run: cmake --build build/vita-sdk-smoke --target openq4_vita_renderer_state_probe --parallel 2
+        run: cmake --build build/vita-sdk-smoke --target openq4_vita_renderer_state_probe --parallel 4
 
       - name: Gate 2 - renderer startup negotiation
         shell: bash
-        run: cmake --build build/vita-sdk-smoke --target openq4_vita_renderer_init_probe --parallel 2
+        run: cmake --build build/vita-sdk-smoke --target openq4_vita_renderer_init_probe --parallel 4
 
       - name: Gate 3 - renderer API and capability model
         shell: bash
-        run: cmake --build build/vita-sdk-smoke --target openq4_vita_renderer_system_probe --parallel 2
+        run: cmake --build build/vita-sdk-smoke --target openq4_vita_renderer_system_probe --parallel 4
 
       - name: Gate 4 - complete GLES_D3 backend
         shell: bash
-        run: cmake --build build/vita-sdk-smoke --target openq4_vita_glesd3_probe --parallel 2
+        run: cmake --build build/vita-sdk-smoke --target openq4_vita_glesd3_probe --parallel 4
 
       - name: Build remaining pre-render compile gates
         shell: bash
         run: |
           set -euo pipefail
-          cmake --build build/vita-sdk-smoke             --target               openq4_vita_prerender_platform_probe               openq4_vita_glimp_probe               openq4_vita_engine_entry_probe               openq4_vita_prerender_core_probe               openq4_vita_filesystem_probe             --parallel 2
+          cmake --build build/vita-sdk-smoke             --target               openq4_vita_prerender_platform_probe               openq4_vita_glimp_probe               openq4_vita_engine_entry_probe               openq4_vita_prerender_core_probe               openq4_vita_filesystem_probe             --parallel 4
 
   engine-integration:
     name: Full engine integration
@@ -325,6 +325,21 @@ jobs:
           test -f build/vita-engine-config/openQ4-client_armv7
           test -f build/vita-engine-package/eboot.bin
           test -f build/vita-engine-package/Vita-OpenQ4-engine.vpk
+          python3 - <<'PY'
+          import zipfile
+          from pathlib import Path
+          vpk = Path("build/vita-engine-package/Vita-OpenQ4-engine.vpk")
+          with zipfile.ZipFile(vpk) as zf:
+              names = set(zf.namelist())
+              required = {"eboot.bin", "baseoq4/mod.json", "baseoq4/pak0.pk4"}
+              missing = sorted(required - names)
+              if missing:
+                  raise SystemExit(f"VPK missing required runtime entries: {missing}")
+              pak0 = zf.getinfo("baseoq4/pak0.pk4")
+              if pak0.file_size < 1024 * 1024:
+                  raise SystemExit(f"bundled pak0.pk4 is unexpectedly small: {pak0.file_size}")
+              print(f"Validated VPK runtime entries; pak0={pak0.file_size} bytes")
+          PY
           arm-vita-eabi-readelf -h build/vita-engine-config/openQ4-client_armv7
           ls -lh             build/vita-engine-config/openQ4-client_armv7             build/vita-engine-package/eboot.bin             build/vita-engine-package/Vita-OpenQ4-engine.vpk
 

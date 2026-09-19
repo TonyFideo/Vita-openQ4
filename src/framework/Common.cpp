@@ -6696,9 +6696,20 @@ void idCommonLocal::Init( int argc, const char **argv, const char *cmdline ) {
 		// lifecycle is available to clients, tools, and headless dedicated builds.
 		// Disabling jobs never drops work: it selects the deterministic inline path.
 		idJobSystemConfig jobConfig;
+#if defined(VITA) || defined(__vita__)
+		// VitaSDK's std::thread worker creation is not reliable during Vita3K
+		// bring-up. The scheduler already has a complete synchronous execution
+		// path, so preserve all job-list/dependency/cancellation semantics while
+		// avoiding pthread worker creation until a native Vita worker backend is
+		// implemented.
+		jobConfig.synchronous = true;
+		jobConfig.workerThreads = 0;
+		Printf( "Vita job system: synchronous fallback enabled\n" );
+#else
 		jobConfig.synchronous = !jobs_enable.GetBool() || jobs_deterministic.GetBool();
 		jobConfig.workerThreads = jobConfig.synchronous ? 0 :
 			idJobSystem::ResolveWorkerThreadCount( jobs_numThreads.GetInteger() );
+#endif
 		jobConfig.maxQueuedLists = static_cast<std::size_t>( jobs_queueCapacity.GetInteger() );
 		if ( !jobSystem.Initialize( jobConfig ) ) {
 			FatalError( "Failed to initialize the portable job system" );
