@@ -423,6 +423,14 @@ endif
 openq4_pak_files = []
 openq4_paks_generated_header = []
 if build_engine or build_games
+  if host_system == 'vita'
+    vita_paks_header = configure_file(
+      input: 'tools/vita/openq4_paks_generated.h.in',
+      output: 'openq4_paks_generated.h',
+      copy: true,
+    )
+    openq4_paks_generated_header = [vita_paks_header]
+  else
   openq4_pak_script_files = files(
     'tools/build/openq4_pak.py',
   )
@@ -533,6 +541,7 @@ if build_engine or build_games
   )
   openq4_pak_files = [openq4_pak0_output, openq4_pak1_output]
   openq4_paks_generated_header = [openq4_paks_header_output]
+  endif
 endif
 
 if needs_game_headers
