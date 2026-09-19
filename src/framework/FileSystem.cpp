@@ -5641,7 +5641,50 @@ void idFileSystemLocal::Startup( void ) {
 		gameFolder = BASE_GAMEDIR;
 	}
 
+#if defined(VITA) || defined(__vita__)
+	const idCVar *const vitaStartupGameInternal = fs_game.VitaDebugInternalVar();
+	const idCVar *const vitaStartupGameBaseInternal = fs_game_base.VitaDebugInternalVar();
+	const char *const vitaStartupGameValue = fs_game.VitaDebugRawValuePointer();
+	const char *const vitaStartupGameBaseValue = fs_game_base.VitaDebugRawValuePointer();
+#endif
+
 	SetupGameDirectories( BASE_GAMEDIR );
+
+#if defined(VITA) || defined(__vita__)
+	bool vitaStartupIntegrityOk = true;
+	for ( int guardIndex = 0; guardIndex < 64; ++guardIndex ) {
+		const uint32_t expected = 0x564F5134u ^ static_cast<uint32_t>( guardIndex * 0x01010101u );
+		if ( vitaOverflowGuard[ guardIndex ] != expected ) {
+			sceClibPrintf( "[VOQ4][fsdiag] POST-DIRECTORY CORRUPTION guard=%d got=0x%08x expected=0x%08x\n",
+					guardIndex, (unsigned int)vitaOverflowGuard[ guardIndex ], (unsigned int)expected );
+			vitaStartupIntegrityOk = false;
+			break;
+		}
+	}
+	const idCVar *const vitaNowGameInternal = fs_game.VitaDebugInternalVar();
+	const idCVar *const vitaNowGameBaseInternal = fs_game_base.VitaDebugInternalVar();
+	if ( vitaNowGameInternal != vitaStartupGameInternal || vitaNowGameBaseInternal != vitaStartupGameBaseInternal ) {
+		sceClibPrintf( "[VOQ4][fsdiag] POST-DIRECTORY CORRUPTION cvar-internal game=%p/%p game_base=%p/%p\n",
+				vitaNowGameInternal, vitaStartupGameInternal,
+				vitaNowGameBaseInternal, vitaStartupGameBaseInternal );
+		vitaStartupIntegrityOk = false;
+	} else {
+		const char *const vitaNowGameValue = fs_game.VitaDebugRawValuePointer();
+		const char *const vitaNowGameBaseValue = fs_game_base.VitaDebugRawValuePointer();
+		if ( vitaNowGameValue != vitaStartupGameValue || vitaNowGameBaseValue != vitaStartupGameBaseValue ) {
+			sceClibPrintf( "[VOQ4][fsdiag] POST-DIRECTORY CORRUPTION cvar-value game=%p/%p game_base=%p/%p\n",
+					vitaNowGameValue, vitaStartupGameValue,
+					vitaNowGameBaseValue, vitaStartupGameBaseValue );
+			vitaStartupIntegrityOk = false;
+		}
+	}
+	if ( !vitaStartupIntegrityOk ) {
+		sceClibPrintf( "[VOQ4][fsdiag] aborting after q4base directory teardown before cvar access\n" );
+		sceKernelExitProcess( 0x46534450 );
+		return;
+	}
+	sceClibPrintf( "[VOQ4][fsdiag] post-q4base-directory integrity=ok\n" );
+#endif
 
 	// fs_game_base override
 	if ( fs_game_base.GetString()[0] &&
