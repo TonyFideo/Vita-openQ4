@@ -52,6 +52,7 @@ static bool CreateMaterial() {
     glDeleteShader(v); glDeleteShader(f);
     if (!linked) { glDeleteProgram(material); material = 0; return false; }
     glUseProgram(material);
+    RendererLog("probe.material.linked");
     materialMvp = glGetUniformLocation(material, "uMVP");
     const GLint texture = glGetUniformLocation(material, "uTexture0");
     const GLint color = glGetUniformLocation(material, "uColor");
@@ -65,7 +66,9 @@ static bool CreateMaterial() {
     glUniform4f(color, 1, 1, 1, 1);
     glUniform4f(vertexColor, 1, 0, 1, 0);
     glUniform4f(s, 1, 0, 0, 0); glUniform4f(t, 0, 1, 0, 0);
-    return CheckGl("probe.material");
+    const bool ok = CheckGl("probe.material");
+    RendererLog(ok ? "probe.material.ok" : "probe.material.gl-error");
+    return ok;
 }
 
 static bool CreateSceneGpu() {
@@ -75,6 +78,11 @@ static bool CreateSceneGpu() {
     glBufferData(GL_ARRAY_BUFFER, sizeof(scene.vertices), scene.vertices.data(), GL_STATIC_DRAW);
     glGenBuffers(1, &meshIbo); glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, meshIbo);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(scene.indices), scene.indices.data(), GL_STATIC_DRAW);
+    if (!meshVao || !meshVbo || !meshIbo || !CheckGl("probe.mesh.buffers")) {
+        RendererLog("probe.mesh.buffers=failed");
+        return false;
+    }
+    RendererLog("probe.mesh.buffers=ok");
     unsigned char pixels[64 * 64 * 4];
     for (int y = 0; y < 64; ++y) for (int x = 0; x < 64; ++x) {
         const bool light = ((x / 8) ^ (y / 8)) & 1;
@@ -85,16 +93,26 @@ static bool CreateSceneGpu() {
     }
     glActiveTexture(GL_TEXTURE0);
     glGenTextures(1, &checker); glBindTexture(GL_TEXTURE_2D, checker);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    // vitaGL only implements GL_UNPACK_ROW_LENGTH in glPixelStorei.  This
+    // RGBA8 texture has 64 * 4 = 256 bytes per row, already compatible with
+    // the default unpack alignment, so no alignment override is required.
+    RendererLog("probe.texture.unpack=default-alignment row_bytes=256");
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    if (!checker || !CheckGl("probe.texture")) {
+        RendererLog("probe.texture=failed");
+        return false;
+    }
+    RendererLog("probe.texture=ok");
     glGenVertexArrays(1, &hudVao); glGenBuffers(1, &hudVbo);
     glBindVertexArray(0);
     RendererLog("probe.mesh vertices=28 indices=42 stride=24 color_offset=12 uv_offset=16 floor_index_byte_offset=72");
-    return meshVao && meshVbo && meshIbo && checker && hudVao && hudVbo && CheckGl("probe.mesh");
+    const bool ok = hudVao && hudVbo && CheckGl("probe.mesh.objects");
+    RendererLog(ok ? "probe.mesh.objects=ok" : "probe.mesh.objects=failed");
+    return ok;
 }
 
 static void BindVertices(GLuint vao, GLuint vbo, bool textured) {
@@ -223,6 +241,9 @@ int main() {
     sceIoMkdir("ux0:data/Vita-OpenQ4", 0777);
     sceIoMkdir("ux0:data/Vita-OpenQ4/logs", 0777);
     kRendererLog = "ux0:data/Vita-OpenQ4/logs/renderer-probe.log";
+    // Keep each test run self-contained instead of appending checkpoints from
+    // older VPKs to the same file.
+    sceIoRemove(kRendererLog);
     RendererLog("probe.build=" PROBE_BUILD_SHA);
     RendererLog("probe.kind=isolated-production-shaders-not-full-game");
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
@@ -231,7 +252,11 @@ int main() {
         for (;;) sceKernelDelayThread(100000);
     }
     const bool gpu = Probe::CreateSceneGpu();
-    Probe::sceneReady = gpu && Probe::CreateMaterial();
+    if (!gpu) Probe::RendererLog("probe.scene.gpu=failed");
+    const bool materialOk = gpu ? Probe::CreateMaterial() : false;
+    if (gpu && !materialOk) Probe::RendererLog("probe.scene.material=failed");
+    Probe::sceneReady = gpu && materialOk;
+    Probe::RendererLog(Probe::sceneReady ? "probe.scene.ready=1" : "probe.scene.ready=0");
     if (!Probe::hudVao || !Probe::hudVbo) {
         RendererLog("probe.hud.allocation_failed");
         VitaRendererSmoke_Run();
