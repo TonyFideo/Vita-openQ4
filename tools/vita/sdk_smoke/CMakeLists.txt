@@ -200,6 +200,41 @@ target_compile_options(openq4_vita_prerender_core_probe PRIVATE
 
 target_compile_features(openq4_vita_prerender_core_probe PRIVATE cxx_std_20)
 
+
+# D1 renderer compile gate: the actual GLES_D3 draw/program substrate from the
+# Android renderer, compiled against VitaGL. It stays a static library for now:
+# unresolved engine globals are expected until the full engine link is enabled.
+add_library(openq4_vita_glesd3_probe STATIC
+  ${OPENQ4_ROOT}/src/renderer/GLES_D3/gles_draw.cpp
+  ${OPENQ4_ROOT}/src/renderer/GLES_D3/gles_program.cpp
+  ${OPENQ4_ROOT}/src/renderer/GLES_D3/gles_shaders.cpp
+  ${OPENQ4_ROOT}/src/renderer/GLES_D3/glsl/debugShaderVP.cpp
+  ${OPENQ4_ROOT}/src/renderer/GLES_D3/glsl/debugShaderFP.cpp
+)
+
+target_include_directories(openq4_vita_glesd3_probe PRIVATE
+  ${CMAKE_CURRENT_BINARY_DIR}
+  ${OPENQ4_ROOT}
+  ${OPENQ4_ROOT}/src
+  ${OPENQ4_ROOT}/.tmp/gamelibs_stage/src/game
+  ${OPENQ4_ROOT}/.tmp/gamelibs_stage/src/mpgame
+  $ENV{VITASDK}/arm-vita-eabi/include
+)
+
+target_compile_options(openq4_vita_glesd3_probe PRIVATE
+  -fsigned-char
+  -DVITA=1
+  -D__DOOM_DLL__
+  -DUSE_OPENAL
+  -DOPENQ4_RENDERER_GLES_MODULE=1
+  -fno-strict-aliasing
+  -ffp-contract=off
+  -include
+  ${OPENQ4_ROOT}/src/idlib/precompiled.h
+)
+
+target_compile_features(openq4_vita_glesd3_probe PRIVATE cxx_std_20)
+
 add_library(openq4_vita_filesystem_probe STATIC
   ${OPENQ4_ROOT}/src/framework/File.cpp
   ${OPENQ4_ROOT}/src/framework/FileSystem.cpp
