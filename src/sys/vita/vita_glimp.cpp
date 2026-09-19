@@ -62,6 +62,11 @@ bool GLimp_Init( glimpParms_t parms ) {
 
 	VitaGLimp_Log( "initializing VitaGL context 960x544" );
 
+	// Match the validated prerender handoff: stop CPU writes to the native
+	// diagnostic framebuffer before GXM/VitaGL initialization, but retain its
+	// CDRAM backing until VitaGL has presented its first replacement frame.
+	VitaLoadingHud_BeginRendererHandoff();
+
 	// Match the stable smoke-test configuration and the transient-pool sizing
 	// used by the Vita idTech 4 reference path.
 	vglSetCircularPoolSize( 3 * 1024 * 1024 );
@@ -139,9 +144,6 @@ void GLimp_PreserveWindowOnShutdown( bool preserve ) {
 void GLimp_SwapBuffers( void ) {
 	if ( vitaGLReady ) {
 		const bool firstHudSwap = !VitaLoadingHud_RendererHandoffComplete();
-		if ( firstHudSwap ) {
-			VitaLoadingHud_BeginRendererHandoff();
-		}
 		vglSwapBuffers( GL_FALSE );
 		if ( firstHudSwap ) {
 			VitaLoadingHud_EndRendererHandoff();
