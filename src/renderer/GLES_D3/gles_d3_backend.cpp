@@ -290,6 +290,7 @@ static GLuint	rb_glesD3TestVbo = 0;
 static GLuint	rb_glesD3TestIbo = 0;
 static bool		rb_glesD3ResourcesReady = false;
 static bool		rb_glesD3ResourcesFailed = false;
+static int		rb_glesD3ResourcesStage = -1;
 
 /*
 ====================
@@ -297,15 +298,25 @@ RB_GLESD3_EnsureResources
 ====================
 */
 bool RB_GLESD3_EnsureResources( void ) {
-	if ( rb_glesD3ResourcesReady ) {
+	const int requestedStage = r_glesD3BringupStage.GetInteger();
+	if ( rb_glesD3ResourcesReady && rb_glesD3ResourcesStage == requestedStage ) {
 		return true;
+	}
+	if ( rb_glesD3ResourcesStage != requestedStage ) {
+		// Moving from the D1 debug-only library to a later stage must rebuild
+		// the program table instead of silently reusing a library containing
+		// only GLESD3_PROGRAM_DEBUG.
+		R_GLESD3_Programs_Shutdown();
+		rb_glesD3ResourcesReady = false;
+		rb_glesD3ResourcesFailed = false;
+		rb_glesD3ResourcesStage = requestedStage;
 	}
 	if ( rb_glesD3ResourcesFailed ) {
 		return false;
 	}
 
 	R_GLESD3_Draw_Init();
-	const bool debugOnly = r_glesD3BringupStage.GetInteger() == 1;
+	const bool debugOnly = requestedStage == 1;
 	const bool programsReady = debugOnly
 			? R_GLESD3_Programs_InitDebugOnly()
 			: R_GLESD3_Programs_Init();
@@ -318,6 +329,7 @@ bool RB_GLESD3_EnsureResources( void ) {
 	}
 
 	rb_glesD3ResourcesReady = true;
+	rb_glesD3ResourcesStage = requestedStage;
 	return true;
 }
 
