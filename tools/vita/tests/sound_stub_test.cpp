@@ -56,6 +56,7 @@ int main() {
     for (int i = 0; i < 10; ++i) {
         hardware.Init();
         assert(!hardware.InitFailed());
+        assert(hardware.GetIXAudio2() == nullptr);
         assert(hardware.AllocateVoice(&sample, &sample) == nullptr);
         assert(hardware.AllocateVoice(nullptr, nullptr) == nullptr);
         hardware.FreeVoice(nullptr);

@@ -70,6 +70,8 @@ public:
     void Init() {
         idLib::Printf( "Sound: silent backend; audio output is disabled for bring-up.\n" );
     }
+    // Both generic device accessors use this legacy name without OpenAL.
+    void* GetIXAudio2() const { return NULL; }
     void Shutdown() {}
     void BeginDeferredUpdates() {}
     void EndDeferredUpdates() {}
