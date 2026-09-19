@@ -188,6 +188,7 @@ extern int unzStringFileNameCompare (const char* fileName1, const char* fileName
 
 extern unzFile unzOpen (const char *path);
 extern unzFile unzReOpen (const char* path, unzFile file);
+extern int unzDetachFile (unzFile file);
 
 /*
   Open a Zip file. path contain the full pathname (by example,

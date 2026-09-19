@@ -1247,11 +1247,19 @@ extern unzFile unzReOpen (const char* path, unzFile file)
 	unz_s *s;
 	FILE * fin;
 
+	if (path==NULL || file==NULL)
+		return NULL;
+
     fin=fopen(path,"rb");
 	if (fin==NULL)
 		return NULL;
 
 	s=(unz_s*)ALLOC(sizeof(unz_s));
+	if (s==NULL)
+	{
+		fclose(fin);
+		return NULL;
+	}
 	memcpy(s, (unz_s*)file, sizeof(unz_s));
 
 	s->file = fin;
@@ -1360,9 +1368,32 @@ extern unzFile unzOpen (const char* path)
 
 
 /*
+  Close the backing FILE while retaining the parsed zip metadata. The detached
+  handle can be used as a template by unzReOpen and later freed by unzClose. */
+extern int unzDetachFile (unzFile file)
+{
+	unz_s* s;
+	if (file==NULL)
+		return UNZ_PARAMERROR;
+	s=(unz_s*)file;
+
+	if (s->pfile_in_zip_read!=NULL)
+		return UNZ_PARAMERROR;
+
+	if (s->file!=NULL)
+	{
+		const int closeResult=fclose(s->file);
+		s->file=NULL;
+		if (closeResult!=0)
+			return UNZ_ERRNO;
+	}
+	return UNZ_OK;
+}
+
+/*
   Close a ZipFile opened with unzipOpen.
-  If there is files inside the .Zip opened with unzipOpenCurrentFile (see later),
-    these files MUST be closed with unzipCloseCurrentFile before call unzipClose.
+  If there is files inside the .Zip opened with unzOpenCurrentFile (see later),
+    these files MUST be closed with unzCloseCurrentFile before call unzClose.
   return UNZ_OK if there is no problem. */
 extern int unzClose (unzFile file)
 {
@@ -1374,7 +1405,8 @@ extern int unzClose (unzFile file)
     if (s->pfile_in_zip_read!=NULL)
         unzCloseCurrentFile(file);
 
-	fclose(s->file);
+	if (s->file!=NULL)
+		fclose(s->file);
 	TRYFREE(s);
 	return UNZ_OK;
 }
