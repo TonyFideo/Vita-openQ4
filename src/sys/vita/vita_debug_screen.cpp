@@ -1,6 +1,7 @@
 #include "vita_debug_screen.h"
 
 #include <psp2/display.h>
+#include <psp2/gxm.h>
 #include <psp2/kernel/sysmem.h>
 
 #include <stdint.h>
@@ -278,10 +279,11 @@ void VitaDiagScreen_ReleaseBacking( void ) {
 		return;
 	}
 
-	// VitaGL queues its display callback asynchronously. Give the queue two
-	// vblanks after the first VitaGL swap so both Vita3K and hardware have stopped
-	// consuming the diagnostic framebuffer before its CDRAM block is released.
-	sceDisplayWaitVblankStart();
+	// VitaGL queues its display callback asynchronously. Do not guess how many
+	// vblanks it needs: wait until every queued display callback has completed.
+	// On Vita3K sceGxmDisplayQueueFinish() blocks on display_queue.wait_empty();
+	// on hardware it provides the same ownership barrier before freeing CDRAM.
+	sceGxmDisplayQueueFinish();
 	sceDisplayWaitVblankStart();
 
 	sceKernelFreeMemBlock( vitaDisplayBlock );
