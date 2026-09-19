@@ -253,6 +253,7 @@ target_compile_features(openq4_vita_glesd3_probe PRIVATE cxx_std_20)
 # attempting a full engine link.
 add_library(openq4_vita_renderer_frontend_probe STATIC
   ${OPENQ4_ROOT}/src/renderer/GLES/vita_gles_legacy.cpp
+  ${OPENQ4_ROOT}/src/renderer/RendererCaps.cpp
   ${OPENQ4_ROOT}/src/renderer/RenderSystem.cpp
   ${OPENQ4_ROOT}/src/renderer/RenderSystem_init.cpp
   ${OPENQ4_ROOT}/src/renderer/tr_backend.cpp
