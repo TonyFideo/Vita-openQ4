@@ -750,6 +750,24 @@ if renderer_gl_source_paths.length() == 0
 endif
 openq4_renderer_gl_sources = files(renderer_gl_source_paths)
 
+
+# GLES_D3 renderer source manifest. Vita currently uses this as a static/native
+# renderer input rather than a dlopen module, but keeping the manifest in the
+# top-level configure path makes source ownership reproducible and lets the
+# cross configure fail immediately if an expected renderer source disappears.
+renderer_gles_source_discovery = run_command(
+  py,
+  meson.project_source_root() / 'tools' / 'build' / 'meson_sources.py',
+  '--emit',
+  'renderer_gles',
+  check: true,
+)
+renderer_gles_source_paths = renderer_gles_source_discovery.stdout().strip().split('\n')
+if renderer_gles_source_paths.length() == 0
+  error('tools/build/meson_sources.py returned no renderer_gles source files.')
+endif
+openq4_renderer_gles_sources = files(renderer_gles_source_paths)
+
 openq4_engine_sources = files(engine_source_paths)
 if build_engine
   openq4_engine_sources += [openq4_paks_generated_header, generated_version_header]
