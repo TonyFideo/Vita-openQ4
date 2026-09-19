@@ -139,14 +139,20 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="$VITASDK/share/vita.toolchain.cmake"
 
-      - name: Build GLES renderer compile gates
+      - name: Build renderer front-end compile gate
         shell: bash
         run: |
           set -euo pipefail
           cmake --build build/vita-sdk-smoke \
-            --target \
-              openq4_vita_glesd3_probe \
-              openq4_vita_renderer_frontend_probe \
+            --target openq4_vita_renderer_frontend_probe \
+            --parallel 2
+
+      - name: Build GLES_D3 compile gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build build/vita-sdk-smoke \
+            --target openq4_vita_glesd3_probe \
             --parallel 2
 
       - name: Build remaining pre-render compile gates
