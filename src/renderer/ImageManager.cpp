@@ -31,6 +31,25 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "tr_local.h"
+#if defined(VITA) || defined(__vita__)
+#include "../sys/vita/vita_loading_hud.h"
+#endif
+
+static void R_VitaImageReloadCheckpoint( int index, int total, const idImage *image ) {
+#if defined(VITA) || defined(__vita__)
+	if ( image == NULL || index >= 64 ) {
+		return;
+	}
+	char checkpoint[160];
+	idStr::snPrintf( checkpoint, sizeof( checkpoint ), "IMG %d/%d: %s",
+		index + 1, total, image->GetName() != NULL ? image->GetName() : "?" );
+	VitaLoadingHud_SetCheckpoint( checkpoint );
+#else
+	(void)index;
+	(void)total;
+	(void)image;
+#endif
+}
 
 bool R_IsMutableRenderImageName( const char *name ) {
 	if ( name == NULL || name[0] == '\0' ) {
@@ -996,8 +1015,11 @@ void idImageManager::ReloadImages( bool all ) {
 	// never let it consult (or leave behind) memoized probe results
 	R_SetDDSProbeCacheActive( false );
 
-	for ( int i = 0 ; i < globalImages->images.Num() ; i++ ) {
-		globalImages->images[ i ]->Reload( all );
+	const int totalImages = globalImages->images.Num();
+	for ( int i = 0 ; i < totalImages ; i++ ) {
+		idImage *image = globalImages->images[ i ];
+		R_VitaImageReloadCheckpoint( i, totalImages, image );
+		image->Reload( all );
 	}
 }
 

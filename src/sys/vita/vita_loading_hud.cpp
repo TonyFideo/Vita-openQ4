@@ -186,18 +186,24 @@ static void HudWritePersistentLine( vitaLoadingLogColor_t color, const char *tex
 			return;
 		}
 
-		// Vita3K currently leaves sceIoSyncByFd unimplemented. Force a real
-		// close boundary after every short diagnostic line so an emulator-side
-		// renderer crash cannot leave the whole loading log buffered/empty.
-		sceIoClose( hud.logFd );
-		hud.logFd = sceIoOpen(
-			kLoadingLog,
-			SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND,
-			0666 );
-		if ( hud.logFd < 0 ) {
-			sceClibPrintf( "[VOQ4][load] persistent log reopen failed result=0x%08x\n",
-				static_cast<unsigned int>( hud.logFd ) );
-		}
+	}
+}
+
+static void HudPersistBarrier( void ) {
+	if ( hud.logFd < 0 ) {
+		return;
+	}
+
+	// Vita3K currently leaves sceIoSyncByFd unimplemented. Force a close
+	// boundary only for explicit crash checkpoints, not for every log line.
+	sceIoClose( hud.logFd );
+	hud.logFd = sceIoOpen(
+		kLoadingLog,
+		SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND,
+		0666 );
+	if ( hud.logFd < 0 ) {
+		sceClibPrintf( "[VOQ4][load] persistent checkpoint reopen failed result=0x%08x\n",
+			static_cast<unsigned int>( hud.logFd ) );
 	}
 }
 
@@ -369,6 +375,7 @@ void VitaLoadingHud_Init( void ) {
 	hud.nativeReady = VitaDiagScreen_Init();
 	HudReadBuildStamp();
 	HudPushLogText( VITA_LOAD_LOG_OK, hud.nativeReady ? "HUD nativo listo" : "HUD nativo no disponible" );
+	HudPersistBarrier();
 	HudDrawNative();
 }
 
@@ -391,6 +398,7 @@ void VitaLoadingHud_SetCheckpoint( const char *text ) {
 	HudCopy( hud.snapshot.status, sizeof( hud.snapshot.status ), text );
 	HudCopy( hud.snapshot.lastStage, sizeof( hud.snapshot.lastStage ), text );
 	HudPushLogText( VITA_LOAD_LOG_INFO, text );
+	HudPersistBarrier();
 	VitaLoadingHud_TickNative( false );
 }
 
@@ -572,6 +580,7 @@ void VitaLoadingHud_LogError( const char *fmt, ... ) {
 	va_start( args, fmt );
 	HudLogV( VITA_LOAD_LOG_ERROR, fmt, args );
 	va_end( args );
+	HudPersistBarrier();
 }
 
 void VitaLoadingHud_TickNative( bool force ) {
@@ -592,6 +601,7 @@ void VitaLoadingHud_RendererInitialized( void ) {
 	}
 	hud.rendererInitialized = true;
 	VitaLoadingHud_LogOk( "VitaGL inicializado" );
+	HudPersistBarrier();
 }
 
 void VitaLoadingHud_BeginRendererHandoff( void ) {

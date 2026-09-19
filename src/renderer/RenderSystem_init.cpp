@@ -63,6 +63,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "ModernShadowPlanner.h"
 #include "../framework/RenderDoc.h"
 #include "../framework/declEntityDef.h"
+#if defined(VITA) || defined(__vita__)
+#include "../sys/vita/vita_loading_hud.h"
+#endif
 #if defined(__APPLE__)
 #include <execinfo.h>
 #endif
@@ -83,6 +86,14 @@ bool R_CheckExtension( char *name );
 extern idCVar r_inhibitFragmentProgram;
 
 static idStr g_missingRequiredOpenGLFeatures;
+
+static void R_VitaStartupCheckpoint( const char *text ) {
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_SetCheckpoint( text );
+#else
+	(void)text;
+#endif
+}
 
 static void R_ClearMissingRequiredOpenGLFeatures( void ) {
 	g_missingRequiredOpenGLFeatures.Clear();
@@ -1900,15 +1911,21 @@ void R_InitOpenGL( void ) {
 		r_multiSamples.SetInteger( 0 );
 	}
 
+	R_VitaStartupCheckpoint( "RENDER: GLIMP RETORNO" );
+
 	// input and sound systems need to be tied to the new window
+	R_VitaStartupCheckpoint( "RENDER: INPUT INICIO" );
 	Sys_InitInput();
+	R_VitaStartupCheckpoint( "RENDER: INPUT OK" );
 	//soundSystem->Init();
 
+	R_VitaStartupCheckpoint( "RENDER: CONTEXTO GL" );
 	if ( !GLimp_EnsureActiveContext( "OpenGL startup string query" ) ) {
 		common->FatalError( "Unable to make OpenGL context current after window creation\n" );
 	}
 
 	// get our config strings
+	R_VitaStartupCheckpoint( "RENDER: GL STRINGS INICIO" );
 	glConfig.vendor_string = (const char *)glGetString(GL_VENDOR);
 	glConfig.renderer_string = (const char *)glGetString(GL_RENDERER);
 	glConfig.version_string = (const char *)glGetString(GL_VERSION);
@@ -1977,13 +1994,17 @@ void R_InitOpenGL( void ) {
 	}
 
 	glConfig.isInitialized = true;
+	R_VitaStartupCheckpoint( "RENDER: GL CONFIG OK" );
 
 	// recheck all the extensions (FIXME: this might be dangerous)
+	R_VitaStartupCheckpoint( "RENDER: EXTENSIONES INICIO" );
 	R_CheckPortableExtensions();
 	R_GLDebugOutput_Init();
+	R_VitaStartupCheckpoint( "RENDER: EXTENSIONES OK" );
 
 	// parse our vertex and fragment programs, possibly disably support for
 	// one of the paths if there was an error
+	R_VitaStartupCheckpoint( "RENDER: ARB2 INICIO" );
 	R_ARB2_Init();
 #ifdef OPENQ4_RENDERER_GLES_MODULE
 	// The Vita/ES backend owns the whole Doom 3 pass chain. The desktop modern
@@ -1997,6 +2018,7 @@ void R_InitOpenGL( void ) {
 	RendererBootstrap_FinalizeLegacyBridge( glConfig.allowARB2Path );
 	glConfig.rendererTier = RendererBootstrap_GetState().selectedTier;
 	glConfig.renderFeatures = RendererBootstrap_GetState().features;
+	R_VitaStartupCheckpoint( "RENDER: ARB2 BRIDGE OK" );
 
 #ifdef OPENQ4_RENDERER_GLES_MODULE
 	// No ARB assembly programs exist on VitaGL. GLES_D3 is the intentional
@@ -2012,31 +2034,44 @@ void R_InitOpenGL( void ) {
 		R_ErrorForMissingRequiredOpenGLFeatures();
 	}
 #endif
+	R_VitaStartupCheckpoint( "RENDER: RECURSOS INICIO" );
 	R_RenderGraphResources_Init( glConfig.backendCaps, glConfig.renderFeatures );
 	R_MaterialResourceTable_Init( glConfig.backendCaps, glConfig.renderFeatures );
+	R_VitaStartupCheckpoint( "RENDER: RECURSOS OK" );
 
+	R_VitaStartupCheckpoint( "RENDER: PROGRAMAS INICIO" );
 	cmdSystem->AddCommand( "reloadARBprograms", R_ReloadARBPrograms_f, CMD_FL_RENDERER, "reloads ARB programs" );
 	R_ReloadARBPrograms_f( idCmdArgs() );
 	R_GLDebugOutput_FlushMessages();
+	R_VitaStartupCheckpoint( "RENDER: PROGRAMAS OK" );
 
+	R_VitaStartupCheckpoint( "RENDER: UPLOAD INICIO" );
 	R_RendererUpload_Init( glConfig.backendCaps );
 	R_GpuSkinning_ContractInit( glConfig.backendCaps );
+	R_VitaStartupCheckpoint( "RENDER: UPLOAD OK" );
 
 	// allocate the vertex array range or vertex objects
+	R_VitaStartupCheckpoint( "RENDER: VERTEX CACHE INICIO" );
 	R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_VERTEX_CACHE_INIT );
 	vertexCache.Init();
+	R_VitaStartupCheckpoint( "RENDER: VERTEX CACHE OK" );
 
 	// select which renderSystem we are going to use
+	R_VitaStartupCheckpoint( "RENDER: BACKEND INICIO" );
 	r_renderer.SetModified();
 	R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_SET_BACK_END_RENDERER );
 	tr.SetBackEndRenderer();
+	R_VitaStartupCheckpoint( "RENDER: BACKEND OK" );
 
 	// allocate the frame data, which may be more if smp is enabled
+	R_VitaStartupCheckpoint( "RENDER: FRAME DATA INICIO" );
 	R_InitFrameData();
+	R_VitaStartupCheckpoint( "RENDER: FRAME DATA OK" );
 
 	// Reset our gamma
 	R_SetColorMappings();
 	R_RecordRendererStartupPhase( RENDERER_STARTUP_PHASE_READY );
+	R_VitaStartupCheckpoint( "RENDER: CORE READY" );
 
 #ifdef _WIN32
 	static bool glCheck = false;
@@ -5603,9 +5638,13 @@ void idRenderSystemLocal::InitOpenGL( void ) {
 #else
 		int	err;
 
+		R_VitaStartupCheckpoint( "RENDER: CORE INICIO" );
 		R_InitOpenGL();
+		R_VitaStartupCheckpoint( "RENDER: CORE RETORNO" );
 
+		R_VitaStartupCheckpoint( "IMAGES: RELOAD INICIO" );
 		globalImages->ReloadImages(true);
+		R_VitaStartupCheckpoint( "IMAGES: RELOAD OK" );
 
 		err = glGetError();
 		if ( err != GL_NO_ERROR ) {
