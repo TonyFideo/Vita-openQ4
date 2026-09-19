@@ -1438,7 +1438,7 @@ if host_system == 'vita' and build_engine and build_games and build_game_sp
     'openq4_vita_game_sp',
     game_sp_sources,
     include_directories: game_include_dirs,
-    cpp_args: engine_cpp_args + ['-DGAME_DLL', '-DOPENQ4_VITA_STATIC_GAME=1'],
+    cpp_args: engine_cpp_args + ['-DOPENQ4_VITA_STATIC_GAME=1'],
     c_args: engine_c_args,
     cpp_pch: game_module_pch_headers,
     override_options: game_target_override_options,
