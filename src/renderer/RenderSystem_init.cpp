@@ -102,7 +102,10 @@ static void R_RecordMissingRequiredOpenGLFeature( const char *name ) {
 static bool R_CheckRequiredExtension( const char *name ) {
 	const bool available = R_CheckExtension( const_cast<char *>( name ) );
 	if ( !available ) {
-		R_RecordMissingRequiredOpenGLFeature( name );
+		if ( glConfig.backendCaps.profile != RENDERER_CONTEXT_PROFILE_CORE &&
+			glConfig.backendCaps.profile != RENDERER_CONTEXT_PROFILE_ES ) {
+			R_RecordMissingRequiredOpenGLFeature( name );
+		}
 	}
 	return available;
 }
@@ -1155,33 +1158,46 @@ static void R_CheckPortableExtensions( void ) {
 
 	GLCapabilityProbe_Build( glConfig.backendCaps, glConfig.version_string, glConfig.extensions_string );
 	glConfig.extensions_string = GLCapabilityProbe_ExtensionString();
+	glConfig.glVersion = glConfig.backendCaps.glVersion;
+	const bool programmableOnlyProfile =
+		glConfig.backendCaps.profile == RENDERER_CONTEXT_PROFILE_CORE ||
+		glConfig.backendCaps.profile == RENDERER_CONTEXT_PROFILE_ES;
 
-	// GL_ARB_multitexture
+	// GL_ARB_multitexture / programmable texture image units.
 	glConfig.multitextureAvailable = R_CheckRequiredExtension( "GL_ARB_multitexture" );
 	if ( glConfig.multitextureAvailable && !R_HasARBMultitextureEntryPoints() ) {
 		common->Printf( "X..GL_ARB_multitexture entry points incomplete\n" );
-		R_RecordMissingRequiredOpenGLFeature( "GL_ARB_multitexture entry points" );
+		if ( !programmableOnlyProfile ) {
+			R_RecordMissingRequiredOpenGLFeature( "GL_ARB_multitexture entry points" );
+		}
 		glConfig.multitextureAvailable = false;
 	}
-	if ( glConfig.multitextureAvailable ) {
-		//glGetIntegerv( GL_MAX_TEXTURE_UNITS_ARB, (GLint *)&glConfig.maxTextureUnits );
-		//if ( glConfig.maxTextureUnits > MAX_MULTITEXTURE_UNITS ) {
-		//	glConfig.maxTextureUnits = MAX_MULTITEXTURE_UNITS;
-		//}
-		glConfig.maxTextureUnits = 16; // jmarshall: OpenGL LIES
-		if ( glConfig.maxTextureUnits < 2 ) {
-			glConfig.multitextureAvailable = false;	// shouldn't ever happen
+	if ( programmableOnlyProfile ) {
+		GLint imageUnits = 0;
+		glGetIntegerv( GL_MAX_TEXTURE_IMAGE_UNITS, &imageUnits );
+		if ( imageUnits <= 0 ) {
+			imageUnits = 8;
 		}
-		glGetIntegerv(GL_MAX_TEXTURE_COORDS_ARB, (GLint*)&glConfig.maxTextureCoords);
-		glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS_ARB, (GLint*)&glConfig.maxTextureImageUnits);
+		glConfig.maxTextureImageUnits = Min( imageUnits, MAX_MULTITEXTURE_UNITS );
+		glConfig.maxTextureUnits = glConfig.maxTextureImageUnits;
+		glConfig.maxTextureCoords = glConfig.maxTextureImageUnits;
+		glConfig.multitextureAvailable = glConfig.maxTextureImageUnits >= 2;
+	} else if ( glConfig.multitextureAvailable ) {
+		glConfig.maxTextureUnits = 16;
+		if ( glConfig.maxTextureUnits < 2 ) {
+			glConfig.multitextureAvailable = false;
+		}
+		glGetIntegerv( GL_MAX_TEXTURE_COORDS_ARB, (GLint *)&glConfig.maxTextureCoords );
+		glGetIntegerv( GL_MAX_TEXTURE_IMAGE_UNITS_ARB, (GLint *)&glConfig.maxTextureImageUnits );
 	}
 
 	glConfig.maxDrawBuffers = 1;
 	glConfig.maxColorAttachments = 1;
-	if ( GLEW_ARB_draw_buffers || glConfig.glVersion >= 2.0f ) {
+	if ( !programmableOnlyProfile && ( GLEW_ARB_draw_buffers || glConfig.glVersion >= 2.0f ) ) {
 		glGetIntegerv( GL_MAX_DRAW_BUFFERS_ARB, (GLint *)&glConfig.maxDrawBuffers );
 	}
-	if ( GLEW_EXT_framebuffer_object || GLEW_ARB_framebuffer_object || glConfig.glVersion >= 3.0f ) {
+	if ( !programmableOnlyProfile &&
+		( GLEW_EXT_framebuffer_object || GLEW_ARB_framebuffer_object || glConfig.glVersion >= 3.0f ) ) {
 		glGetIntegerv( GL_MAX_COLOR_ATTACHMENTS_EXT, (GLint *)&glConfig.maxColorAttachments );
 	}
 	glConfig.textureSRGBAvailable =
@@ -1192,9 +1208,14 @@ static void R_CheckPortableExtensions( void ) {
 	// GL_ARB_texture_env_combine
 	glConfig.textureEnvCombineAvailable = R_CheckRequiredExtension( "GL_ARB_texture_env_combine" );
 
-	// GL_ARB_texture_cube_map
+	// GL_ARB_texture_cube_map. Cube maps are core to the programmable GLES
+	// path even when no desktop ARB extension string is advertised.
 	glConfig.cubeMapAvailable = R_CheckRequiredExtension( "GL_ARB_texture_cube_map" );
-	if ( glConfig.cubeMapAvailable && ( GLEW_ARB_seamless_cube_map || glConfig.glVersion >= 3.2f ) ) {
+	if ( glConfig.backendCaps.profile == RENDERER_CONTEXT_PROFILE_ES ) {
+		glConfig.cubeMapAvailable = true;
+	}
+	if ( glConfig.cubeMapAvailable && !programmableOnlyProfile &&
+		( GLEW_ARB_seamless_cube_map || glConfig.glVersion >= 3.2f ) ) {
 		glEnable( GL_TEXTURE_CUBE_MAP_SEAMLESS );
 		common->Printf( "...enabled GL_TEXTURE_CUBE_MAP_SEAMLESS\n" );
 	}
@@ -1316,10 +1337,12 @@ static void R_CheckPortableExtensions( void ) {
 		//glSetFragmentShaderConstantATI = (PFNGLSETFRAGMENTSHADERCONSTANTATIPROC)GLimp_ExtensionPointer( "glSetFragmentShaderConstantATI" );
 	}
 
-	// ARB_vertex_buffer_object
-	glConfig.ARBVertexBufferObjectAvailable = R_CheckExtension( "GL_ARB_vertex_buffer_object" );
+	// ARB_vertex_buffer_object / GLES core VBOs. The legacy flag still decides
+	// whether idVertexCache owns GL buffer objects, so keep it true on GLES_D3.
+	glConfig.ARBVertexBufferObjectAvailable =
+		programmableOnlyProfile ? glConfig.backendCaps.hasVBO : R_CheckExtension( "GL_ARB_vertex_buffer_object" );
 	if ( glConfig.ARBVertexBufferObjectAvailable && !R_HasARBVertexBufferObjectEntryPoints() ) {
-		common->Printf( "X..GL_ARB_vertex_buffer_object entry points incomplete; using virtual-memory vertex cache\n" );
+		common->Printf( "X..vertex buffer object entry points incomplete; using virtual-memory vertex cache\n" );
 		glConfig.ARBVertexBufferObjectAvailable = false;
 	}
 	const bool pixelBufferObjectAdvertised = ( GLEW_ARB_pixel_buffer_object || GLEW_EXT_pixel_buffer_object || GLEW_VERSION_2_1 ) != 0;
@@ -1370,10 +1393,13 @@ static void R_CheckPortableExtensions( void ) {
 		common->Printf( "X..GLSL shader objects not found\n" );
 	}
 
-	// check for minimum set
-	if ( !glConfig.multitextureAvailable || !glConfig.textureEnvCombineAvailable || !glConfig.cubeMapAvailable
-		|| !glConfig.envDot3Available ) {
-			R_ErrorForMissingRequiredOpenGLFeatures();
+	// The compatibility minimum is made of fixed-function/ARB2 features.
+	// GLES_D3 has its own programmable contract and must not fail on their
+	// intentionally absent extension strings.
+	if ( !programmableOnlyProfile &&
+		( !glConfig.multitextureAvailable || !glConfig.textureEnvCombineAvailable || !glConfig.cubeMapAvailable
+		|| !glConfig.envDot3Available ) ) {
+		R_ErrorForMissingRequiredOpenGLFeatures();
 	}
 
  	// GL_EXT_depth_bounds_test
@@ -1387,9 +1413,11 @@ static void R_CheckPortableExtensions( void ) {
 	glConfig.backendCaps.maxColorAttachments = glConfig.maxColorAttachments;
 	glConfig.backendCaps.hasARBVertexProgram = glConfig.ARBVertexProgramAvailable;
 	glConfig.backendCaps.hasARBFragmentProgram = glConfig.ARBFragmentProgramAvailable;
-	glConfig.backendCaps.hasVBO = glConfig.ARBVertexBufferObjectAvailable;
-	glConfig.backendCaps.hasPBO = glConfig.pixelBufferObjectAvailable;
-	glConfig.backendCaps.hasGLSL = glConfig.GLSLProgramAvailable;
+	if ( !programmableOnlyProfile ) {
+		glConfig.backendCaps.hasVBO = glConfig.ARBVertexBufferObjectAvailable;
+		glConfig.backendCaps.hasPBO = glConfig.pixelBufferObjectAvailable;
+		glConfig.backendCaps.hasGLSL = glConfig.GLSLProgramAvailable;
+	}
 	glConfig.backendCaps.hasSRGBTextures = glConfig.textureSRGBAvailable;
 	glConfig.backendCaps.hasFramebufferSRGB = glConfig.framebufferSRGBAvailable;
 	glConfig.backendCaps.hasMRT = glConfig.maxDrawBuffers >= 4 && glConfig.maxColorAttachments >= 4;
