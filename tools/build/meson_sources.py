@@ -507,6 +507,16 @@ def main(argv: list[str]) -> int:
                 # build; only remove it from the split renderer manifest.
                 if path != "src/renderer/RendererModule.cpp":
                     remove_source(source_set, ordered_sources, path)
+
+            # Audio is intentionally stubbed during the first playable Vita
+            # bring-up. The generic sound world still compiles, but the OpenAL
+            # implementation TUs and dependency are omitted until rendering,
+            # input and map loading are stable.
+            ordered_sources[:] = [
+                path for path in ordered_sources
+                if not path.replace("\\", "/").startswith("src/sound/OpenAL/")
+            ]
+            source_set = set(ordered_sources)
         else:
             print(f"Unsupported host system: {args.host_system}", file=sys.stderr)
             return 1
