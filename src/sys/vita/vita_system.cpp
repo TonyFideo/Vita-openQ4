@@ -341,7 +341,11 @@ ID_TIME_T Sys_FileTimeStamp( FILE *fp ) {
 }
 
 const char *Sys_DefaultCDPath( void ) {
-	return VITA_DATA_ROOT;
+	// Engine-owned runtime support files live inside the installed VPK.
+	// Retail Quake 4 media remains in the writable data root selected as
+	// fs_basepath, while fs_cdpath provides app0:/baseoq4 as the immutable
+	// openQ4 runtime layer.
+	return VITA_PACKAGE_ROOT;
 }
 
 const char *Sys_DefaultBasePath( void ) {

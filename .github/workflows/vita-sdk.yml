@@ -8,6 +8,11 @@ on:
       - .github/workflows/vita-sdk.yml
       - tools/vita/**
       - tools/build/meson_sources.py
+      - tools/build/openq4_pak.py
+      - tools/build/build_openq4_pack.py
+      - tools/build/write_pak_manifest.py
+      - content/baseoq4/pak0/**
+      - content/baseoq4/mod.json.in
       - meson.build
       - meson_options.txt
       - src/sys/sys_public.h
@@ -147,10 +152,31 @@ jobs:
           /assets/splash/
           /content/baseoq4/meson.build
           /content/baseoq4/mod.json.in
+          /content/baseoq4/pak0/
           /subprojects/stb_vorbis/
           EOF
           git fetch --depth 1 --filter=blob:none origin "${GITHUB_SHA}"
           git checkout --detach FETCH_HEAD
+
+      - name: Restore engine ccache
+        uses: actions/cache@v4
+        with:
+          path: .ci-cache/ccache
+          key: vita-engine-ccache-v1-${{ env.OPENQ4_GAMELIBS_SHA }}-${{ github.sha }}
+          restore-keys: |
+            vita-engine-ccache-v1-${{ env.OPENQ4_GAMELIBS_SHA }}-
+
+      - name: Restore pinned VitaGL build
+        uses: actions/cache@v4
+        with:
+          path: .ci-cache/vitagl
+          key: vita-vitagl-v1-${{ env.VITAGL_SHA }}-${{ hashFiles('tools/vita/patch_vitagl_vita3k.py') }}
+
+      - name: Restore Vita runtime pak0
+        uses: actions/cache@v4
+        with:
+          path: .ci-cache/openq4-runtime
+          key: vita-openq4-pak0-v1-${{ hashFiles('content/baseoq4/pak0/**', 'tools/build/openq4_pak.py', 'tools/build/build_openq4_pack.py', 'tools/build/write_pak_manifest.py') }}
 
       - name: Fetch and stage pinned openQ4-game sources
         shell: bash
@@ -187,20 +213,48 @@ jobs:
           grep -q "sceGxmInitialize(&gxm_init_params)" "${VITAGL_REPO}/source/gxm.c"
           cp "${VITAGL_REPO}/source/vitaGL.h" "$VITASDK/arm-vita-eabi/include/vitaGL.h"
 
-      - name: Install Meson
+      - name: Install Meson, Ninja and ccache
         shell: bash
         run: |
           set -euo pipefail
           apt-get update -qq
-          apt-get install -y --no-install-recommends python3-pip ninja-build
+          apt-get install -y --no-install-recommends python3-pip ninja-build ccache
           python3 -m pip install --break-system-packages "meson>=1.6,<2"
 
-      - name: Build pinned VitaGL in Vita3K-safe mode
+          JOBS="$(nproc)"
+          if [ "$JOBS" -gt 4 ]; then JOBS=4; fi
+          if [ "$JOBS" -lt 1 ]; then JOBS=1; fi
+          echo "VITA_BUILD_JOBS=$JOBS" >> "$GITHUB_ENV"
+
+          mkdir -p .ci-bin .ci-cache/ccache
+          cat > .ci-bin/arm-vita-eabi-gcc <<'EOF'
+          #!/bin/sh
+          exec ccache /usr/local/vitasdk/bin/arm-vita-eabi-gcc "$@"
+          EOF
+          cat > .ci-bin/arm-vita-eabi-g++ <<'EOF'
+          #!/bin/sh
+          exec ccache /usr/local/vitasdk/bin/arm-vita-eabi-g++ "$@"
+          EOF
+          chmod +x .ci-bin/arm-vita-eabi-gcc .ci-bin/arm-vita-eabi-g++
+          echo "${GITHUB_WORKSPACE}/.ci-bin" >> "$GITHUB_PATH"
+          export CCACHE_DIR="${GITHUB_WORKSPACE}/.ci-cache/ccache"
+          ccache --max-size=1536M
+          ccache --zero-stats
+
+      - name: Build or restore pinned VitaGL in Vita3K-safe mode
         shell: bash
         run: |
           set -euo pipefail
-          make -C "${VITAGL_REPO}" -j2             NO_SPLASHSCREEN=1             HAVE_VITA3K_SUPPORT=1             HAVE_CUSTOM_HEAP=1             SINGLE_THREADED_GC=1             LOG_ERRORS=1
-          cp "${VITAGL_REPO}/libvitaGL.a" "$VITASDK/arm-vita-eabi/lib/libvitaGL.a"
+          mkdir -p .ci-cache/vitagl
+          if [ -f .ci-cache/vitagl/libvitaGL.a ]; then
+            echo "Using cached libvitaGL.a"
+          else
+            make -C "${VITAGL_REPO}" -j"${VITA_BUILD_JOBS}" \
+              NO_SPLASHSCREEN=1 HAVE_VITA3K_SUPPORT=1 HAVE_CUSTOM_HEAP=1 \
+              SINGLE_THREADED_GC=1 LOG_ERRORS=1
+            cp "${VITAGL_REPO}/libvitaGL.a" .ci-cache/vitagl/libvitaGL.a
+          fi
+          cp .ci-cache/vitagl/libvitaGL.a "$VITASDK/arm-vita-eabi/lib/libvitaGL.a"
 
       - name: Configure full Vita engine integration
         shell: bash
@@ -225,21 +279,44 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 tools/vita/build_engine.py --build-dir build/vita-engine-config --jobs 2
+          CCACHE_DIR="${GITHUB_WORKSPACE}/.ci-cache/ccache" \
+            python3 tools/vita/build_engine.py --build-dir build/vita-engine-config --jobs "${VITA_BUILD_JOBS}"
+          ccache --show-stats
 
       - name: Package full Vita engine
         shell: bash
         run: |
           set -euo pipefail
           test -f build/vita-engine-config/openQ4-client_armv7
+          test -f build/vita-engine-config/content/baseoq4/mod.json
+
+          mkdir -p build/vita-runtime .ci-cache/openq4-runtime
+          if [ -f .ci-cache/openq4-runtime/pak0.pk4 ]; then
+            echo "Using cached openQ4 pak0.pk4"
+            cp .ci-cache/openq4-runtime/pak0.pk4 build/vita-runtime/pak0.pk4
+          else
+            python3 tools/build/write_pak_manifest.py \
+              "${GITHUB_WORKSPACE}" pak0.pk4 content/baseoq4/pak0 \
+              build/vita-runtime/pak0.sources
+            python3 tools/build/build_openq4_pack.py \
+              --pak-name pak0.pk4 \
+              --source-dir content/baseoq4/pak0 \
+              --manifest build/vita-runtime/pak0.sources \
+              --out build/vita-runtime/pak0.pk4
+            cp build/vita-runtime/pak0.pk4 .ci-cache/openq4-runtime/pak0.pk4
+          fi
+          test -s build/vita-runtime/pak0.pk4
+
           echo "Checking Vita ELF relocation set before vita-elf-create"
           if arm-vita-eabi-readelf -rW build/vita-engine-config/openQ4-client_armv7 | grep -q 'R_ARM_BASE_PREL'; then
             echo "::error::Unsupported R_ARM_BASE_PREL remains in the Vita ELF"
             arm-vita-eabi-readelf -rW build/vita-engine-config/openQ4-client_armv7 | grep 'R_ARM_BASE_PREL' | head -40
             exit 1
           fi
-          cmake -S tools/vita/engine_package -B build/vita-engine-package             -DCMAKE_TOOLCHAIN_FILE="$VITASDK/share/vita.toolchain.cmake"             -DOPENQ4_ENGINE_ELF="${GITHUB_WORKSPACE}/build/vita-engine-config/openQ4-client_armv7"
-          cmake --build build/vita-engine-package --parallel 2
+          cmake -S tools/vita/engine_package -B build/vita-engine-package             -DCMAKE_TOOLCHAIN_FILE="$VITASDK/share/vita.toolchain.cmake"             -DOPENQ4_ENGINE_ELF="${GITHUB_WORKSPACE}/build/vita-engine-config/openQ4-client_armv7" \
+            -DOPENQ4_RUNTIME_MOD_JSON="${GITHUB_WORKSPACE}/build/vita-engine-config/content/baseoq4/mod.json" \
+            -DOPENQ4_RUNTIME_PAK0="${GITHUB_WORKSPACE}/build/vita-runtime/pak0.pk4"
+          cmake --build build/vita-engine-package --parallel "${VITA_BUILD_JOBS}"
 
       - name: Validate full Vita engine artifacts
         shell: bash
