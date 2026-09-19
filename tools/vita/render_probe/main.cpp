@@ -17,7 +17,7 @@ extern "C" { int _newlib_heap_size_user = 32 * 1024 * 1024; }
 namespace Probe {
 static GLuint material = 0, interaction = 0, meshVao = 0, meshVbo = 0, meshIbo = 0;
 static GLuint checker = 0, flatNormal = 0, whiteTex = 0, specTable = 0;
-static GLuint hudVao = 0, hudVbo = 0;
+static GLuint hudVao = 0, hudVbo = 0, clearVao = 0, clearVbo = 0;
 static GLint materialMvp = -1, interactionMvp = -1;
 static GLint interactionLightOrigin = -1, interactionViewOrigin = -1;
 static GLsizei hudCount = 0;
@@ -28,8 +28,9 @@ static const char *modeNames[] = {
     "0 MATERIAL LEQUAL",
     "1 MATERIAL PREPASADA EQUAL",
     "2 INTERACCION EQUAL RAW",
-    "3 INTERACCION EQUAL ADD",
-    "4 INTERACCION LEQUAL ADD"
+    "3 EQUAL ADD GLCLEAR",
+    "4 EQUAL ADD DRAWCLR",
+    "5 LEQUAL ADD DRAWCLR"
 };
 
 static bool CreateMaterial() {
@@ -207,9 +208,25 @@ static bool CreateSceneGpu() {
     }
     RendererLog("probe.texture=ok");
     glGenVertexArrays(1, &hudVao); glGenBuffers(1, &hudVbo);
+
+    glGenVertexArrays(1, &clearVao); glBindVertexArray(clearVao);
+    glGenBuffers(1, &clearVbo); glBindBuffer(GL_ARRAY_BUFFER, clearVbo);
+    Vertex clearVerts[6] = {};
+    const float clearXY[6][2] = {
+        {-1.0f, 1.0f}, {-1.0f,-1.0f}, {1.0f,-1.0f},
+        {-1.0f, 1.0f}, { 1.0f,-1.0f}, {1.0f, 1.0f}
+    };
+    for (int i = 0; i < 6; ++i) {
+        clearVerts[i].xyz[0] = clearXY[i][0];
+        clearVerts[i].xyz[1] = clearXY[i][1];
+        clearVerts[i].xyz[2] = 0.0f;
+        clearVerts[i].color[0] = clearVerts[i].color[1] = clearVerts[i].color[2] = 0;
+        clearVerts[i].color[3] = 255;
+    }
+    glBufferData(GL_ARRAY_BUFFER, sizeof(clearVerts), clearVerts, GL_STATIC_DRAW);
     glBindVertexArray(0);
     RendererLog("probe.mesh vertices=28 indices=42 stride=60 color=12 normal=16 tangent=28 bitangent=40 uv=52 floor_index_byte_offset=72");
-    const bool ok = hudVao && hudVbo && CheckGl("probe.mesh.objects");
+    const bool ok = hudVao && hudVbo && clearVao && clearVbo && CheckGl("probe.mesh.objects");
     RendererLog(ok ? "probe.mesh.objects=ok" : "probe.mesh.objects=failed");
     return ok;
 }
@@ -298,6 +315,25 @@ static void DrawInteraction(const Matrix &mvp, int first, int count) {
                    reinterpret_cast<const void *>(static_cast<uintptr_t>(first * sizeof(std::uint16_t))));
 }
 
+static void ClearColorByOpaqueDraw() {
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_STENCIL_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_BLEND);
+    glUseProgram(smokeProgram);
+    const Matrix identity = Identity();
+    glUniformMatrix4fv(smokeMvpUniform, 1, GL_FALSE, identity.data());
+    if (smokeColorUniform >= 0) glUniform4f(smokeColorUniform, 0, 0, 0, 1);
+    if (smokeAlphaTestUniform >= 0) glUniform1f(smokeAlphaTestUniform, -1);
+    BindVertices(clearVao, clearVbo, false, false);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+}
+
 static void DrawScene(float angle) {
     const float testAngle = mode == 0 ? angle : 0.65f;
     const Matrix floor = Projection(), cube = Multiply(floor, CubeModel(testAngle));
@@ -326,23 +362,28 @@ static void DrawScene(float angle) {
         DrawMaterial(cube, 0, CubeIndexCount);
         DrawMaterial(floor, FloorFirstIndex, FloorIndexCount);
     } else {
-        // Preserve depth but reset destination colour immediately before the
-        // light pass. This makes any frame-to-frame additive accumulation
-        // measurable rather than conflating it with the prepass.
         glDisable(GL_BLEND);
-        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
 
         if (mode == 2) {
-            // Raw interaction output. If this drifts, the shader/uniform state
-            // is changing; blending cannot be responsible.
-            glDisable(GL_BLEND);
+            // Raw interaction output, no blending.
+            glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
             glDepthFunc(GL_EQUAL);
         } else {
+            if (mode == 3) {
+                // Control: vitaGL glClear path that showed accumulation.
+                glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+                glClear(GL_COLOR_BUFFER_BIT);
+            } else {
+                // Candidate workaround: overwrite the colour target with an
+                // opaque fullscreen draw while preserving the depth prepass.
+                ClearColorByOpaqueDraw();
+            }
             glEnable(GL_BLEND);
             glBlendFunc(GL_ONE, GL_ONE);
-            glDepthFunc(mode == 3 ? GL_EQUAL : GL_LEQUAL);
+            glDepthFunc(mode == 5 ? GL_LEQUAL : GL_EQUAL);
         }
+
         DrawInteraction(cube, 0, CubeIndexCount);
         DrawInteraction(floor, FloorFirstIndex, FloorIndexCount);
         glDisable(GL_BLEND);
@@ -462,7 +503,7 @@ int main() {
             const unsigned int pressed = pad.buttons & ~previousButtons;
             previousButtons = pad.buttons;
             if (pressed & SCE_CTRL_CROSS) {
-                Probe::mode = (Probe::mode + 1) % 5;
+                Probe::mode = (Probe::mode + 1) % 6;
                 Probe::modeFrame = 0;
                 RendererLog(Probe::modeNames[Probe::mode]);
                 Probe::UpdateHud(); capture = true;
