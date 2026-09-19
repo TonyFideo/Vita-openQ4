@@ -355,6 +355,7 @@ openq4_vita_renderer_probe(openq4_vita_renderer_system_probe
   ${OPENQ4_ROOT}/src/renderer/Image_load.cpp
   ${OPENQ4_ROOT}/src/renderer/RendererUpload.cpp
   ${OPENQ4_ROOT}/src/renderer/RenderGraphResources.cpp
+  ${OPENQ4_ROOT}/src/renderer/ModernGLExecutor.cpp
   ${OPENQ4_ROOT}/src/renderer/RendererCaps.cpp
   ${OPENQ4_ROOT}/src/renderer/RenderSystem.cpp
 )
