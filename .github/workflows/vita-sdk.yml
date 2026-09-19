@@ -54,6 +54,7 @@ jobs:
           /tools/vita/
           /assets/icons/
           /assets/splash/
+          /content/baseoq4/
           EOF
           git fetch --depth 1 --filter=blob:none origin "${GITHUB_SHA}"
           git checkout --detach FETCH_HEAD
@@ -198,6 +199,12 @@ jobs:
             -Dbuild_renderer_gl=false \
             -Dbuild_renderer_vk=false \
             -Duse_pch=false
+
+      - name: Compile full Vita engine client
+        shell: bash
+        run: |
+          set -euo pipefail
+          meson compile -C build/vita-engine-config openQ4-client_armv7 -j2
 
       - name: Build pre-render ELF, SELF, and VPK
         shell: bash
