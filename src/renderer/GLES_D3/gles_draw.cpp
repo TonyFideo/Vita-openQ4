@@ -274,6 +274,23 @@ vertCache_t *R_GLESD3_EnsureIndexCache( const srfTriangles_t *tri ) {
 			tri->numIndexes * sizeof( tri->indexes[0] ), true );
 }
 
+bool R_GLESD3_DrawElementsWithIndexCache( const srfTriangles_t *tri, vertCache_t *indexCache ) {
+	if ( tri == NULL || tri->numIndexes <= 0 || indexCache == NULL ) {
+		return false;
+	}
+
+	backEnd.pc.c_drawElements++;
+	backEnd.pc.c_drawIndexes += tri->numIndexes;
+	backEnd.pc.c_drawVertexes += tri->numVerts;
+	backEnd.pc.c_vboIndexes += tri->numIndexes;
+
+	glDrawElements( GL_TRIANGLES,
+			r_singleTriangle.GetBool() ? 3 : tri->numIndexes,
+			GL_INDEX_TYPE,
+			vertexCache.Position( indexCache ) );
+	return true;
+}
+
 bool R_GLESD3_DrawElements( const srfTriangles_t *tri ) {
 	if ( tri == NULL || tri->numIndexes <= 0 ) {
 		return false;
@@ -288,17 +305,7 @@ bool R_GLESD3_DrawElements( const srfTriangles_t *tri ) {
 		}
 		return false;
 	}
-
-	backEnd.pc.c_drawElements++;
-	backEnd.pc.c_drawIndexes += tri->numIndexes;
-	backEnd.pc.c_drawVertexes += tri->numVerts;
-	backEnd.pc.c_vboIndexes += tri->numIndexes;
-
-	glDrawElements( GL_TRIANGLES,
-			r_singleTriangle.GetBool() ? 3 : tri->numIndexes,
-			GL_INDEX_TYPE,
-			vertexCache.Position( indexCache ) );
-	return true;
+	return R_GLESD3_DrawElementsWithIndexCache( tri, indexCache );
 }
 
 /*

@@ -40,8 +40,8 @@ RB_DrawShadowElementsWithCounters. numIndexes may be fewer than the surface
 carries: the caps are skipped when the view cannot see through them.
 ====================
 */
-static void GLESD3_DrawShadowElements( const srfTriangles_t *tri, int numIndexes ) {
-	if ( numIndexes <= 0 || tri->indexCache == NULL ) {
+static void GLESD3_DrawShadowElements( const srfTriangles_t *tri, vertCache_t *indexCache, int numIndexes ) {
+	if ( numIndexes <= 0 || indexCache == NULL ) {
 		return;
 	}
 
@@ -50,7 +50,7 @@ static void GLESD3_DrawShadowElements( const srfTriangles_t *tri, int numIndexes
 	backEnd.pc.c_shadowVertexes += tri->numVerts;
 
 	glDrawElements( GL_TRIANGLES, numIndexes, GL_INDEX_TYPE,
-			vertexCache.Position( tri->indexCache ) );
+			vertexCache.Position( indexCache ) );
 	gles_shadowDraws++;
 }
 
@@ -86,7 +86,11 @@ RB_GLESD3_T_Shadow
 static void RB_GLESD3_T_Shadow( const drawSurf_t *surf ) {
 	const srfTriangles_t *tri = surf->geo;
 
-	if ( tri == NULL || tri->shadowCache == NULL || tri->indexCache == NULL ) {
+	if ( tri == NULL || tri->shadowCache == NULL ) {
+		return;
+	}
+	vertCache_t *indexCache = R_GLESD3_EnsureIndexCache( tri );
+	if ( indexCache == NULL ) {
 		return;
 	}
 
@@ -174,7 +178,7 @@ static void RB_GLESD3_T_Shadow( const drawSurf_t *surf ) {
 		// view sits inside.
 		glStencilOpSeparate( frontSidedFace, GL_KEEP, tr.stencilDecr, GL_KEEP );
 		glStencilOpSeparate( backSidedFace, GL_KEEP, tr.stencilIncr, GL_KEEP );
-		GLESD3_DrawShadowElements( tri, numIndexes );
+		GLESD3_DrawShadowElements( tri, indexCache, numIndexes );
 		return;
 	}
 
@@ -182,7 +186,7 @@ static void RB_GLESD3_T_Shadow( const drawSurf_t *surf ) {
 	// never clipped by the near plane and need no caps
 	glStencilOpSeparate( frontSidedFace, GL_KEEP, GL_KEEP, tr.stencilIncr );
 	glStencilOpSeparate( backSidedFace, GL_KEEP, GL_KEEP, tr.stencilDecr );
-	GLESD3_DrawShadowElements( tri, numIndexes );
+	GLESD3_DrawShadowElements( tri, indexCache, numIndexes );
 }
 
 /*

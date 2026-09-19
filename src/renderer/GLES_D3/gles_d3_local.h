@@ -79,6 +79,7 @@ void	R_GLESD3_DisableCubeTexDirAttribute( void );
 void	R_GLESD3_EnableAttributesForShadow( void );
 void	R_GLESD3_InvalidateAttributeState( void );
 vertCache_t *	R_GLESD3_EnsureIndexCache( const srfTriangles_t *tri );
+bool	R_GLESD3_DrawElementsWithIndexCache( const srfTriangles_t *tri, vertCache_t *indexCache );
 bool	R_GLESD3_DrawElements( const srfTriangles_t *tri );
 float	R_GLESD3_AlphaTestReference( int stateBits );
 void	R_GLESD3_SetupProgramForDraw( const struct glesProgram_s *program,

@@ -637,7 +637,12 @@ static void RB_GLESD3_T_FillDepthBuffer( const drawSurf_t *surf, glesProgram_t *
 	if ( shader->Coverage() == MC_TRANSLUCENT ) {
 		return;
 	}
-	if ( tri->ambientCache == NULL || tri->indexCache == NULL ) {
+	if ( tri->ambientCache == NULL ) {
+		GLESD3_RecordSkip( GLESD3_SKIP_NO_GEOMETRY, shader );
+		return;
+	}
+	vertCache_t *indexCache = R_GLESD3_EnsureIndexCache( tri );
+	if ( indexCache == NULL ) {
 		GLESD3_RecordSkip( GLESD3_SKIP_NO_GEOMETRY, shader );
 		return;
 	}
@@ -745,7 +750,7 @@ static void RB_GLESD3_T_FillDepthBuffer( const drawSurf_t *surf, glesProgram_t *
 			// perforated stage carries an arbitrary alphaTestRegister
 			glUniform1f( alphaTestProgram->uAlphaTest, regs[ pStage->alphaTestRegister ] );
 
-			R_GLESD3_DrawElements( tri );
+			R_GLESD3_DrawElementsWithIndexCache( tri, indexCache );
 		}
 		if ( !didDraw ) {
 			drawSolid = true;
@@ -769,7 +774,7 @@ static void RB_GLESD3_T_FillDepthBuffer( const drawSurf_t *surf, glesProgram_t *
 		glUniform4fv( program->uTexMatrixT, 1, identityT.ToFloatPtr() );
 		glUniform4fv( program->uColor, 1, color );
 
-		R_GLESD3_DrawElements( tri );
+		R_GLESD3_DrawElementsWithIndexCache( tri, indexCache );
 	}
 
 	if ( shader->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
@@ -1323,7 +1328,12 @@ static void RB_GLESD3_T_RenderShaderPasses( const drawSurf_t *surf ) {
 		// some deforms disable themselves by setting numIndexes to 0
 		return;
 	}
-	if ( tri->ambientCache == NULL || tri->indexCache == NULL ) {
+	if ( tri->ambientCache == NULL ) {
+		GLESD3_RecordSkip( GLESD3_SKIP_NO_GEOMETRY, shader );
+		return;
+	}
+	vertCache_t *indexCache = R_GLESD3_EnsureIndexCache( tri );
+	if ( indexCache == NULL ) {
 		GLESD3_RecordSkip( GLESD3_SKIP_NO_GEOMETRY, shader );
 		return;
 	}
@@ -1572,7 +1582,7 @@ static void RB_GLESD3_T_RenderShaderPasses( const drawSurf_t *surf ) {
 		}
 
 		GLESD3_StepError( "uniforms", shader );
-		R_GLESD3_DrawElements( tri );
+		R_GLESD3_DrawElementsWithIndexCache( tri, indexCache );
 		GLESD3_StepError( "drawElements", shader );
 
 		// r_glesD3Report 3: name every material stage this pass draws, with the
