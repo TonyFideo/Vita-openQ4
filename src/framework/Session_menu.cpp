@@ -2970,10 +2970,16 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 				}
 			}
 			if ( !vcmd.Icmp( "drivar" ) ) {
+#if defined( USE_OPENAL )
 				if ( idSoundHardware_OpenAL::IsDefaultDeviceChoiceValue( cvarSystem->GetCVarString( "s_deviceName" ) ) ) {
 					cvarSystem->SetCVarString( "s_deviceName", "" );
 				}
-				cmdSystem->BufferCommandText( CMD_EXEC_NOW, "s_restart\n" );				
+#else
+				// Vita currently builds the silent hardware stub, so there is no
+				// OpenAL device identity to preserve across a sound restart.
+				cvarSystem->SetCVarString( "s_deviceName", "" );
+#endif
+				cmdSystem->BufferCommandText( CMD_EXEC_NOW, "s_restart\n" );
 			}
 			continue;
 		}
