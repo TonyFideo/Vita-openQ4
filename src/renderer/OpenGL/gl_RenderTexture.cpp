@@ -30,6 +30,20 @@ static GLuint R_GetAttachmentHandle( idImage *image ) {
 }
 
 static void R_SetRenderTextureDrawBuffers( int colorImageCount ) {
+#if defined(VITA) || defined(__vita__)
+	// VitaGL has one colour output per FBO and does not expose glDrawBuffers.
+	// COLOR_ATTACHMENT0 is selected implicitly; keep the read target explicit
+	// because scene capture and resolve use it immediately afterwards.
+	if ( colorImageCount > 1 ) {
+		common->FatalError( "idRenderTexture: VitaGL supports a single color attachment, requested %d", colorImageCount );
+	}
+	if ( colorImageCount > 0 ) {
+		glReadBuffer( GL_COLOR_ATTACHMENT0 );
+	} else {
+		glDrawBuffer( GL_NONE );
+		glReadBuffer( GL_NONE );
+	}
+#else
 	if ( colorImageCount > 0 ) {
 		GLenum drawBuffers[5] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4 };
 		if ( colorImageCount > static_cast<int>( sizeof( drawBuffers ) / sizeof( drawBuffers[0] ) ) ) {
@@ -41,6 +55,7 @@ static void R_SetRenderTextureDrawBuffers( int colorImageCount ) {
 		glDrawBuffer( GL_NONE );
 		glReadBuffer( GL_NONE );
 	}
+#endif
 }
 
 static uint64_t R_GetAttachmentGeneration( idImage *image ) {
