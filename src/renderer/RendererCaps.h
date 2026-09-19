@@ -39,7 +39,10 @@ enum rendererTierPreference_t {
 enum rendererContextProfile_t {
 	RENDERER_CONTEXT_PROFILE_UNKNOWN = 0,
 	RENDERER_CONTEXT_PROFILE_COMPATIBILITY,
-	RENDERER_CONTEXT_PROFILE_CORE
+	RENDERER_CONTEXT_PROFILE_CORE,
+	// Native VitaGL reports an OpenGL ES version string. Keep ES distinct from
+	// desktop core so capability probing never asks for compatibility-only state.
+	RENDERER_CONTEXT_PROFILE_ES
 };
 
 typedef struct rendererContextRequest_s {
