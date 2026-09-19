@@ -15,14 +15,19 @@
 extern "C" { int _newlib_heap_size_user = 32 * 1024 * 1024; }
 
 namespace Probe {
-static GLuint material = 0, meshVao = 0, meshVbo = 0, meshIbo = 0;
-static GLuint checker = 0, hudVao = 0, hudVbo = 0;
-static GLint materialMvp = -1;
+static GLuint material = 0, interaction = 0, meshVao = 0, meshVbo = 0, meshIbo = 0;
+static GLuint checker = 0, flatNormal = 0, whiteTex = 0, specTable = 0;
+static GLuint hudVao = 0, hudVbo = 0;
+static GLint materialMvp = -1, interactionMvp = -1;
+static GLint interactionLightOrigin = -1, interactionViewOrigin = -1;
 static GLsizei hudCount = 0;
 static bool sceneReady = false, paused = false, lastGlOk = true;
 static int mode = 0;
 static const char *modeNames[] = {
-    "0 TEXTURA LEQUAL", "1 PREPASADA MAS EQUAL", "2 PREPASADA MAS LEQUAL"
+    "0 MATERIAL LEQUAL",
+    "1 MATERIAL PREPASADA EQUAL",
+    "2 INTERACCION EQUAL",
+    "3 INTERACCION LEQUAL"
 };
 
 static bool CreateMaterial() {
@@ -71,6 +76,75 @@ static bool CreateMaterial() {
     return ok;
 }
 
+
+static bool CreateInteraction() {
+    RendererLog("probe.interaction.begin");
+    const std::string vp = Vita_GLESD3_NormalizeShaderSource(glesInteractionShaderVP, GL_VERTEX_SHADER);
+    const std::string fp = Vita_GLESD3_NormalizeShaderSource(glesInteractionShaderFP, GL_FRAGMENT_SHADER);
+    const GLchar *vs = vp.c_str(), *fs = fp.c_str();
+    const GLuint v = glCreateShader(GL_VERTEX_SHADER), f = glCreateShader(GL_FRAGMENT_SHADER);
+    if (!v || !f) {
+        if (v) glDeleteShader(v);
+        if (f) glDeleteShader(f);
+        return false;
+    }
+    glShaderSource(v, 1, &vs, NULL); glCompileShader(v);
+    glShaderSource(f, 1, &fs, NULL); glCompileShader(f);
+    if (!CheckShader(v, "interaction-vertex") || !CheckShader(f, "interaction-fragment")) {
+        glDeleteShader(v); glDeleteShader(f); return false;
+    }
+    interaction = glCreateProgram();
+    if (!interaction) { glDeleteShader(v); glDeleteShader(f); return false; }
+    glAttachShader(interaction, v); glAttachShader(interaction, f);
+    glBindAttribLocation(interaction, 0, "inPosition");
+    glBindAttribLocation(interaction, 1, "inColor");
+    glBindAttribLocation(interaction, 2, "inNormal");
+    glBindAttribLocation(interaction, 3, "inTangent");
+    glBindAttribLocation(interaction, 4, "inBitangent");
+    glBindAttribLocation(interaction, 5, "inTexCoord");
+    glLinkProgram(interaction);
+    const bool linked = CheckProgram(interaction);
+    glDeleteShader(v); glDeleteShader(f);
+    if (!linked) { glDeleteProgram(interaction); interaction = 0; return false; }
+
+    glUseProgram(interaction);
+    RendererLog("probe.interaction.linked");
+    interactionMvp = glGetUniformLocation(interaction, "uMVP");
+    interactionLightOrigin = glGetUniformLocation(interaction, "uLocalLightOrigin");
+    interactionViewOrigin = glGetUniformLocation(interaction, "uLocalViewOrigin");
+    const char *samplers[6] = {
+        "uSpecularTableMap", "uBumpMap", "uLightFalloffMap",
+        "uLightProjectionMap", "uDiffuseMap", "uSpecularMap"
+    };
+    for (int i = 0; i < 6; ++i) {
+        const GLint loc = glGetUniformLocation(interaction, samplers[i]);
+        if (loc < 0) { RendererLog("probe.interaction.sampler_missing"); return false; }
+        glUniform1i(loc, i);
+    }
+    const char *vec4Names[] = {
+        "uLightProjectionS","uLightProjectionT","uLightProjectionQ","uLightFalloffS",
+        "uBumpMatrixS","uBumpMatrixT","uDiffuseMatrixS","uDiffuseMatrixT",
+        "uSpecularMatrixS","uSpecularMatrixT","uDiffuseColor","uSpecularColor","uVertexColor"
+    };
+    const float values[][4] = {
+        {0,0,0,0.5f},{0,0,0,0.5f},{0,0,0,1},{0,0,0,0.5f},
+        {1,0,0,0},{0,1,0,0},{1,0,0,0},{0,1,0,0},
+        {1,0,0,0},{0,1,0,0},{1,1,1,1},{0.35f,0.35f,0.35f,1},{1,0,1,0}
+    };
+    for (int i = 0; i < 13; ++i) {
+        const GLint loc = glGetUniformLocation(interaction, vec4Names[i]);
+        if (loc < 0) { RendererLog("probe.interaction.uniform_missing"); return false; }
+        glUniform4fv(loc, 1, values[i]);
+    }
+    if (interactionMvp < 0 || interactionLightOrigin < 0 || interactionViewOrigin < 0) {
+        RendererLog("probe.interaction.required_uniform_missing");
+        return false;
+    }
+    const bool ok = CheckGl("probe.interaction");
+    RendererLog(ok ? "probe.interaction.ok" : "probe.interaction.gl-error");
+    return ok;
+}
+
 static bool CreateSceneGpu() {
     const Scene scene = MakeScene();
     glGenVertexArrays(1, &meshVao); glBindVertexArray(meshVao);
@@ -102,26 +176,60 @@ static bool CreateSceneGpu() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    if (!checker || !CheckGl("probe.texture")) {
+
+    const unsigned char normalPixel[4] = {128, 128, 255, 128};
+    const unsigned char whitePixel[4] = {255, 255, 255, 255};
+    unsigned char specPixels[64 * 4];
+    for (int x = 0; x < 64; ++x) {
+        const float t = static_cast<float>(x) / 63.0f;
+        const unsigned char v = static_cast<unsigned char>(255.0f * t * t * t * t);
+        specPixels[x*4+0] = v; specPixels[x*4+1] = v;
+        specPixels[x*4+2] = v; specPixels[x*4+3] = 255;
+    }
+    glGenTextures(1, &flatNormal); glBindTexture(GL_TEXTURE_2D, flatNormal);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, normalPixel);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glGenTextures(1, &whiteTex); glBindTexture(GL_TEXTURE_2D, whiteTex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, whitePixel);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glGenTextures(1, &specTable); glBindTexture(GL_TEXTURE_2D, specTable);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 64, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, specPixels);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    if (!checker || !flatNormal || !whiteTex || !specTable || !CheckGl("probe.texture")) {
         RendererLog("probe.texture=failed");
         return false;
     }
     RendererLog("probe.texture=ok");
     glGenVertexArrays(1, &hudVao); glGenBuffers(1, &hudVbo);
     glBindVertexArray(0);
-    RendererLog("probe.mesh vertices=28 indices=42 stride=24 color_offset=12 uv_offset=16 floor_index_byte_offset=72");
+    RendererLog("probe.mesh vertices=28 indices=42 stride=60 color=12 normal=16 tangent=28 bitangent=40 uv=52 floor_index_byte_offset=72");
     const bool ok = hudVao && hudVbo && CheckGl("probe.mesh.objects");
     RendererLog(ok ? "probe.mesh.objects=ok" : "probe.mesh.objects=failed");
     return ok;
 }
 
-static void BindVertices(GLuint vao, GLuint vbo, bool textured) {
+static void BindVertices(GLuint vao, GLuint vbo, bool textured, bool interactionLayout = false) {
     glBindVertexArray(vao); glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glEnableVertexAttribArray(0); glEnableVertexAttribArray(1);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex),
                          reinterpret_cast<const void *>(offsetof(Vertex, xyz)));
     glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(Vertex),
                          reinterpret_cast<const void *>(offsetof(Vertex, color)));
+    if (interactionLayout) {
+        glEnableVertexAttribArray(2); glEnableVertexAttribArray(3); glEnableVertexAttribArray(4);
+        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex),
+                             reinterpret_cast<const void *>(offsetof(Vertex, normal)));
+        glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex),
+                             reinterpret_cast<const void *>(offsetof(Vertex, tangent)));
+        glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex),
+                             reinterpret_cast<const void *>(offsetof(Vertex, bitangent)));
+    } else {
+        glDisableVertexAttribArray(2); glDisableVertexAttribArray(3); glDisableVertexAttribArray(4);
+    }
     if (textured) {
         glEnableVertexAttribArray(5);
         glVertexAttribPointer(5, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex),
@@ -129,38 +237,72 @@ static void BindVertices(GLuint vao, GLuint vbo, bool textured) {
     } else glDisableVertexAttribArray(5);
 }
 
-static void DrawMesh(const Matrix &mvp, int first, int count, bool depthOnly) {
-    glUseProgram(depthOnly ? smokeProgram : material);
-    glUniformMatrix4fv(depthOnly ? smokeMvpUniform : materialMvp, 1, GL_FALSE, mvp.data());
-    BindVertices(meshVao, meshVbo, !depthOnly);
+static void DrawMaterial(const Matrix &mvp, int first, int count) {
+    glUseProgram(material);
+    glUniformMatrix4fv(materialMvp, 1, GL_FALSE, mvp.data());
+    BindVertices(meshVao, meshVbo, true, false);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, meshIbo);
+    glDrawElements(GL_TRIANGLES, count, GL_UNSIGNED_SHORT,
+                   reinterpret_cast<const void *>(static_cast<uintptr_t>(first * sizeof(std::uint16_t))));
+}
+
+static void BindInteractionTextures() {
+    glActiveTexture(GL_TEXTURE0 + 0); glBindTexture(GL_TEXTURE_2D, specTable);
+    glActiveTexture(GL_TEXTURE0 + 1); glBindTexture(GL_TEXTURE_2D, flatNormal);
+    glActiveTexture(GL_TEXTURE0 + 2); glBindTexture(GL_TEXTURE_2D, whiteTex);
+    glActiveTexture(GL_TEXTURE0 + 3); glBindTexture(GL_TEXTURE_2D, whiteTex);
+    glActiveTexture(GL_TEXTURE0 + 4); glBindTexture(GL_TEXTURE_2D, checker);
+    glActiveTexture(GL_TEXTURE0 + 5); glBindTexture(GL_TEXTURE_2D, whiteTex);
+}
+
+static void DrawInteraction(const Matrix &mvp, int first, int count) {
+    glUseProgram(interaction);
+    glUniformMatrix4fv(interactionMvp, 1, GL_FALSE, mvp.data());
+    glUniform4f(interactionLightOrigin, 2.5f, 3.5f, 2.5f, 1.0f);
+    glUniform4f(interactionViewOrigin, 0.0f, 1.0f, 4.0f, 1.0f);
+    BindInteractionTextures();
+    BindVertices(meshVao, meshVbo, true, true);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, meshIbo);
     glDrawElements(GL_TRIANGLES, count, GL_UNSIGNED_SHORT,
                    reinterpret_cast<const void *>(static_cast<uintptr_t>(first * sizeof(std::uint16_t))));
 }
 
 static void DrawScene(float angle) {
-    // Reuse the identical matrix bytes in both programs, as the engine's
-    // depth-EQUAL path requires. Never recompute a camera between the passes.
-    const Matrix floor = Projection(), cube = Multiply(floor, CubeModel(angle));
+    const float testAngle = mode == 0 ? angle : 0.65f;
+    const Matrix floor = Projection(), cube = Multiply(floor, CubeModel(testAngle));
     glViewport(0, 0, 960, 544);
     glDisable(GL_SCISSOR_TEST); glDisable(GL_CULL_FACE);
-    glDisable(GL_BLEND); glDisable(GL_STENCIL_TEST);
+    glDisable(GL_STENCIL_TEST);
     glEnable(GL_DEPTH_TEST); glDepthMask(GL_TRUE);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, checker);
+    glDisable(GL_BLEND);
+
     if (mode != 0) {
+        // Production GLES_D3 depth fill uses the material program itself.
         glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
         glDepthFunc(GL_LESS);
-        DrawMesh(cube, 0, CubeIndexCount, true);
-        DrawMesh(floor, FloorFirstIndex, FloorIndexCount, true);
+        glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, checker);
+        DrawMaterial(cube, 0, CubeIndexCount);
+        DrawMaterial(floor, FloorFirstIndex, FloorIndexCount);
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         glDepthMask(GL_FALSE);
     }
-    glDepthFunc(mode == 1 ? GL_EQUAL : GL_LEQUAL);
-    // Draw the cube first and the floor last: a missing depth test must be
-    // visible rather than concealed by back-to-front submission.
-    DrawMesh(cube, 0, CubeIndexCount, false);
-    DrawMesh(floor, FloorFirstIndex, FloorIndexCount, false);
+
+    if (mode <= 1) {
+        glDisable(GL_BLEND);
+        glDepthFunc(mode == 1 ? GL_EQUAL : GL_LEQUAL);
+        glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, checker);
+        DrawMaterial(cube, 0, CubeIndexCount);
+        DrawMaterial(floor, FloorFirstIndex, FloorIndexCount);
+    } else {
+        // One real Quake 4 interaction over a black target. Additive ONE:ONE
+        // matches the backend; with one light this is directly visible.
+        glEnable(GL_BLEND); glBlendFunc(GL_ONE, GL_ONE);
+        glDepthFunc(mode == 2 ? GL_EQUAL : GL_LEQUAL);
+        DrawInteraction(cube, 0, CubeIndexCount);
+        DrawInteraction(floor, FloorFirstIndex, FloorIndexCount);
+        glDisable(GL_BLEND);
+    }
     glDepthMask(GL_TRUE);
 }
 
@@ -192,7 +334,9 @@ static void Text(std::vector<Vertex> &out, const char *text, int x, int y, bool 
             const float right = left + 4.0f/960.0f, bottom = top - 4.0f/544.0f;
             const float xy[6][2] = {{left,top},{left,bottom},{right,bottom},{left,top},{right,bottom},{right,top}};
             for (int k = 0; k < 6; ++k) {
-                Vertex v = {{xy[k][0],xy[k][1],0},{255,255,255,255},{0,0}};
+                Vertex v = {};
+                v.xyz[0] = xy[k][0]; v.xyz[1] = xy[k][1]; v.xyz[2] = 0.0f;
+                v.color[0] = v.color[1] = v.color[2] = v.color[3] = 255;
                 if (!ok) { v.color[1] = 75; v.color[2] = 75; }
                 out.push_back(v);
             }
@@ -206,7 +350,7 @@ static void UpdateHud() {
     Text(data, "X MODO  TRIANGULO PAUSA  CUADRADO LOG", 20, 62);
     Text(data, sceneReady ? "SHADERS Y GEOMETRIA CARGADOS" : "ERROR DE SHADER O GEOMETRIA", 20, 84, sceneReady);
     if (!lastGlOk) Text(data, "ERROR GL VER RENDERER PROBE LOG", 20, 106, false);
-    BindVertices(hudVao, hudVbo, false);
+    BindVertices(hudVao, hudVbo, false, false);
     glBufferData(GL_ARRAY_BUFFER, data.size()*sizeof(Vertex), data.data(), GL_STATIC_DRAW);
     hudCount = static_cast<GLsizei>(data.size());
 }
@@ -217,7 +361,7 @@ static void DrawHud() {
     glUniformMatrix4fv(smokeMvpUniform, 1, GL_FALSE, identity.data());
     if (smokeColorUniform >= 0) glUniform4f(smokeColorUniform, 1, 1, 1, 1);
     if (smokeAlphaTestUniform >= 0) glUniform1f(smokeAlphaTestUniform, -1);
-    BindVertices(hudVao, hudVbo, false);
+    BindVertices(hudVao, hudVbo, false, false);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
     glDrawArrays(GL_TRIANGLES, 0, hudCount);
 }
@@ -255,7 +399,9 @@ int main() {
     if (!gpu) RendererLog("probe.scene.gpu=failed");
     const bool materialOk = gpu ? Probe::CreateMaterial() : false;
     if (gpu && !materialOk) RendererLog("probe.scene.material=failed");
-    Probe::sceneReady = gpu && materialOk;
+    const bool interactionOk = gpu && materialOk ? Probe::CreateInteraction() : false;
+    if (gpu && materialOk && !interactionOk) RendererLog("probe.scene.interaction=failed");
+    Probe::sceneReady = gpu && materialOk && interactionOk;
     RendererLog(Probe::sceneReady ? "probe.scene.ready=1" : "probe.scene.ready=0");
     if (!Probe::hudVao || !Probe::hudVbo) {
         RendererLog("probe.hud.allocation_failed");
@@ -272,7 +418,7 @@ int main() {
             const unsigned int pressed = pad.buttons & ~previousButtons;
             previousButtons = pad.buttons;
             if (pressed & SCE_CTRL_CROSS) {
-                Probe::mode = (Probe::mode + 1) % 3;
+                Probe::mode = (Probe::mode + 1) % 4;
                 RendererLog(Probe::modeNames[Probe::mode]);
                 Probe::UpdateHud(); capture = true;
             }
@@ -291,7 +437,7 @@ int main() {
         Probe::DrawHud();
         if (frame == 0) CheckGl("probe.hud");
         vglSwapBuffers(GL_FALSE);
-        if (!Probe::paused) angle += 0.009f;
+        if (!Probe::paused && Probe::mode == 0) angle += 0.009f;
         if (++frame == 60) RendererLog("probe.presented_60_frames=1");
     }
 }

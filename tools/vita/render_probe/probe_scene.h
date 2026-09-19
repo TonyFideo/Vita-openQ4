@@ -5,9 +5,20 @@
 #include <cstdint>
 
 namespace Probe {
-struct Vertex { float xyz[3]; unsigned char color[4]; float st[2]; };
-static_assert(sizeof(Vertex) == 24, "Unexpected probe vertex stride");
-static_assert(offsetof(Vertex, color) == 12 && offsetof(Vertex, st) == 16,
+struct Vertex {
+    float xyz[3];
+    unsigned char color[4];
+    float normal[3];
+    float tangent[3];
+    float bitangent[3];
+    float st[2];
+};
+static_assert(sizeof(Vertex) == 60, "Unexpected probe vertex stride");
+static_assert(offsetof(Vertex, color) == 12 &&
+              offsetof(Vertex, normal) == 16 &&
+              offsetof(Vertex, tangent) == 28 &&
+              offsetof(Vertex, bitangent) == 40 &&
+              offsetof(Vertex, st) == 52,
               "Unexpected probe attribute offsets");
 using Matrix = std::array<float, 16>;
 inline Matrix Identity() {
@@ -57,6 +68,15 @@ inline Scene MakeScene() {
         {245,140,65},{80,180,245},{240,195,65},{80,225,140},
         {195,115,250},{90,155,190},{220,225,235}
     };
+    const float normals[7][3] = {
+        {0,0,1},{0,0,-1},{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,1,0}
+    };
+    const float tangents[7][3] = {
+        {1,0,0},{-1,0,0},{0,0,-1},{0,0,1},{1,0,0},{1,0,0},{1,0,0}
+    };
+    const float bitangents[7][3] = {
+        {0,1,0},{0,1,0},{0,1,0},{0,1,0},{0,0,-1},{0,0,1},{0,0,-1}
+    };
     const float uv[4][2] = {{0,0},{1,0},{1,1},{0,1}};
     const int local[6] = {0,1,2,0,2,3};
     Scene result;
@@ -64,7 +84,11 @@ inline Scene MakeScene() {
         for (int v = 0; v < 4; ++v) {
             Vertex &out = result.vertices[face*4+v];
             for (int c = 0; c < 3; ++c) {
-                out.xyz[c] = p[face][v][c]; out.color[c] = colors[face][c];
+                out.xyz[c] = p[face][v][c];
+                out.color[c] = colors[face][c];
+                out.normal[c] = normals[face][c];
+                out.tangent[c] = tangents[face][c];
+                out.bitangent[c] = bitangents[face][c];
             }
             out.color[3] = 255;
             out.st[0] = uv[v][0] * (face == 6 ? 8.0f : 1.0f);

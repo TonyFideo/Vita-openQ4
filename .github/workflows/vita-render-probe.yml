@@ -2,7 +2,7 @@ name: Vita Render Probe
 
 on:
   push:
-    branches: [vita-port]
+    branches: [vita-port, vita-interaction-probe]
     paths:
       - .github/workflows/vita-render-probe.yml
       - tools/vita/render_probe/**
@@ -24,7 +24,7 @@ env:
 
 jobs:
   render-probe:
-    name: Package isolated GLES_D3 material and depth probe
+    name: Package isolated GLES_D3 material, depth, and interaction probe
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     container: vitasdk/vitasdk:latest

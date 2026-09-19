@@ -16,6 +16,8 @@ add_executable(openq4_vita_render_probe
   ${OPENQ4_ROOT}/src/renderer/GLES_D3/glsl/debugShaderFP.cpp
   ${OPENQ4_ROOT}/src/renderer/GLES_D3/glsl/materialShaderVP.cpp
   ${OPENQ4_ROOT}/src/renderer/GLES_D3/glsl/materialShaderFP.cpp
+  ${OPENQ4_ROOT}/src/renderer/GLES_D3/glsl/interactionShaderVP.cpp
+  ${OPENQ4_ROOT}/src/renderer/GLES_D3/glsl/interactionShaderFP.cpp
 )
 target_compile_features(openq4_vita_render_probe PRIVATE cxx_std_17)
 target_compile_definitions(openq4_vita_render_probe PRIVATE VITA=1 PROBE_BUILD_SHA="${PROBE_BUILD_SHA}")

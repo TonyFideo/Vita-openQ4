@@ -35,3 +35,18 @@ Close via the system UI. No teardown experiment is performed in this test.
 The independent `Vita Render Probe` workflow produces the VPK even while
 full-engine integration has unrelated compile errors. Compilation and packaging
 are not a claim of runtime success on hardware or Vita3K.
+
+
+## Interaction probe modes
+
+The interaction branch adds a deterministic production GLES_D3 lighting test.
+
+- Mode 0: material shader, LEQUAL, rotating control.
+- Mode 1: material depth prepass, then material EQUAL.
+- Mode 2: material depth prepass, then production interaction shader EQUAL.
+- Mode 3: same interaction pass with LEQUAL as the depth-equality control.
+
+Modes 1-3 use the same fixed cube transform. The interaction pass binds
+procedural flat-normal, falloff, projection, diffuse, specular, and specular
+table textures and supplies normals/tangents/bitangents through the production
+attribute locations.
