@@ -192,8 +192,8 @@ jobs:
             --buildtype release \
             -Dplatform_backend=native \
             -Dbuild_engine=true \
-            -Dbuild_games=false \
-            -Dbuild_game_sp=false \
+            -Dbuild_games=true \
+            -Dbuild_game_sp=true \
             -Dbuild_game_mp=false \
             -Dbuild_renderer_gl=false \
             -Dbuild_renderer_vk=false \
