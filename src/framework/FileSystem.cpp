@@ -3289,6 +3289,18 @@ pack_t *idFileSystemLocal::LoadZipFile( const char *zipfile ) {
 
 	Mem_Free( fs_headerLongs );
 
+#if defined(VITA) || defined(__vita__)
+	// Desktop keeps one stdio stream open per PK4 as a mutable minizip
+	// template. Quake 4's retail q4base reaches 32 archives, which is
+	// unnecessary pressure on Vita newlib. The central-directory index above
+	// has everything needed to locate an entry, so close the template here
+	// and reopen only while a resource is actually being read.
+	if ( pack->handle != NULL ) {
+		unzClose( pack->handle );
+		pack->handle = NULL;
+	}
+#endif
+
 	return pack;
 }
 
@@ -6617,7 +6629,34 @@ idFile_InZip * idFileSystemLocal::ReadFileFromZip( pack_t *pak, fileInPack_t *pa
 	FILE *			fp;
 	idFile_InZip *file = new idFile_InZip();
 
-	// open a new file on the pakfile
+#if defined(VITA) || defined(__vita__)
+	// Vita does not keep a template FILE open for every PK4. A fresh minizip
+	// handle can seek straight to the recorded central-directory position.
+	file->z = unzOpen( pak->pakFilename );
+	if ( file->z == NULL ) {
+		delete file;
+		common->FatalError( "Couldn't reopen %s", pak->pakFilename.c_str() );
+		return NULL;
+	}
+	file->name = relativePath;
+	file->fullPath = pak->pakFilename + "/" + relativePath;
+	if ( unzSetCurrentFileInfoPosition( file->z, static_cast<unsigned long>( pakFile->pos ) ) != UNZ_OK ) {
+		common->Warning( "Could not seek to '%s' in pk4 '%s'", relativePath, pak->pakFilename.c_str() );
+		unzClose( file->z );
+		file->z = NULL;
+		delete file;
+		return NULL;
+	}
+	zfi = (unz_s *)file->z;
+	if ( unzOpenCurrentFile( file->z ) != UNZ_OK ) {
+		common->Warning( "Could not open '%s' in pk4 '%s'", relativePath, pak->pakFilename.c_str() );
+		unzClose( file->z );
+		file->z = NULL;
+		delete file;
+		return NULL;
+	}
+#else
+	// Desktop keeps the original minizip state as a template and clones it.
 	file->z = unzReOpen( pak->pakFilename, pak->handle );
 	if ( file->z == NULL ) {
 		common->FatalError( "Couldn't reopen %s", pak->pakFilename.c_str() );
@@ -6625,24 +6664,20 @@ idFile_InZip * idFileSystemLocal::ReadFileFromZip( pack_t *pak, fileInPack_t *pa
 	file->name = relativePath;
 	file->fullPath = pak->pakFilename + "/" + relativePath;
 	zfi = (unz_s *)file->z;
-	// in case the file was new
 	fp = zfi->file;
-	// set the file position in the zip file (also sets the current file info)
 	if ( unzSetCurrentFileInfoPosition( pak->handle, static_cast<unsigned long>( pakFile->pos ) ) != UNZ_OK ) {
 		common->Warning( "Could not seek to '%s' in pk4 '%s'", relativePath, pak->pakFilename.c_str() );
 		delete file;
 		return NULL;
 	}
-	// copy the file info into the unzip structure
 	memcpy( zfi, pak->handle, sizeof(unz_s) );
-	// we copy this back into the structure
 	zfi->file = fp;
-	// open the file in the zip
 	if ( unzOpenCurrentFile( file->z ) != UNZ_OK ) {
 		common->Warning( "Could not open '%s' in pk4 '%s'", relativePath, pak->pakFilename.c_str() );
 		delete file;
 		return NULL;
 	}
+#endif
 	file->zipFilePos = pakFile->pos;
 	file->fileSize = static_cast<int>( zfi->cur_file_info.uncompressed_size );
 	file->containerChecksum = pak->checksum;
