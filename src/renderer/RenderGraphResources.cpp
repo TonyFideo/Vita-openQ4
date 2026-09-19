@@ -262,6 +262,9 @@ static bool R_RenderGraphResources_CanUseGLObjects( const renderBackendCaps_t &c
 }
 
 static bool R_RenderGraphResources_CanUseLowOverheadObjects( void ) {
+#if defined(VITA) || defined(__vita__)
+	return false;
+#else
 	if ( !rg_renderGraphResourceFeatures.lowOverhead || !rg_renderGraphResourceFeatures.directStateAccess || !rg_renderGraphResourceCaps.hasDSA ) {
 		return false;
 	}
@@ -275,6 +278,7 @@ static bool R_RenderGraphResources_CanUseLowOverheadObjects( void ) {
 		return false;
 	}
 	return true;
+#endif
 }
 
 static int R_RenderGraphResources_FrameWidth( const renderGraphResource_t &resource ) {
