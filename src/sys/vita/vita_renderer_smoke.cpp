@@ -1,4 +1,6 @@
 #include "vita_renderer_smoke.h"
+#include "../../renderer/GLES/vita_glesd3_shader_compat.h"
+#include "../../renderer/GLES_D3/glsl/glsl_shaders.h"
 
 #include <vitaGL.h>
 
@@ -16,6 +18,11 @@ GLuint smokeProgram = 0;
 GLuint smokePositionBuffer = 0;
 GLuint smokeFullScreenPositionBuffer = 0;
 GLuint smokeColorBuffer = 0;
+GLuint smokeIndexBuffer = 0;
+GLuint smokeVao = 0;
+GLint smokeMvpUniform = -1;
+GLint smokeColorUniform = -1;
+GLint smokeAlphaTestUniform = -1;
 
 static void RendererLog( const char *text ) {
 	if ( text == NULL ) {
