@@ -42,6 +42,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "../sys/NetworkEndpoint.h"
 #if defined(VITA) || defined(__vita__)
 #include "../sys/vita/vita_loading_hud.h"
+#include <psp2/kernel/clib.h>
 #endif
 
 #if defined( USE_SDL3 )
