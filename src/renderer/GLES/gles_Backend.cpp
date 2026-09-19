@@ -328,7 +328,8 @@ void RB_GLES_ResolveSceneResolutionScale( void ) {
 	// glColorMask was issued behind GL_State's back, the same way
 	// RB_ForceOpaquePresentAlpha does it, so the cached mask bits no longer
 	// describe the driver.
-	backEnd.glState.forceGlState = true;#endif
+	backEnd.glState.forceGlState = true;
+#endif
 }
 
 /*
