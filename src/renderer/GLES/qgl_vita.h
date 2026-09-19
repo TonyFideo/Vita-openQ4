@@ -50,8 +50,8 @@ typedef ptrdiff_t GLintptrARB;
 // VitaGL exposes a single colour attachment today. Keep MRT disabled rather
 // than query GL_MAX_DRAW_BUFFERS, which VitaGL does not expose.
 #define GLEW_ARB_draw_buffers 0
-#define GLEW_ARB_pixel_buffer_object 1
-#define GLEW_EXT_pixel_buffer_object 1
+#define GLEW_ARB_pixel_buffer_object 0
+#define GLEW_EXT_pixel_buffer_object 0
 #define GLEW_EXT_texture_sRGB 1
 #define GLEW_VERSION_2_1 1
 #define GLEW_VERSION_3_0 1

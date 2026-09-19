@@ -430,6 +430,38 @@ static void LightGrid_RenderCaptureScene( int width, int height, renderView_t *r
 	tr.tiledViewport[1] = 0;
 }
 
+#if defined(VITA) || defined(__vita__)
+// vitaGL does not expose pixel-pack buffers and its glPixelStorei only accepts
+// GL_UNPACK_ROW_LENGTH. Keep light-grid baking functional through the existing
+// synchronous readback path instead of pretending the async PBO path exists.
+class LightGridBakeReadbackPool {
+public:
+	LightGridBakeReadbackPool( int requestedSlotCount, int captureSize, int captureBytes ) {
+		(void)requestedSlotCount;
+		(void)captureSize;
+		(void)captureBytes;
+	}
+	~LightGridBakeReadbackPool() {}
+
+	bool IsEnabled() const { return false; }
+	int SlotCount() const { return 0; }
+	int OutstandingReads() const { return 0; }
+	int DrainedReadbacks() const { return 0; }
+	int ReadbackStallMilliseconds() const { return 0; }
+	bool HasFreeSlot() const { return false; }
+
+	void IssueReadback( renderView_t *ref, lightGridBakeJob_t *job, int faceIndex ) {
+		(void)ref;
+		(void)job;
+		(void)faceIndex;
+	}
+
+	bool DrainOne( lightGridBakeJob_t *&readyJob ) {
+		readyJob = NULL;
+		return false;
+	}
+};
+#else
 class LightGridBakeReadbackPool {
 public:
 	LightGridBakeReadbackPool( int requestedSlotCount, int captureSize, int captureBytes )
@@ -605,6 +637,7 @@ private:
 	int									readbackStallMsec;
 };
 
+#endif
 static const idMat3 *LightGrid_GetCubeAxes() {
 	static bool initialized = false;
 	static idMat3 axes[6];
