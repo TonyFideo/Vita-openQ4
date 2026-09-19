@@ -213,6 +213,22 @@ typedef void ( GL_APIENTRY *PFN_VITA_COMPRESSED_TEX_SUB_IMAGE_2D )(
 	GLsizei imageSize, const void *data );
 extern PFN_VITA_COMPRESSED_TEX_SUB_IMAGE_2D glCompressedTexSubImage2DARB;
 
+/*
+ * GL_ARB_multi_bind is not exposed by VitaGL.  The common state cache already
+ * has scalar fallbacks for these entry points, so represent them exactly like
+ * a loader would on an unsupported driver: typed NULL function pointers.
+ */
+typedef void ( GL_APIENTRY *PFN_VITA_BIND_TEXTURES )(
+	GLuint first, GLsizei count, const GLuint *textures );
+typedef void ( GL_APIENTRY *PFN_VITA_BIND_SAMPLERS )(
+	GLuint first, GLsizei count, const GLuint *samplers );
+typedef void ( GL_APIENTRY *PFN_VITA_BIND_BUFFERS_BASE )(
+	GLenum target, GLuint first, GLsizei count, const GLuint *buffers );
+
+extern PFN_VITA_BIND_TEXTURES glBindTextures;
+extern PFN_VITA_BIND_SAMPLERS glBindSamplers;
+extern PFN_VITA_BIND_BUFFERS_BASE glBindBuffersBase;
+
 // ARB shader objects do not map cleanly onto VitaGL's separate shader/program
 // namespaces. They are only part of the disabled legacy probe.
 void GL_APIENTRY glDeleteObjectARB( GLhandleARB obj );

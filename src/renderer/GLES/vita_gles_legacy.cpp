@@ -18,6 +18,10 @@ PFN_VITA_LEGACY_VOID glGetInfoLogARB = NULL;
 
 PFN_VITA_COMPRESSED_TEX_SUB_IMAGE_2D glCompressedTexSubImage2DARB = NULL;
 
+PFN_VITA_BIND_TEXTURES glBindTextures = NULL;
+PFN_VITA_BIND_SAMPLERS glBindSamplers = NULL;
+PFN_VITA_BIND_BUFFERS_BASE glBindBuffersBase = NULL;
+
 GLboolean glewExperimental = GL_FALSE;
 
 GLenum glewInit( void ) {
