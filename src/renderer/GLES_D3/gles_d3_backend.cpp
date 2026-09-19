@@ -275,9 +275,14 @@ adding instrumentation.
 ====================
 */
 #if defined(VITA) || defined(__vita__)
-static idCVar r_glesD3TestTriangle( "r_glesD3TestTriangle", "1", CVAR_RENDERER | CVAR_BOOL,
+// The isolated renderer probes have validated indexed geometry, material
+// depth prepass, production interaction shaders, GL_EQUAL and the Vita-safe
+// additive target clear. Vita can now boot through the real GLES_D3 pass
+// ordering by default; the bring-up stages remain available as manual
+// diagnostics through the cvars.
+static idCVar r_glesD3TestTriangle( "r_glesD3TestTriangle", "0", CVAR_RENDERER | CVAR_BOOL,
 		"gles_d3: draw a test triangle in front of the view through the full draw path" );
-static idCVar r_glesD3BringupStage( "r_glesD3BringupStage", "1", CVAR_RENDERER | CVAR_INTEGER,
+static idCVar r_glesD3BringupStage( "r_glesD3BringupStage", "0", CVAR_RENDERER | CVAR_INTEGER,
 		"Vita GLES_D3 bring-up: 0=full renderer, 1=clear+camera triangle, 2=depth+triangle, 3=depth+materials+triangle, 4=depth+interactions+materials+triangle" );
 #else
 static idCVar r_glesD3TestTriangle( "r_glesD3TestTriangle", "0", CVAR_RENDERER | CVAR_BOOL,
