@@ -40,6 +40,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "RenderDoc.h"
 #include "ParallelJobSystem.h"
 #include "../sys/NetworkEndpoint.h"
+#if defined(VITA) || defined(__vita__)
+#include "../sys/vita/vita_loading_hud.h"
+#endif
 
 #if defined( USE_SDL3 )
 #include <SDL3/SDL_locale.h>
@@ -1220,6 +1223,9 @@ void idCommonLocal::Warning( const char *fmt, ... ) {
 	msg[sizeof(msg)-1] = 0;
 
 	Printf( S_COLOR_YELLOW "WARNING: " S_COLOR_RED "%s\n", msg );
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_LogWarn( "WARNING: %s", msg );
+#endif
 
 	if ( warningList.Num() < MAX_WARNING_LIST ) {
 		warningList.AddUnique( msg );
@@ -1406,6 +1412,10 @@ void idCommonLocal::Error( const char *fmt, ... ) {
 	idStr::vsnPrintf( errorMessage, sizeof(errorMessage), fmt, argptr );
 	va_end (argptr);
 	errorMessage[sizeof(errorMessage)-1] = '\0';
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_LogError( "ERROR: %s", errorMessage );
+	VitaLoadingHud_TickNative( true );
+#endif
 
 	// copy the error message to the clip board
 	Sys_SetClipboardData( errorMessage );
@@ -1493,6 +1503,10 @@ void idCommonLocal::FatalError( const char *fmt, ... ) {
 	idStr::vsnPrintf( errorMessage, sizeof(errorMessage), fmt, argptr );
 	va_end( argptr );
 	errorMessage[sizeof(errorMessage)-1] = '\0';
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_LogError( "FATAL: %s", errorMessage );
+	VitaLoadingHud_TickNative( true );
+#endif
 
 	// log the message before Shutdown closes the log file; Sys_Error output
 	// is invisible on windowed builds without an attached console
@@ -5676,10 +5690,106 @@ static void Common_DrawScaledSmallString( float x, float y, float charWidth, flo
 	renderSystem->SetColor( idVec4( 1.0f, 1.0f, 1.0f, 1.0f ) );
 }
 
+
+#if defined(VITA) || defined(__vita__)
+static idVec4 Common_VitaLoadingHudColor( vitaLoadingLogColor_t color ) {
+	switch ( color ) {
+		case VITA_LOAD_LOG_OK:
+			return idVec4( 0.55f, 1.0f, 0.55f, 1.0f );
+		case VITA_LOAD_LOG_WARN:
+			return idVec4( 1.0f, 0.85f, 0.20f, 1.0f );
+		case VITA_LOAD_LOG_ERROR:
+			return idVec4( 1.0f, 0.12f, 0.12f, 1.0f );
+		case VITA_LOAD_LOG_INFO:
+		default:
+			return idVec4( 1.0f, 1.0f, 1.0f, 1.0f );
+	}
+}
+
+static void Common_DrawVitaLoadingHud( float textScaleX, float textScaleY ) {
+	vitaLoadingHudSnapshot_t hud;
+	memset( &hud, 0, sizeof( hud ) );
+	VitaLoadingHud_GetSnapshot( &hud );
+	if ( !hud.active ) {
+		return;
+	}
+
+	const idMaterial *white = declManager->FindMaterial( "_white", false );
+	const idMaterial *font = declManager->FindMaterial( "fonts/english/bigchars", false );
+	if ( white == NULL || font == NULL ) {
+		return;
+	}
+
+	// The bring-up HUD deliberately replaces the splash with a deterministic
+	// black diagnostic surface. This keeps progress and the last asset readable
+	// even when the asset currently being debugged is the splash/menu itself.
+	renderSystem->SetColor( idVec4( 0.005f, 0.008f, 0.012f, 1.0f ) );
+	renderSystem->DrawStretchPic( 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0, 0, 1, 1, white );
+
+	const float charWidth = 5.5f * textScaleX;
+	const float charHeight = 8.5f * textScaleY;
+	const idVec4 whiteText( 1.0f, 1.0f, 1.0f, 1.0f );
+	const idVec4 greenText( 0.55f, 1.0f, 0.55f, 1.0f );
+
+	Common_DrawScaledSmallString( 8.0f, 8.0f, charWidth, charHeight, hud.buildLabel, whiteText, true, font );
+	Common_DrawScaledSmallString( 8.0f, 22.0f, charWidth, charHeight, "Cargando datos...", whiteText, true, font );
+
+	char line[192];
+	sceClibSnprintf( line, sizeof( line ), "Estado: %s", hud.status );
+	Common_DrawScaledSmallString( 8.0f, 36.0f, charWidth, charHeight, line, whiteText, true, font );
+
+	float y = 58.0f;
+	for ( int i = 0; i < VITA_LOAD_STAGE_COUNT; ++i ) {
+		const vitaLoadingStageSnapshot_t &stage = hud.stages[i];
+		if ( stage.total > 0 ) {
+			sceClibSnprintf( line, sizeof( line ), "%s %d/%d %s", stage.label, stage.done, stage.total, stage.detail );
+		} else {
+			sceClibSnprintf( line, sizeof( line ), "%s %d/? %s", stage.label, stage.done, stage.detail );
+		}
+		const bool complete = stage.total > 0 && stage.done >= stage.total;
+		Common_DrawScaledSmallString(
+			12.0f, y, charWidth, charHeight, line,
+			complete ? greenText : whiteText, true, font );
+		y += 14.0f;
+	}
+
+	sceClibSnprintf( line, sizeof( line ), "Etapa: %s", hud.lastStage );
+	Common_DrawScaledSmallString( 8.0f, 176.0f, charWidth, charHeight, line, whiteText, true, font );
+	sceClibSnprintf( line, sizeof( line ), "Asset: %s", hud.lastAsset );
+	Common_DrawScaledSmallString( 8.0f, 190.0f, charWidth, charHeight, line, whiteText, true, font );
+	sceClibSnprintf( line, sizeof( line ), "PK4: %s", hud.lastPak );
+	Common_DrawScaledSmallString( 8.0f, 204.0f, charWidth, charHeight, line, whiteText, true, font );
+
+	// Bright green outline around the rolling console, matching the native HUD.
+	renderSystem->SetColor( idVec4( 0.12f, 0.95f, 0.25f, 1.0f ) );
+	renderSystem->DrawStretchPic( 6, 230, SCREEN_WIDTH - 12, 1, 0, 0, 1, 1, white );
+	renderSystem->DrawStretchPic( 6, 230, 1, 226, 0, 0, 1, 1, white );
+	renderSystem->DrawStretchPic( SCREEN_WIDTH - 7, 230, 1, 226, 0, 0, 1, 1, white );
+	renderSystem->DrawStretchPic( 6, 455, SCREEN_WIDTH - 12, 1, 0, 0, 1, 1, white );
+	Common_DrawScaledSmallString( 10.0f, 238.0f, charWidth, charHeight, "Logging...", greenText, true, font );
+
+	y = 254.0f;
+	for ( int i = 0; i < hud.logCount; ++i ) {
+		Common_DrawScaledSmallString(
+			12.0f, y, charWidth, charHeight,
+			hud.logs[i].text,
+			Common_VitaLoadingHudColor( hud.logs[i].color ),
+			true,
+			font );
+		y += 18.0f;
+	}
+
+	renderSystem->SetColor( idVec4( 1.0f, 1.0f, 1.0f, 1.0f ) );
+}
+#endif
+
 void idCommonLocal::PrintLoadingMessage( const char *msg ) {
 	if ( !( msg && *msg ) ) {
 		return;
 	}
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_SetCheckpoint( msg );
+#endif
 
 	renderSystem->BeginFrame( renderSystem->GetScreenWidth(), renderSystem->GetScreenHeight() );
 
@@ -5739,6 +5849,9 @@ void idCommonLocal::PrintLoadingMessage( const char *msg ) {
 	const float textY = correctedY + 410.0f * textScaleY;
 	Common_DrawScaledSmallString( textX, textY, charWidth, charHeight, msg,
 		idVec4( 0.94f, 0.62f, 0.05f, 1.0f ), true, declManager->FindMaterial( "fonts/english/bigchars", false ) );
+#if defined(VITA) || defined(__vita__)
+	Common_DrawVitaLoadingHud( textScaleX, textScaleY );
+#endif
 	renderSystem->SetColor( idVec4( 1.0f, 1.0f, 1.0f, 1.0f ) );
 	renderSystem->EndFrame( NULL, NULL );
 }
@@ -6868,7 +6981,13 @@ void idCommonLocal::InitGame( void ) {
 	openQ4_NormalizeGameTypeForModule( pendingGameModule.c_str() );
 
 	// initialize the file system
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_SetEngineProgress( 0, 10, "Filesystem", false );
+#endif
 	fileSystem->Init();
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_SetEngineProgress( 1, 10, "Filesystem", true );
+#endif
 
 	// attach the integrated BSE manager before decl initialization so DECL_EFFECT
 	// allocation is available when effect declarations are parsed.
@@ -6881,7 +7000,13 @@ void idCommonLocal::InitGame( void ) {
 	R_RendererModule_BootEarly();
 
 	// initialize the declaration manager
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_SetEngineProgress( 1, 10, "Declaraciones", false );
+#endif
 	declManager->Init();
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_SetEngineProgress( 2, 10, "Declaraciones", true );
+#endif
 
 	// force r_fullscreen 0 if running a tool
 	CheckToolMode();
@@ -6902,7 +7027,13 @@ void idCommonLocal::InitGame( void ) {
 	}
 
 	// initialize the renderSystem data structures, but don't start OpenGL yet
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_SetEngineProgress( 2, 10, "Renderer datos", false );
+#endif
 	renderSystem->Init();
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_SetEngineProgress( 3, 10, "Renderer datos", true );
+#endif
 
 	// The render-geometry library is linked independently into module-only
 	// renderers and the engine. Initialize the engine copy for dmap and the
@@ -6996,21 +7127,33 @@ void idCommonLocal::InitGame( void ) {
 	Common_MigrateLegacyBorderlessWindowDefault();
 	Common_MigrateLegacyNetworkRateCaps();
 
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_SetEngineProgress( 4, 10, "Configuracion e idioma", true );
+#endif
 	// cvars are initialized, but not the rendering system. Allow preference startup dialog
 	Sys_DoPreferences();
 
 	// init the user command input code
 	usercmdGen->Init();
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_SetEngineProgress( 5, 10, "Entrada", true );
+#endif
 
 	PrintLoadingMessage( common->GetLanguageDict()->GetString( "#str_104346" ) );
 
 	// start the sound system, but don't do any hardware operations yet
 	soundSystem->Init();
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_SetEngineProgress( 6, 10, "Sonido", true );
+#endif
 
 	PrintLoadingMessage( common->GetLanguageDict()->GetString( "#str_104347" ) );
 
 	// init async network
 	idAsyncNetwork::Init();
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_SetEngineProgress( 7, 10, "Red", true );
+#endif
 
 #ifdef	ID_DEDICATED
 	idAsyncNetwork::server.InitPort();
@@ -7023,6 +7166,9 @@ void idCommonLocal::InitGame( void ) {
 		// init OpenGL, which will open a window and connect sound and input hardware
 		PrintLoadingMessage( common->GetLanguageDict()->GetString( "#str_104348" ) );
 		InitRenderSystem();
+#if defined(VITA) || defined(__vita__)
+		VitaLoadingHud_SetEngineProgress( 8, 10, "VitaGL renderer", true );
+#endif
 	}
 #endif
 
@@ -7043,11 +7189,18 @@ void idCommonLocal::InitGame( void ) {
 
 	// load the game dll
 	LoadGameDLL();
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_SetEngineProgress( 9, 10, "UI y juego", true );
+#endif
 	
 	PrintLoadingMessage( common->GetLanguageDict()->GetString( "#str_104351" ) );
 
 	// init the session
 	session->Init();
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_SetStageProgress( VITA_LOAD_SESSION, 1, 1, "Lista" );
+	VitaLoadingHud_SetEngineProgress( 10, 10, "Sesion", true );
+#endif
 
 	// have to do this twice.. first one sets the correct r_mode for the renderer init
 	// this time around the backend is all setup correct.. a bit fugly but do not want

@@ -239,6 +239,8 @@ LINUX_PLATFORM_SOURCES = (
 VITA_PLATFORM_SOURCES = (
     "sys/vita/vita_main.cpp",
     "sys/vita/vita_glimp.cpp",
+    "sys/vita/vita_debug_screen.cpp",
+    "sys/vita/vita_loading_hud.cpp",
     "sys/vita/vita_system.cpp",
     "sys/vita/vita_threads.cpp",
     "sys/vita/vita_files.cpp",

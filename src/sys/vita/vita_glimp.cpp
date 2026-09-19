@@ -4,6 +4,7 @@
 #include "../../renderer/tr_local.h"
 #include "../../renderer/RenderModuleAPI.h"
 #include "vita_public.h"
+#include "vita_loading_hud.h"
 
 #include <vitaGL.h>
 
@@ -98,7 +99,13 @@ bool GLimp_Init( glimpParms_t parms ) {
 		VitaGLimp_Log( "VitaGL initialized at requested resolution" );
 	}
 
-	return glGetString( GL_VERSION ) != NULL;
+	const bool rendererValid = glGetString( GL_VERSION ) != NULL;
+	if ( rendererValid ) {
+		VitaLoadingHud_RendererInitialized();
+	} else {
+		VitaLoadingHud_LogError( "VitaGL no devolvio GL_VERSION" );
+	}
+	return rendererValid;
 }
 
 bool GLimp_SetScreenParms( glimpParms_t parms ) {
@@ -131,7 +138,14 @@ void GLimp_PreserveWindowOnShutdown( bool preserve ) {
 
 void GLimp_SwapBuffers( void ) {
 	if ( vitaGLReady ) {
+		const bool firstHudSwap = !VitaLoadingHud_RendererHandoffComplete();
+		if ( firstHudSwap ) {
+			VitaLoadingHud_BeginRendererHandoff();
+		}
 		vglSwapBuffers( GL_FALSE );
+		if ( firstHudSwap ) {
+			VitaLoadingHud_EndRendererHandoff();
+		}
 	}
 }
 

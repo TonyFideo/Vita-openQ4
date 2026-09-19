@@ -23,7 +23,8 @@ static const int VITA_MARGIN_Y = 20;
 
 static const uint32_t VITA_COLOR_BLACK = 0xFF000000U;
 static const uint32_t VITA_COLOR_WHITE = 0xFFFFFFFFU;
-static const uint32_t VITA_COLOR_GREEN = 0xFF00FF00U;
+static const uint32_t VITA_COLOR_GREEN = 0xFF80FF80U;
+static const uint32_t VITA_COLOR_YELLOW = 0xFF00FFFFU;
 static const uint32_t VITA_COLOR_RED = 0xFF0000FFU;
 
 struct VitaGlyph {
@@ -111,6 +112,8 @@ static uint32_t Vita_ColorForLine( vitaDiagColor_t color ) {
 	switch ( color ) {
 		case VITA_DIAG_OK:
 			return VITA_COLOR_GREEN;
+		case VITA_DIAG_WARN:
+			return VITA_COLOR_YELLOW;
 		case VITA_DIAG_ERROR:
 			return VITA_COLOR_RED;
 		case VITA_DIAG_INFO:
@@ -215,6 +218,31 @@ void VitaDiagScreen_Clear( void ) {
 	vitaCursorY = VITA_MARGIN_Y;
 }
 
+void VitaDiagScreen_DrawText( int x, int y, vitaDiagColor_t color, const char *text ) {
+	if ( vitaFrameBuffer == NULL || text == NULL ) {
+		return;
+	}
+
+	const uint32_t pixelColor = Vita_ColorForLine( color );
+	int cursorX = x;
+	int cursorY = y;
+	for ( const char *scan = text; *scan != '\0'; ++scan ) {
+		if ( *scan == '\n' ) {
+			cursorY += VITA_LINE_ADVANCE;
+			cursorX = x;
+			continue;
+		}
+		if ( cursorX + VITA_CHAR_ADVANCE >= VITA_SCREEN_WIDTH - 4 ) {
+			break;
+		}
+		if ( cursorY + VITA_FONT_HEIGHT * VITA_FONT_SCALE >= VITA_SCREEN_HEIGHT - 4 ) {
+			break;
+		}
+		Vita_DrawChar( cursorX, cursorY, *scan, pixelColor );
+		cursorX += VITA_CHAR_ADVANCE;
+	}
+}
+
 void VitaDiagScreen_PrintLine( vitaDiagColor_t color, const char *text ) {
 	if ( vitaFrameBuffer == NULL || text == NULL ) {
 		return;
@@ -224,21 +252,7 @@ void VitaDiagScreen_PrintLine( vitaDiagColor_t color, const char *text ) {
 		VitaDiagScreen_Clear();
 	}
 
-	const uint32_t pixelColor = Vita_ColorForLine( color );
-	int cursorX = VITA_MARGIN_X;
-	for ( const char *scan = text; *scan != '\0'; ++scan ) {
-		if ( *scan == '\n' ) {
-			vitaCursorY += VITA_LINE_ADVANCE;
-			cursorX = VITA_MARGIN_X;
-			continue;
-		}
-		if ( cursorX + VITA_CHAR_ADVANCE >= VITA_SCREEN_WIDTH - VITA_MARGIN_X ) {
-			vitaCursorY += VITA_LINE_ADVANCE;
-			cursorX = VITA_MARGIN_X;
-		}
-		Vita_DrawChar( cursorX, vitaCursorY, *scan, pixelColor );
-		cursorX += VITA_CHAR_ADVANCE;
-	}
+	VitaDiagScreen_DrawText( VITA_MARGIN_X, vitaCursorY, color, text );
 	vitaCursorY += VITA_LINE_ADVANCE;
 }
 

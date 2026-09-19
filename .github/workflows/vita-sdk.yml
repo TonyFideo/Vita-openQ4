@@ -307,6 +307,12 @@ jobs:
           fi
           test -s build/vita-runtime/pak0.pk4
 
+          {
+            printf 'action=%s\n' "${GITHUB_RUN_NUMBER}"
+            printf 'commit=%s\n' "${GITHUB_SHA}"
+          } > build/vita-runtime/build.txt
+          test -s build/vita-runtime/build.txt
+
           echo "Checking Vita ELF relocation set before vita-elf-create"
           if arm-vita-eabi-readelf -rW build/vita-engine-config/openQ4-client_armv7 | grep -q 'R_ARM_BASE_PREL'; then
             echo "::error::Unsupported R_ARM_BASE_PREL remains in the Vita ELF"
@@ -315,7 +321,8 @@ jobs:
           fi
           cmake -S tools/vita/engine_package -B build/vita-engine-package             -DCMAKE_TOOLCHAIN_FILE="$VITASDK/share/vita.toolchain.cmake"             -DOPENQ4_ENGINE_ELF="${GITHUB_WORKSPACE}/build/vita-engine-config/openQ4-client_armv7" \
             -DOPENQ4_RUNTIME_MOD_JSON="${GITHUB_WORKSPACE}/build/vita-engine-config/content/baseoq4/mod.json" \
-            -DOPENQ4_RUNTIME_PAK0="${GITHUB_WORKSPACE}/build/vita-runtime/pak0.pk4"
+            -DOPENQ4_RUNTIME_PAK0="${GITHUB_WORKSPACE}/build/vita-runtime/pak0.pk4" \
+            -DOPENQ4_BUILD_STAMP="${GITHUB_WORKSPACE}/build/vita-runtime/build.txt"
           cmake --build build/vita-engine-package --parallel "${VITA_BUILD_JOBS}"
 
       - name: Validate full Vita engine artifacts
@@ -331,14 +338,17 @@ jobs:
           vpk = Path("build/vita-engine-package/Vita-OpenQ4-engine.vpk")
           with zipfile.ZipFile(vpk) as zf:
               names = set(zf.namelist())
-              required = {"eboot.bin", "baseoq4/mod.json", "baseoq4/pak0.pk4"}
+              required = {"eboot.bin", "baseoq4/mod.json", "baseoq4/pak0.pk4", "build.txt"}
               missing = sorted(required - names)
               if missing:
                   raise SystemExit(f"VPK missing required runtime entries: {missing}")
               pak0 = zf.getinfo("baseoq4/pak0.pk4")
               if pak0.file_size < 1024 * 1024:
                   raise SystemExit(f"bundled pak0.pk4 is unexpectedly small: {pak0.file_size}")
-              print(f"Validated VPK runtime entries; pak0={pak0.file_size} bytes")
+              stamp = zf.read("build.txt").decode("utf-8")
+              if "action=" not in stamp or "commit=" not in stamp:
+                  raise SystemExit(f"invalid build.txt: {stamp!r}")
+              print(f"Validated VPK runtime entries; pak0={pak0.file_size} bytes; {stamp.strip()}")
           PY
           arm-vita-eabi-readelf -h build/vita-engine-config/openQ4-client_armv7
           ls -lh             build/vita-engine-config/openQ4-client_armv7             build/vita-engine-package/eboot.bin             build/vita-engine-package/Vita-OpenQ4-engine.vpk

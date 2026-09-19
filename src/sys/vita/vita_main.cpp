@@ -2,6 +2,7 @@
 #pragma hdrstop
 
 #include "vita_public.h"
+#include "vita_loading_hud.h"
 
 #include <psp2/kernel/clib.h>
 
@@ -17,6 +18,8 @@ the same engine lifecycle as the desktop builds.
 */
 int main( int argc, char **argv ) {
 	sceClibPrintf( "[VOQ4] engine entry\n" );
+	VitaLoadingHud_Init();
+	VitaLoadingHud_SetEngineProgress( 0, 10, "Entrada del motor", false );
 
 	const char **engineArgv = const_cast<const char **>( argv );
 	if ( argc > 1 ) {
@@ -24,6 +27,9 @@ int main( int argc, char **argv ) {
 	} else {
 		common->Init( 0, NULL, NULL );
 	}
+
+	VitaLoadingHud_SetEngineProgress( 10, 10, "Inicializacion completa", true );
+	VitaLoadingHud_LogOk( "Entrando al bucle principal" );
 
 	for ( ;; ) {
 		common->Frame();

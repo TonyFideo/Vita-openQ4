@@ -36,6 +36,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "../sys/URLPolicy.h"
 #if defined( __vita__ ) || defined( VITA )
 #include "../sys/vita/vita_public.h"
+#include "../sys/vita/vita_loading_hud.h"
 #include <psp2/kernel/clib.h>
 #include <psp2/kernel/processmgr.h>
 #endif
@@ -1352,6 +1353,9 @@ typedef struct fileInPack_s {
 	idStr				name;						// name of the file
 	uint32_t			pos;						// classic-ZIP central-directory position
 	struct fileInPack_s * next;						// next file in the hash
+#if defined(VITA) || defined(__vita__)
+	bool				vitaHudOpened;				// counted once in the Vita loading HUD
+#endif
 } fileInPack_t;
 
 typedef enum {
@@ -3239,6 +3243,10 @@ pack_t *idFileSystemLocal::LoadZipFile( const char *zipfile ) {
 		buildBuffer[i].name = filename_inzip;
 		buildBuffer[i].name.ToLower();
 		buildBuffer[i].name.BackSlashesToSlashes();
+#if defined(VITA) || defined(__vita__)
+		buildBuffer[i].vitaHudOpened = false;
+		VitaLoadingHud_IndexAsset( buildBuffer[i].name.c_str() );
+#endif
 		// Minizip exposes a native unsigned long, but classic ZIP stores this
 		// central-directory position in exactly 32 bits.
 		unsigned long fileInfoPosition = 0;
@@ -5078,6 +5086,9 @@ void idFileSystemLocal::AddGameDirectory( const char *path, const char *dir ) {
 	pakfile.StripTrailing( '\\' );
 
 	ListOSFiles( pakfile, ".pk4", pakfiles );
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_PakDirectoryDiscovered( dir, pakfiles.Num() );
+#endif
 	if ( fs_debug.GetInteger() ) {
 		common->Printf( "Found %d pk4 file(s) in %s\n", pakfiles.Num(), pakfile.c_str() );
 	}
@@ -5096,6 +5107,9 @@ void idFileSystemLocal::AddGameDirectory( const char *path, const char *dir ) {
 #endif
 		if ( !idStr::Icmp( dir, BASE_GAMEDIR ) && FS_IsIgnoredOfficialGameBinaryPk4( pakfiles[ i ] ) ) {
 			common->Printf( "Ignoring unneeded game binary pk4 %s\n", BuildOSPath( path, dir, pakfiles[ i ] ) );
+#if defined(VITA) || defined(__vita__)
+			VitaLoadingHud_PakProcessed( dir, pakfiles[ i ].c_str(), false, true );
+#endif
 			continue;
 		}
 
@@ -5108,6 +5122,7 @@ void idFileSystemLocal::AddGameDirectory( const char *path, const char *dir ) {
 		}
 		sceClibPrintf( "[VOQ4][fsdiag] loaded pak_index=%d file=%s result=%s\n",
 				i, pakfiles[ i ].c_str(), pak != NULL ? "ok" : "rejected" );
+		VitaLoadingHud_PakProcessed( dir, pakfiles[ i ].c_str(), pak != NULL, false );
 #endif
 		if ( !pak ) {
 			continue;
@@ -6703,6 +6718,8 @@ idFile_InZip * idFileSystemLocal::ReadFileFromZip( pack_t *pak, fileInPack_t *pa
 	idFile_InZip *file = new idFile_InZip();
 
 #if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_SetAssetContext( relativePath, pak->pakFilename.c_str() );
+
 	// The template retains parsed central-directory metadata but owns no FILE.
 	// Reopen a short-lived stream, seek directly to the indexed entry, and close
 	// it again with the idFile_InZip instance.
@@ -6710,6 +6727,9 @@ idFile_InZip * idFileSystemLocal::ReadFileFromZip( pack_t *pak, fileInPack_t *pa
 		? unzReOpen( pak->pakFilename, pak->handle )
 		: unzOpen( pak->pakFilename );
 	if ( file->z == NULL ) {
+#if defined(VITA) || defined(__vita__)
+		VitaLoadingHud_AssetError( relativePath, pak->pakFilename.c_str(), "reopen pk4" );
+#endif
 		delete file;
 		common->FatalError( "Couldn't reopen %s", pak->pakFilename.c_str() );
 		return NULL;
@@ -6717,6 +6737,9 @@ idFile_InZip * idFileSystemLocal::ReadFileFromZip( pack_t *pak, fileInPack_t *pa
 	file->name = relativePath;
 	file->fullPath = pak->pakFilename + "/" + relativePath;
 	if ( unzSetCurrentFileInfoPosition( file->z, static_cast<unsigned long>( pakFile->pos ) ) != UNZ_OK ) {
+#if defined(VITA) || defined(__vita__)
+		VitaLoadingHud_AssetError( relativePath, pak->pakFilename.c_str(), "seek central dir" );
+#endif
 		common->Warning( "Could not seek to '%s' in pk4 '%s'", relativePath, pak->pakFilename.c_str() );
 		unzClose( file->z );
 		file->z = NULL;
@@ -6725,6 +6748,9 @@ idFile_InZip * idFileSystemLocal::ReadFileFromZip( pack_t *pak, fileInPack_t *pa
 	}
 	zfi = (unz_s *)file->z;
 	if ( unzOpenCurrentFile( file->z ) != UNZ_OK ) {
+#if defined(VITA) || defined(__vita__)
+		VitaLoadingHud_AssetError( relativePath, pak->pakFilename.c_str(), "open zip entry" );
+#endif
 		common->Warning( "Could not open '%s' in pk4 '%s'", relativePath, pak->pakFilename.c_str() );
 		unzClose( file->z );
 		file->z = NULL;
@@ -6753,6 +6779,11 @@ idFile_InZip * idFileSystemLocal::ReadFileFromZip( pack_t *pak, fileInPack_t *pa
 		delete file;
 		return NULL;
 	}
+#endif
+#if defined(VITA) || defined(__vita__)
+	const bool vitaFirstHudOpen = !pakFile->vitaHudOpened;
+	pakFile->vitaHudOpened = true;
+	VitaLoadingHud_AssetLoaded( relativePath, pak->pakFilename.c_str(), vitaFirstHudOpen );
 #endif
 	file->zipFilePos = pakFile->pos;
 	file->fileSize = static_cast<int>( zfi->cur_file_info.uncompressed_size );
