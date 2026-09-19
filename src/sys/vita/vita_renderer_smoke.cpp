@@ -4,6 +4,7 @@
 
 #include <psp2/io/fcntl.h>
 #include <psp2/kernel/clib.h>
+#include <psp2/kernel/sysmem.h>
 #include <stdint.h>
 
 namespace {
@@ -290,15 +291,37 @@ bool VitaRendererSmoke_Init( void ) {
 	// fall back to normal/phycont RAM. This trades performance for a deterministic
 	// renderer bootstrap and can be relaxed once real-hardware validation starts.
 	const int kRamReserveBytes = 10 * 1024 * 1024;
-	const int kDisableCdramThresholdBytes = 128 * 1024 * 1024;
 	const int kDisableCommonDialogThresholdBytes = 0x8C6000;
+
+	// Derive the CDRAM threshold from the value reported by the platform instead
+	// of assuming a fixed Vita/Vita3K capacity. vglInitWithCustomThreshold()
+	// computes pool_size = free - threshold when free > threshold, so setting
+	// threshold == free guarantees a zero-sized CDRAM pool on every target.
+	int disableCdramThresholdBytes = 128 * 1024 * 1024;
+	SceKernelFreeMemorySizeInfo freeMemoryInfo = {};
+	freeMemoryInfo.size = sizeof( freeMemoryInfo );
+	if ( sceKernelGetFreeMemorySize( &freeMemoryInfo ) >= 0 ) {
+		disableCdramThresholdBytes = static_cast<int>( freeMemoryInfo.size_cdram );
+
+		char line[192];
+		sceClibSnprintf(
+			line,
+			sizeof( line ),
+			"renderer.vitagl.preinit free_user_kb=%llu free_cdram_kb=%llu free_phycont_kb=%llu",
+			static_cast<unsigned long long>( freeMemoryInfo.size_user >> 10 ),
+			static_cast<unsigned long long>( freeMemoryInfo.size_cdram >> 10 ),
+			static_cast<unsigned long long>( freeMemoryInfo.size_phycont >> 10 ) );
+		RendererLog( line );
+	} else {
+		RendererLog( "renderer.vitagl.preinit.memory_query=failed" );
+	}
 
 	// Match the proven idTech 4 Vita configuration for the transient command
 	// pools while keeping MSAA disabled for the smoke renderer.
 	vglSetCircularPoolSize( 3 * 1024 * 1024 );
 	vglSetParamBufferSize( 14 * 1024 * 1024 );
 
-	RendererLog( "renderer.vitagl.profile=vita3k-safe-no-cdram" );
+	RendererLog( "renderer.vitagl.profile=vita3k-safe-no-cdram-dynamic" );
 	RendererLog( "renderer.vitagl.gc=single-threaded" );
 	RendererLog( "renderer.vitagl.heap=custom" );
 	RendererLog( "renderer.vitagl.shader_compiler=compat-simple" );
@@ -309,7 +332,7 @@ bool VitaRendererSmoke_Init( void ) {
 		960,
 		544,
 		kRamReserveBytes,
-		kDisableCdramThresholdBytes,
+		disableCdramThresholdBytes,
 		0,
 		kDisableCommonDialogThresholdBytes,
 		SCE_GXM_MULTISAMPLE_NONE );
