@@ -1,5 +1,7 @@
 if build_games and build_game_sp
-  if host_system == 'windows'
+  if host_system == 'vita'
+    # Linked directly into the Vita client by the root Meson build.
+  elif host_system == 'windows'
     game_sp_module_target = shared_module(
       game_sp_binary_name,
       game_sp_sources,
