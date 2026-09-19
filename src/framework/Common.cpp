@@ -6463,8 +6463,14 @@ void idCommonLocal::UnloadGameDLL( void ) {
 		Com_UnloadGameModuleBinary( gameDLL, gameModuleCompletions );
 		gameDLL = NULL;
 	}
+#if !defined(VITA) && !defined(__vita__)
+	// Dynamic game modules really leave the process on desktop, so invalidate
+	// their exported interfaces. The Vita SP game is linked into the executable:
+	// clearing these globals would make the next GetGameAPI() export NULL after
+	// a restart because no static initializer runs again.
 	game = NULL;
 	gameEdit = NULL;
+#endif
 	com_activeGameModule.SetString( "" );
 
 #endif
