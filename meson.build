@@ -926,7 +926,10 @@ sdl3_dep = disabler()
 macos_graphics_bridge_dep = disabler()
 deps = []
 if build_engine
-  if host_system == 'linux' and use_sdl3_backend
+  if host_system == 'vita'
+    # VitaGL provides the GL declarations and symbols directly through
+    # renderer/GLES/qgl_vita.h; desktop GLEW must not enter this build.
+  elif host_system == 'linux' and use_sdl3_backend
     glew_sp = subproject('glew', default_options: glew_default_options)
     glew_dep = glew_sp.get_variable('glew_dep')
     glew_dedicated_dep = glew_sp.get_variable('glew_dedicated_dep')
@@ -952,7 +955,10 @@ if build_engine
     default_options: fallback_opt,
   )
 
-  if host_system == 'darwin'
+  if host_system == 'vita'
+    # Audio is stubbed for the first engine bring-up. This removes OpenAL as a
+    # blocker while renderer/map/input integration is being validated.
+  elif host_system == 'darwin'
     if macos_openal_provider == 'apple_framework'
       openal_dep = dependency('appleframeworks', modules: ['OpenAL'], required: true)
     else
@@ -1011,7 +1017,30 @@ if build_engine
     endif
   endif
 
-  deps = [glew_dep, openal_dep, stb_vorbis_dep]
+  if host_system == 'vita'
+    deps = [
+      stb_vorbis_dep,
+      cc.find_library('vitaGL', required: true),
+      cc.find_library('vitashark', required: true),
+      cc.find_library('mathneon', required: true),
+      cc.find_library('SceLibKernel_stub', required: true),
+      cc.find_library('SceIofilemgr_stub', required: true),
+      cc.find_library('ScePower_stub', required: true),
+      cc.find_library('SceAppMgr_stub', required: true),
+      cc.find_library('SceAppUtil_stub', required: true),
+      cc.find_library('SceCommonDialog_stub', required: true),
+      cc.find_library('SceDisplay_stub', required: true),
+      cc.find_library('SceGxm_stub', required: true),
+      cc.find_library('SceSysmodule_stub', required: true),
+      cc.find_library('SceShaccCgExt', required: true),
+      cc.find_library('SceShaccCg_stub', required: true),
+      cc.find_library('SceKernelDmacMgr_stub', required: true),
+      cc.find_library('SceCtrl_stub', required: true),
+      cc.find_library('taihen_stub', required: true),
+    ]
+  else
+    deps = [glew_dep, openal_dep, stb_vorbis_dep]
+  endif
 
   if host_system == 'windows'
     windows_shell_dep = cc.find_library('shell32', required: true)
@@ -1147,8 +1176,15 @@ if build_engine and host_system == 'linux'
   ]
 endif
 
-shared_cpp_args = ['-DUSE_OPENAL', '-DGLEW_NO_GLU']
+shared_cpp_args = ['-DGLEW_NO_GLU']
 shared_c_args = ['-DGLEW_NO_GLU']
+if host_system != 'vita'
+  shared_cpp_args += ['-DUSE_OPENAL']
+endif
+if host_system == 'vita'
+  shared_cpp_args += ['-DVITA=1', '-DOPENQ4_RENDERER_GLES_MODULE=1']
+  shared_c_args += ['-DVITA=1', '-DOPENQ4_RENDERER_GLES_MODULE=1']
+endif
 shared_objcpp_args = []
 shared_objc_args = []
 engine_link_args = []
