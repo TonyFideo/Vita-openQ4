@@ -29,6 +29,48 @@ static GLuint R_GetAttachmentHandle( idImage *image ) {
 	return ( image != nullptr ) ? image->GetDeviceHandle() : INVALID_RENDER_TEXTURE_HANDLE;
 }
 
+#if defined(VITA) || defined(__vita__)
+static bool R_ConfigureVitaFramebufferDepth( idImage *depthImage ) {
+	if ( depthImage == NULL ) {
+		return true;
+	}
+
+	const idImageOpts &opts = depthImage->GetOpts();
+	GLenum storageFormat = GL_DEPTH_COMPONENT24;
+	GLenum attachment = GL_DEPTH_ATTACHMENT;
+	if ( opts.format == FMT_DEPTH_STENCIL ) {
+		storageFormat = GL_DEPTH24_STENCIL8;
+		attachment = GL_DEPTH_STENCIL_ATTACHMENT;
+	} else if ( opts.format != FMT_DEPTH ) {
+		common->Warning( "idRenderTexture: unsupported VitaGL depth format %d", (int)opts.format );
+		return false;
+	}
+
+	GLuint marker = 0;
+	glGenRenderbuffers( 1, &marker );
+	if ( marker == 0 ) {
+		common->Warning( "idRenderTexture: VitaGL failed to allocate depth marker" );
+		return false;
+	}
+
+	// VitaGL renderbuffers are descriptors: storage records whether stencil is
+	// required, and glFramebufferRenderbuffer copies that state into the FBO.
+	// The actual GXM depth/stencil surface is allocated lazily per framebuffer.
+	glBindRenderbuffer( GL_RENDERBUFFER, marker );
+	glRenderbufferStorage( GL_RENDERBUFFER, storageFormat, Max( 1, opts.width ), Max( 1, opts.height ) );
+	glFramebufferRenderbuffer( GL_FRAMEBUFFER, attachment, GL_RENDERBUFFER, marker );
+	glBindRenderbuffer( GL_RENDERBUFFER, 0 );
+	glDeleteRenderbuffers( 1, &marker );
+
+	const GLenum err = glGetError();
+	if ( err != GL_NO_ERROR ) {
+		common->Warning( "idRenderTexture: VitaGL depth/stencil configuration failed (0x%x)", (unsigned)err );
+		return false;
+	}
+	return true;
+}
+#endif
+
 static void R_SetRenderTextureDrawBuffers( int colorImageCount ) {
 #if defined(VITA) || defined(__vita__)
 	// VitaGL has one colour output per FBO and does not expose glDrawBuffers.
@@ -453,6 +495,17 @@ bool idRenderTexture::InitRenderTexture(void) {
 		}
 
 		if (depthImage != nullptr) {
+#if defined(VITA) || defined(__vita__)
+			// VitaGL framebuffer texture attachments are color-only. Asking it
+			// to attach a depth texture returns GL_INVALID_ENUM while its simplified
+			// completeness check can still report success. Configure the FBO's
+			// lazy GXM depth/stencil surface through the supported renderbuffer
+			// descriptor path instead. Depth textures used by post effects are
+			// populated later by the engine's explicit copy-depth commands.
+			if ( !R_ConfigureVitaFramebufferDepth( depthImage ) ) {
+				return FailFramebuffer( GL_FRAMEBUFFER_UNSUPPORTED, "Vita depth/stencil" );
+			}
+#else
 			if (depthImage->GetOpts().numMSAASamples == 0)
 			{
 				if (depthImage->GetOpts().format == FMT_DEPTH) {
@@ -477,6 +530,7 @@ bool idRenderTexture::InitRenderTexture(void) {
 					common->FatalError("idRenderTexture::InitRenderTexture: Unknown depth buffer format!");
 				}
 			}
+#endif
 		}
 
 		R_SetRenderTextureDrawBuffers( colorImages.Num() );
