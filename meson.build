@@ -1427,6 +1427,24 @@ engine_objc_args = shared_objc_args
 bse_cpp_args = shared_cpp_args + common_header_cpp_args + linux_cross_dso_sanitizer_cpp_args
 bse_c_args = shared_c_args
 bse_library = disabler()
+vita_game_sp_library = disabler()
+
+if host_system == 'vita' and build_engine and build_games and build_game_sp
+  # Vita has no desktop-style game DLL loader during bring-up. Compile the SP
+  # game as one archive and let it resolve idlib/engine symbols against the
+  # executable, preserving the same GetGameAPI boundary without a second idlib
+  # copy inside the process.
+  vita_game_sp_library = static_library(
+    'openq4_vita_game_sp',
+    game_sp_sources,
+    include_directories: game_include_dirs,
+    cpp_args: engine_cpp_args + ['-DGAME_DLL', '-DOPENQ4_VITA_STATIC_GAME=1'],
+    c_args: engine_c_args,
+    cpp_pch: game_module_pch_headers,
+    override_options: game_target_override_options,
+    install: false,
+  )
+endif
 
 if build_engine
   openq4_dedicated_sources = openq4_engine_sources
@@ -1488,6 +1506,9 @@ endif
 
 if build_engine
   client_link_with = [bse_library, imagetools_library, render_geo_library]
+  if host_system == 'vita' and build_games and build_game_sp
+    client_link_with += [vita_game_sp_library]
+  endif
   dedicated_link_with = [bse_library, imagetools_library, render_geo_library]
 
   if host_system == 'windows'
@@ -1662,7 +1683,7 @@ endif
 
 game_idlib_library = disabler()
 game_idlib_library_mp = disabler()
-if build_engine or build_games
+if (build_engine or build_games) and host_system != 'vita'
   # One archive per game flavour. src/idlib/precompiled.h includes
   # mpgame/Game_local.h under -DGAME_MPAPI and game/Game_local.h otherwise, and
   # every idlib translation unit includes precompiled.h. Linking one
