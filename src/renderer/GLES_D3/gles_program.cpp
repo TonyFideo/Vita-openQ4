@@ -17,6 +17,9 @@
 #include "../tr_local.h"
 #include "gles_d3_local.h"
 #include "gles_program.h"
+#if defined(VITA) || defined(__vita__)
+#include "../GLES/vita_glesd3_shader_compat.h"
+#endif
 
 /*
 ====================
@@ -219,7 +222,16 @@ static GLuint GLESD3_CompileStage( glesD3ProgramId_t id, GLenum stage, const cha
 		return 0;
 	}
 
+#if defined(VITA) || defined(__vita__)
+	// VitaGL's translator consumes GLSL 1.x-style attribute/varying declarations.
+	// Keep the Android GLES3 shader bodies as the source of truth and normalize
+	// only their declaration syntax at this platform boundary.
+	const std::string vitaSource = Vita_GLESD3_NormalizeShaderSource( body, stage );
+	const char *compileBody = vitaSource.c_str();
+	glShaderSource( shader, 1, &compileBody, NULL );
+#else
 	glShaderSource( shader, 1, &body, NULL );
+#endif
 	glCompileShader( shader );
 
 	if ( spliced != NULL ) {
