@@ -180,6 +180,7 @@ typedef enum {
 // Builds every program. Safe to call repeatedly; reload goes through here.
 // Returns false if any program failed, having logged each failure by name.
 bool			R_GLESD3_Programs_Init( void );
+bool			R_GLESD3_Programs_InitDebugOnly( void );
 void			R_GLESD3_Programs_Shutdown( void );
 
 // NULL when the id is out of range, the program failed to link, or the
