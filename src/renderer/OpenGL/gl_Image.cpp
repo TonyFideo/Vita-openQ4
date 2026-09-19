@@ -159,6 +159,14 @@ void idImage::SubImageUpload( int mipLevel, int x, int y, int z, int width, int 
 #endif
 	} else {
 
+#if defined(VITA) || defined(__vita__)
+		// vitaGL does not implement GL_UNPACK_ALIGNMENT. Its texture upload path
+		// consumes tightly packed rows (width * bytes-per-pixel) and honours
+		// GL_UNPACK_ROW_LENGTH separately, which matches the source buffers used
+		// here. Issuing GL_UNPACK_ALIGNMENT would only poison glGetError() with
+		// GL_INVALID_ENUM and can make later renderer checks report a false
+		// texture/upload failure.
+#else
 		// make sure the pixel store alignment is correct so that lower mips get created
 		// properly for odd shaped textures - this fixes the mip mapping issues with
 		// fonts
@@ -168,6 +176,7 @@ void idImage::SubImageUpload( int mipLevel, int x, int y, int z, int width, int 
 		} else {
 			glPixelStorei( GL_UNPACK_ALIGNMENT, 1 );
 		}
+#endif
 
 		glTexSubImage2D( uploadTarget, mipLevel, x, y, width, height, dataFormat, dataType, pic );
 	}
