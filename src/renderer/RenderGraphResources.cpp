@@ -71,10 +71,13 @@ static const char *R_RenderGraphResources_FboStatusName( GLenum status ) {
 		return "complete";
 	case 0:
 		return "none";
+#if !defined(VITA) && !defined(__vita__)
 	case GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT:
 		return "incomplete_attachment";
+#endif
 	case GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT:
 		return "missing_attachment";
+#if !defined(VITA) && !defined(__vita__)
 	case GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER:
 		return "incomplete_draw_buffer";
 	case GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER:
@@ -83,6 +86,7 @@ static const char *R_RenderGraphResources_FboStatusName( GLenum status ) {
 		return "unsupported";
 	case GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE:
 		return "incomplete_multisample";
+#endif
 	default:
 		return "0x%x";
 	}
