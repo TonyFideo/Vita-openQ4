@@ -105,6 +105,33 @@ inline float4 vglUnpack(float4 v) { return v; }""",
         raise SystemExit("Vita3K shader compatibility patch left bit_cast in translator header")
     shader_header_path.write_text(shader_header, encoding="utf-8")
 
+    # vitaGL's postponed GLSL path performs the actual shader compilation from
+    # glLinkProgram().  Upstream currently assumes both compiles succeeded and
+    # immediately dereferences the resulting GXM program pointers. Vita3K turns
+    # any compiler rejection into an access violation at a small address. Keep
+    # PROG_UNLINKED on failure so glGetProgramiv(GL_LINK_STATUS) can report it.
+    custom_shaders_path = root / "source" / "custom_shaders.c"
+    custom_shaders = custom_shaders_path.read_text(encoding="utf-8")
+    custom_shaders = replace_once(
+        custom_shaders,
+        """\t\tglsl_sema_mode = VGL_MODE_POSTPONED;
+\t}
+
+\tif (p->status == PROG_LINKED) {""",
+        """\t\tglsl_sema_mode = VGL_MODE_POSTPONED;
+#ifndef SKIP_ERROR_HANDLING
+\t\tif (!p->vshader->prog || !p->fshader->prog) {
+\t\t\tvgl_log("%s:%d: %s: GLSL shader-pair compilation failed; link aborted.\\n", __FILE__, __LINE__, __func__);
+\t\t\treturn;
+\t\t}
+#endif
+\t}
+
+\tif (p->status == PROG_LINKED) {""",
+        "Vita3K GLSL link failure guard",
+    )
+    custom_shaders_path.write_text(custom_shaders, encoding="utf-8")
+
     checks = (
         "shark_init_simple(NULL)",
         "SCE_GXM_INITIALIZE_FLAG_DEFAULT",
@@ -116,6 +143,7 @@ inline float4 vglUnpack(float4 v) { return v; }""",
 
     print("Applied Vita3K compatibility init patch to", path)
     print("Applied Vita3K shader-compiler compatibility patch to", shader_header_path)
+    print("Applied Vita3K GLSL link-failure guard to", custom_shaders_path)
     return 0
 
 
