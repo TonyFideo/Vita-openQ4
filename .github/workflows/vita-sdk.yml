@@ -232,6 +232,12 @@ jobs:
         run: |
           set -euo pipefail
           test -f build/vita-engine-config/openQ4-client_armv7
+          echo "Checking Vita ELF relocation set before vita-elf-create"
+          if arm-vita-eabi-readelf -rW build/vita-engine-config/openQ4-client_armv7 | grep -q 'R_ARM_BASE_PREL'; then
+            echo "::error::Unsupported R_ARM_BASE_PREL remains in the Vita ELF"
+            arm-vita-eabi-readelf -rW build/vita-engine-config/openQ4-client_armv7 | grep 'R_ARM_BASE_PREL' | head -40
+            exit 1
+          fi
           cmake -S tools/vita/engine_package -B build/vita-engine-package             -DCMAKE_TOOLCHAIN_FILE="$VITASDK/share/vita.toolchain.cmake"             -DOPENQ4_ENGINE_ELF="${GITHUB_WORKSPACE}/build/vita-engine-config/openQ4-client_armv7"
           cmake --build build/vita-engine-package --parallel 2
 
