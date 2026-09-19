@@ -7,6 +7,76 @@
 #include "ModernGLShaderLibrary.h"
 #include "ModernSpecularProbeAtlas.h"
 
+#if defined(VITA) || defined(__vita__)
+
+// Vita uses the GLES_D3 shader programs. The desktop ModernGL shader library
+// requires GL 3.3-4.5 reflection/storage APIs that VitaGL intentionally does
+// not expose, so keep the public control surface fail-closed and linkable.
+static modernGLShaderLibraryStats_t rg_vitaModernShaderStats = {};
+
+const char *ModernGLShaderProgramKind_Name( modernGLShaderProgramKind_t kind ) {
+	switch ( kind ) {
+	case MODERN_GL_SHADER_DEPTH: return "depth";
+	case MODERN_GL_SHADER_SHADOW_DEPTH: return "shadowDepth";
+	case MODERN_GL_SHADER_FLAT_MATERIAL: return "flatMaterial";
+	case MODERN_GL_SHADER_LIGHT_GRID: return "lightGrid";
+	case MODERN_GL_SHADER_FOG_BLEND: return "fogBlend";
+	case MODERN_GL_SHADER_GBUFFER_OPAQUE: return "gbufferOpaque";
+	case MODERN_GL_SHADER_GBUFFER_ALPHA_TEST: return "gbufferAlphaTest";
+	case MODERN_GL_SHADER_DEFERRED_LIGHT_RESOLVE: return "deferredLightResolve";
+	case MODERN_GL_SHADER_CLUSTERED_FORWARD_OPAQUE: return "clusteredForwardOpaque";
+	case MODERN_GL_SHADER_CLUSTERED_FORWARD_ALPHA_TEST: return "clusteredForwardAlphaTest";
+	case MODERN_GL_SHADER_TRANSPARENT_FORWARD: return "transparentForward";
+	case MODERN_GL_SHADER_GUI: return "gui";
+	case MODERN_GL_SHADER_POST_COPY: return "postCopy";
+	case MODERN_GL_SHADER_DEBUG_VISUALIZATION: return "debugVisualization";
+	default: return "unknown";
+	}
+}
+
+static void R_VitaModernShaderLibrary_Reset( void ) {
+	rg_vitaModernShaderStats = modernGLShaderLibraryStats_t();
+	rg_vitaModernShaderStats.available = false;
+	rg_vitaModernShaderStats.initialized = false;
+	idStr::Copynz( rg_vitaModernShaderStats.status, "vita-gles-d3", sizeof( rg_vitaModernShaderStats.status ) );
+}
+
+void R_ModernGLShaderLibrary_Init( const renderBackendCaps_t &caps, const renderFeatureSet_t &features ) {
+	(void)caps;
+	(void)features;
+	R_VitaModernShaderLibrary_Reset();
+}
+
+void R_ModernGLShaderLibrary_Shutdown( void ) {
+	R_VitaModernShaderLibrary_Reset();
+}
+
+bool R_ModernGLShaderLibrary_Reload( void ) {
+	R_VitaModernShaderLibrary_Reset();
+	return false;
+}
+
+const modernGLShaderLibraryStats_t &R_ModernGLShaderLibrary_Stats( void ) {
+	return rg_vitaModernShaderStats;
+}
+
+const modernGLShaderProgramInfo_t *R_ModernGLShaderLibrary_FindProgram( modernGLShaderProgramKind_t kind, int preferredGLSLVersion ) {
+	(void)kind;
+	(void)preferredGLSLVersion;
+	return NULL;
+}
+
+void R_ModernGLShaderLibrary_PrintGfxInfo( void ) {
+	common->Printf( "Modern GL shader library: unavailable on Vita; GLES_D3 shaders active\n" );
+}
+
+bool RendererModernGLShaderLibrary_RunSelfTest( void ) {
+	common->Printf( "RendererModernGLShaderLibrary self-test passed (Vita GLES_D3: modern shader library unavailable)\n" );
+	return true;
+}
+
+#else
+
 static_assert( MODERN_SPECULAR_PROBE_ATLAS_SIZE == 2048,
 	"authored-probe GLSL atlas-size ABI drift" );
 static_assert( MODERN_SPECULAR_PROBE_ATLAS_FACE_SIZE == 256,
@@ -3118,3 +3188,5 @@ bool RendererModernGLShaderLibrary_RunSelfTest( void ) {
 		stats.reflectedImageCount );
 	return true;
 }
+
+#endif // VITA modern GL shader library stub
