@@ -165,6 +165,34 @@ target_compile_options(openq4_vita_prerender_platform_probe PRIVATE
 
 target_compile_features(openq4_vita_prerender_platform_probe PRIVATE cxx_std_20)
 
+
+add_library(openq4_vita_glimp_probe STATIC
+  ${OPENQ4_ROOT}/src/sys/vita/vita_glimp.cpp
+)
+
+target_include_directories(openq4_vita_glimp_probe PRIVATE
+  ${CMAKE_CURRENT_BINARY_DIR}
+  ${OPENQ4_ROOT}
+  ${OPENQ4_ROOT}/src
+  ${OPENQ4_ROOT}/.tmp/gamelibs_stage/src/game
+  ${OPENQ4_ROOT}/.tmp/gamelibs_stage/src/mpgame
+  $ENV{VITASDK}/arm-vita-eabi/include
+)
+
+target_compile_options(openq4_vita_glimp_probe PRIVATE
+  -fsigned-char
+  -DVITA=1
+  -D__DOOM_DLL__
+  -DUSE_OPENAL
+  -DOPENQ4_RENDERER_GLES_MODULE=1
+  -fno-strict-aliasing
+  -ffp-contract=off
+  -include
+  ${OPENQ4_ROOT}/src/idlib/precompiled.h
+)
+
+target_compile_features(openq4_vita_glimp_probe PRIVATE cxx_std_20)
+
 add_library(openq4_vita_prerender_core_probe STATIC
   ${OPENQ4_ROOT}/src/sys/sys_local.cpp
   ${OPENQ4_ROOT}/src/framework/Common.cpp
