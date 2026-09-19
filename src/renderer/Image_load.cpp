@@ -1256,8 +1256,10 @@ bool idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight,
 
 		glGetIntegerv( GL_READ_FRAMEBUFFER_BINDING, &previousReadFbo );
 		glGetIntegerv( GL_DRAW_FRAMEBUFFER_BINDING, &previousDrawFbo );
+#if !defined(VITA) && !defined(__vita__)
 		glGetIntegerv( GL_READ_BUFFER, &previousReadBuffer );
 		glGetIntegerv( GL_DRAW_BUFFER, &previousDrawBuffer );
+#endif
 
 		if ( r_copyFramebufferFbo == 0 ) {
 			glGenFramebuffers( 1, &r_copyFramebufferFbo );
@@ -1300,13 +1302,20 @@ bool idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight,
 
 		glBindFramebuffer( GL_READ_FRAMEBUFFER, previousReadFbo );
 		glBindFramebuffer( GL_DRAW_FRAMEBUFFER, previousDrawFbo );
+#if defined(VITA) || defined(__vita__)
+		// VitaGL exposes a single colour source per FBO and no draw-buffer query.
+		glReadBuffer( previousReadFbo != 0 ? GL_COLOR_ATTACHMENT0 : GL_BACK );
+#else
 		glReadBuffer( previousReadBuffer );
 		glDrawBuffer( previousDrawBuffer );
+#endif
 	} else {
 		GLint previousReadFbo = 0;
 		GLint previousReadBuffer = GL_BACK;
 		glGetIntegerv( GL_READ_FRAMEBUFFER_BINDING, &previousReadFbo );
+#if !defined(VITA) && !defined(__vita__)
 		glGetIntegerv( GL_READ_BUFFER, &previousReadBuffer );
+#endif
 
 		if ( readingFromRenderTexture ) {
 			glBindFramebuffer( GL_READ_FRAMEBUFFER, backEnd.renderTexture->GetDeviceHandle() );
@@ -1341,7 +1350,11 @@ bool idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight,
 		}
 
 		glBindFramebuffer( GL_READ_FRAMEBUFFER, previousReadFbo );
+#if defined(VITA) || defined(__vita__)
+		glReadBuffer( previousReadFbo != 0 ? GL_COLOR_ATTACHMENT0 : GL_BACK );
+#else
 		glReadBuffer( previousReadBuffer );
+#endif
 
 		if ( needsStorageResize ) {
 			glTexParameterf( textureTarget, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
@@ -1430,7 +1443,7 @@ bool idImage::CopyDepthbuffer( int x, int y, int imageWidth, int imageHeight,
 
 	glBindFramebuffer( GL_READ_FRAMEBUFFER, previousReadFbo );
 	return true;
-#endif
+#else
 
 	// The destination must hold depth-renderable storage: it gets attached to
 	// GL_DEPTH_ATTACHMENT for the blit path and receives GL_DEPTH_COMPONENT
@@ -1640,6 +1653,7 @@ bool idImage::CopyDepthbuffer( int x, int y, int imageWidth, int imageHeight,
 
 	//backEnd.pc.c_copyFrameBuffer++;
 	return true;
+#endif
 }
 
 /*
