@@ -353,6 +353,7 @@ openq4_vita_renderer_probe(openq4_vita_renderer_system_probe
   ${OPENQ4_ROOT}/src/renderer/GLStateCache.cpp
   ${OPENQ4_ROOT}/src/renderer/OpenGL/gl_Image.cpp
   ${OPENQ4_ROOT}/src/renderer/Image_load.cpp
+  ${OPENQ4_ROOT}/src/renderer/RendererUpload.cpp
   ${OPENQ4_ROOT}/src/renderer/RendererCaps.cpp
   ${OPENQ4_ROOT}/src/renderer/RenderSystem.cpp
 )
