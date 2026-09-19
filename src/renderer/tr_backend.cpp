@@ -80,12 +80,15 @@ void RB_SetDefaultGLState( void ) {
 	RB_LogComment( "--- R_SetDefaultGLState ---\n" );
 
 	glClearDepth( 1.0f );
+
+#ifndef OPENQ4_RENDERER_GLES_MODULE
 	glColor4f (1,1,1,1);
 
-	// the vertex array is always enabled
+	// the legacy compatibility renderer keeps client arrays enabled globally.
 	glEnableClientState( GL_VERTEX_ARRAY );
 	glEnableClientState( GL_TEXTURE_COORD_ARRAY );
 	glDisableClientState( GL_COLOR_ARRAY );
+#endif
 
 	//
 	// make sure our GL state vector is set correctly
@@ -100,22 +103,42 @@ void RB_SetDefaultGLState( void ) {
 	glEnable( GL_BLEND );
 	glEnable( GL_SCISSOR_TEST );
 	glEnable( GL_CULL_FACE );
+#ifndef OPENQ4_RENDERER_GLES_MODULE
 	glDisable( GL_SAMPLE_ALPHA_TO_COVERAGE );
 	glDisable( GL_LIGHTING );
 	glDisable( GL_LINE_STIPPLE );
+#endif
 	glDisable( GL_STENCIL_TEST );
 
+#ifndef OPENQ4_RENDERER_GLES_MODULE
 	glPolygonMode (GL_FRONT_AND_BACK, GL_FILL);
+#endif
 	glDepthMask( GL_TRUE );
 	glDepthFunc( GL_ALWAYS );
- 
+
+#ifndef OPENQ4_RENDERER_GLES_MODULE
 	glCullFace( GL_FRONT_AND_BACK );
 	glShadeModel( GL_SMOOTH );
+#else
+	// GLES_D3 owns culling per draw. Use a valid initial face rather than the
+	// compatibility-only FRONT_AND_BACK setup from the ARB renderer.
+	glCullFace( GL_FRONT );
+#endif
 
 	if ( r_useScissor.GetBool() ) {
 		glScissor( 0, 0, glConfig.vidWidth, glConfig.vidHeight );
 	}
 
+#ifdef OPENQ4_RENDERER_GLES_MODULE
+	// GLES_D3 uses explicit attributes, samplers and shader texgen. Do not touch
+	// fixed-function texture enables/texgen here; only establish a deterministic
+	// active unit for the shared image binding code.
+	if ( maxStateUnits > 0 ) {
+		glActiveTextureARB( GL_TEXTURE0_ARB );
+		glClientActiveTextureARB( GL_TEXTURE0_ARB );
+		backEnd.glState.currenttmu = 0;
+	}
+#else
 	for ( i = maxStateUnits - 1 ; i >= 0 ; i-- ) {
 		GL_SelectTexture( i );
 
@@ -134,6 +157,7 @@ void RB_SetDefaultGLState( void ) {
 			glDisable( GL_TEXTURE_CUBE_MAP_EXT );
 		}
 	}
+#endif
 }
 
 
@@ -242,6 +266,11 @@ void GL_TexEnv( int env ) {
 
 	tmu->texEnv = env;
 
+#ifdef OPENQ4_RENDERER_GLES_MODULE
+	// Programmable GLES_D3 stages encode texture combine behaviour in shaders.
+	// Retain the state shadow for shared code but issue no fixed-function call.
+	return;
+#else
 	switch ( env ) {
 	case GL_COMBINE_EXT:
 	case GL_MODULATE:
@@ -254,6 +283,7 @@ void GL_TexEnv( int env ) {
 		common->Error( "GL_TexEnv: invalid env '%d' passed\n", env );
 		break;
 	}
+#endif
 }
 
 /*
