@@ -202,8 +202,15 @@ static bool R_RenderGraphResources_FormatForType( const char *name, renderGraphR
 		return true;
 	case RENDER_GRAPH_RESOURCE_DEPTH_STENCIL:
 		internalFormat = GL_DEPTH24_STENCIL8;
+#if defined(VITA) || defined(__vita__)
+		// Vita's GLES_D3 path keeps depth/stencil in idRenderTexture/VitaGL
+		// renderbuffer descriptors. Graph handles retain metadata only.
+		format = GL_DEPTH_COMPONENT;
+		dataType = GL_UNSIGNED_BYTE;
+#else
 		format = GL_DEPTH_STENCIL;
 		dataType = GL_UNSIGNED_INT_24_8;
+#endif
 		attachment = GL_DEPTH_STENCIL_ATTACHMENT;
 		return true;
 	case RENDER_GRAPH_RESOURCE_BUFFER:
@@ -236,6 +243,11 @@ private:
 };
 
 static bool R_RenderGraphResources_CanUseGLObjects( const renderBackendCaps_t &caps, const renderFeatureSet_t &features ) {
+#if defined(VITA) || defined(__vita__)
+	(void)caps;
+	(void)features;
+	return false;
+#else
 	if ( !features.renderGraph || !caps.hasFBO || caps.maxTextureSize <= 0 ) {
 		return false;
 	}
@@ -246,6 +258,7 @@ static bool R_RenderGraphResources_CanUseGLObjects( const renderBackendCaps_t &c
 		return false;
 	}
 	return true;
+#endif
 }
 
 static bool R_RenderGraphResources_CanUseLowOverheadObjects( void ) {
@@ -502,7 +515,11 @@ static bool R_RenderGraphResources_InitHandleFromGraph( const idRenderGraph &gra
 	handle.graphResourceIndex = resourceIndex;
 	handle.width = R_RenderGraphResources_IsTextureResource( resource.type ) ? R_RenderGraphResources_FrameWidth( resource ) : 0;
 	handle.height = R_RenderGraphResources_IsTextureResource( resource.type ) ? R_RenderGraphResources_FrameHeight( resource ) : 0;
+#if defined(VITA) || defined(__vita__)
+	handle.samples = 1;
+#else
 	handle.samples = Max( 1, resource.samples );
+#endif
 	handle.imported = resource.imported;
 	handle.transient = resource.transient;
 	handle.presentable = resource.presentable;
@@ -512,7 +529,11 @@ static bool R_RenderGraphResources_InitHandleFromGraph( const idRenderGraph &gra
 	if ( !R_RenderGraphResources_FormatForType( handle.name, resource.type, handle.internalFormat, handle.format, handle.dataType, handle.attachment ) ) {
 		return false;
 	}
+#if defined(VITA) || defined(__vita__)
+	handle.target = GL_TEXTURE_2D;
+#else
 	handle.target = ( handle.samples > 1 ) ? GL_TEXTURE_2D_MULTISAMPLE : GL_TEXTURE_2D;
+#endif
 	handle.mipLevels = R_RenderGraphResources_ShouldAllocateMipChain( handle.name, handle.type, handle.samples )
 		? R_RenderGraphResources_MipLevelCount( handle.width, handle.height )
 		: 1;
@@ -560,6 +581,13 @@ static int R_RenderGraphResources_FindFreeAllocation( void ) {
 	return -1;
 }
 
+#if defined(VITA) || defined(__vita__)
+static bool R_RenderGraphResources_CreateTextureAndFramebufferDSA( renderGraphPhysicalAllocation_t &allocation, const renderGraphResourceHandle_t &handle ) {
+	(void)allocation;
+	(void)handle;
+	return false;
+}
+#else
 static bool R_RenderGraphResources_CreateTextureAndFramebufferDSA( renderGraphPhysicalAllocation_t &allocation, const renderGraphResourceHandle_t &handle ) {
 	allocation.texture = 0;
 	allocation.framebuffer = 0;
@@ -636,6 +664,15 @@ static bool R_RenderGraphResources_CreateTextureAndFramebufferDSA( renderGraphPh
 	return true;
 }
 
+#endif
+
+#if defined(VITA) || defined(__vita__)
+static bool R_RenderGraphResources_CreateTextureAndFramebufferClassic( renderGraphPhysicalAllocation_t &allocation, const renderGraphResourceHandle_t &handle ) {
+	(void)allocation;
+	(void)handle;
+	return false;
+}
+#else
 static bool R_RenderGraphResources_CreateTextureAndFramebufferClassic( renderGraphPhysicalAllocation_t &allocation, const renderGraphResourceHandle_t &handle ) {
 	allocation.texture = 0;
 	allocation.framebuffer = 0;
@@ -742,6 +779,8 @@ static bool R_RenderGraphResources_CreateTextureAndFramebufferClassic( renderGra
 	rg_renderGraphResourceStats.classicFramebufferAllocations++;
 	return true;
 }
+
+#endif
 
 static bool R_RenderGraphResources_CreateTextureAndFramebuffer( renderGraphPhysicalAllocation_t &allocation, const renderGraphResourceHandle_t &handle ) {
 	if ( R_RenderGraphResources_CanUseLowOverheadObjects() ) {
