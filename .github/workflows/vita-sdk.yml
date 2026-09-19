@@ -72,6 +72,7 @@ jobs:
             "${GITHUB_WORKSPACE}" \
             "${OPENQ4_GAMELIBS_REPO}" \
             "${GITHUB_WORKSPACE}/.tmp/gamelibs_stage"
+
       - name: Verify VitaSDK toolchain
         shell: bash
         run: |
@@ -86,7 +87,7 @@ jobs:
           arm-vita-eabi-g++ --version | head -n 1
           cmake --version | head -n 1
 
-      - name: Build pinned VitaGL without splashscreen
+      - name: Build pinned VitaGL in Vita3K-safe mode
         shell: bash
         run: |
           set -euo pipefail
@@ -96,7 +97,24 @@ jobs:
           git -C "${VITAGL_REPO}" fetch --depth 1 origin "${VITAGL_SHA}"
           git -C "${VITAGL_REPO}" checkout --detach FETCH_HEAD
           test "$(git -C "${VITAGL_REPO}" rev-parse HEAD)" = "${VITAGL_SHA}"
-          make -C "${VITAGL_REPO}" -j2 NO_SPLASHSCREEN=1 HAVE_VITA3K_SUPPORT=1
+
+          # VitaGL removed the historical HAVE_VITA3K_SUPPORT init path in June
+          # 2026, but the flag is still accepted by its Makefile. Re-apply only
+          # that compatibility init behavior to the pinned current VitaGL:
+          # shark_init_simple + normal sceGxmInitialize + default GXM flags.
+          git -C "${VITAGL_REPO}" apply --check "${GITHUB_WORKSPACE}/tools/vita/vitagl-vita3k-compat.patch"
+          git -C "${VITAGL_REPO}" apply "${GITHUB_WORKSPACE}/tools/vita/vitagl-vita3k-compat.patch"
+          grep -q "shark_init_simple" "${VITAGL_REPO}/source/gxm.c"
+
+          # The custom heap avoids sceClibMspace for GPU pools, and the
+          # single-threaded collector removes a bring-up race from the emulator.
+          make -C "${VITAGL_REPO}" -j2 \
+            NO_SPLASHSCREEN=1 \
+            HAVE_VITA3K_SUPPORT=1 \
+            HAVE_CUSTOM_HEAP=1 \
+            SINGLE_THREADED_GC=1 \
+            LOG_ERRORS=1
+
           cp "${VITAGL_REPO}/libvitaGL.a" "${VITASDK}/arm-vita-eabi/lib/libvitaGL.a"
           cp "${VITAGL_REPO}/source/vitaGL.h" "${VITASDK}/arm-vita-eabi/include/vitaGL.h"
           arm-vita-eabi-ar t "${VITASDK}/arm-vita-eabi/lib/libvitaGL.a" | head
@@ -126,6 +144,7 @@ jobs:
             -Dbuild_renderer_gl=false \
             -Dbuild_renderer_vk=false \
             -Duse_pch=false
+
       - name: Configure C++20 Vita smoke target
         shell: bash
         run: |
@@ -161,7 +180,10 @@ jobs:
           test -f build/vita-sdk-smoke/openq4_vita_prerender.self
           test -f build/vita-sdk-smoke/Vita-OpenQ4.vpk
           arm-vita-eabi-readelf -h build/vita-sdk-smoke/openq4_vita_prerender
-          ls -lh             build/vita-sdk-smoke/openq4_vita_prerender             build/vita-sdk-smoke/openq4_vita_prerender.self             build/vita-sdk-smoke/Vita-OpenQ4.vpk
+          ls -lh \
+            build/vita-sdk-smoke/openq4_vita_prerender \
+            build/vita-sdk-smoke/openq4_vita_prerender.self \
+            build/vita-sdk-smoke/Vita-OpenQ4.vpk
 
       - name: Upload Vita pre-render artifacts
         uses: actions/upload-artifact@v4

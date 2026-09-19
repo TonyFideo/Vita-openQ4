@@ -2,8 +2,9 @@
 
 #include <vitaGL.h>
 
-#include <psp2/kernel/clib.h>
 #include <psp2/io/fcntl.h>
+#include <psp2/kernel/clib.h>
+#include <psp2/kernel/sysmem.h>
 
 #include <stdint.h>
 
@@ -36,6 +37,19 @@ static void RendererLog( const char *text ) {
 	}
 	sceIoWrite( fd, "\n", 1 );
 	sceIoClose( fd );
+}
+
+static void RendererLogVitaGLMemory( const char *label ) {
+	char line[192];
+	sceClibSnprintf(
+		line,
+		sizeof( line ),
+		"renderer.vitagl.mem.%s ram_free_kb=%llu vram_free_kb=%llu phycont_free_kb=%llu",
+		label != NULL ? label : "unknown",
+		static_cast<unsigned long long>( vglMemFree( VGL_MEM_RAM ) >> 10 ),
+		static_cast<unsigned long long>( vglMemFree( VGL_MEM_VRAM ) >> 10 ),
+		static_cast<unsigned long long>( vglMemFree( VGL_MEM_PHYCONT ) >> 10 ) );
+	RendererLog( line );
 }
 
 static bool CheckGl( const char *stage ) {
@@ -271,14 +285,34 @@ static void DrawScissorProbe( int x, int y ) {
 bool VitaRendererSmoke_Init( void ) {
 	RendererLog( "renderer.stage=vitagl-init-begin" );
 
-	// vitaGL's return value here reports whether the requested resolution had to
-	// fall back. GL_FALSE means the requested size was accepted; it is not an
-	// initialization failure.
-	const GLboolean resolutionFallback = vglInitExtended(
+	// Vita3K reserves guest CDRAM at 0x60000000. The failing traces die while
+	// vitaGL creates its CDRAM heap, before vglInit* returns. For the emulator
+	// bring-up path, reserve more CDRAM than a retail Vita exposes so vitaGL
+	// deliberately creates no VGL_MEM_VRAM pool. GPU-visible allocations then
+	// fall back to normal/phycont RAM. This trades performance for a deterministic
+	// renderer bootstrap and can be relaxed once real-hardware validation starts.
+	const int kRamReserveBytes = 10 * 1024 * 1024;
+	const int kDisableCdramThresholdBytes = 128 * 1024 * 1024;
+
+	// Match the proven idTech 4 Vita configuration for the transient command
+	// pools while keeping MSAA disabled for the smoke renderer.
+	vglSetCircularPoolSize( 3 * 1024 * 1024 );
+	vglSetParamBufferSize( 14 * 1024 * 1024 );
+
+	RendererLog( "renderer.vitagl.profile=vita3k-safe-no-cdram" );
+	RendererLog( "renderer.vitagl.gc=single-threaded" );
+	RendererLog( "renderer.vitagl.heap=custom" );
+	RendererLog( "renderer.vitagl.shader_compiler=compat-simple" );
+
+	// The return value reports resolution fallback, not success/failure.
+	const GLboolean resolutionFallback = vglInitWithCustomThreshold(
 		0,
 		960,
 		544,
-		8 * 1024 * 1024,
+		kRamReserveBytes,
+		kDisableCdramThresholdBytes,
+		0,
+		SCE_KERNEL_MAX_MAIN_CDIALOG_MEM_SIZE,
 		SCE_GXM_MULTISAMPLE_NONE );
 
 	RendererLog(
@@ -286,6 +320,7 @@ bool VitaRendererSmoke_Init( void ) {
 			? "renderer.vitagl.resolution_fallback=1"
 			: "renderer.vitagl.resolution_fallback=0" );
 	RendererLog( "renderer.stage=vitagl-context-created" );
+	RendererLogVitaGLMemory( "after-init" );
 
 	vglWaitVblankStart( GL_TRUE );
 
