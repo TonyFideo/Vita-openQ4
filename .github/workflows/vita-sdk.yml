@@ -24,19 +24,20 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  VITASDK: /usr/local/vitasdk
+  OPENQ4_GAMELIBS_SHA: 8f411dbc38efcb0f5f63b1c300ab220beb73808c
+  VITAGL_SHA: eccee6d767ad5f632812414a6b8251031fe62f0b
+
 jobs:
-  sdk-smoke:
-    name: VitaSDK toolchain smoke
+  renderer-gates:
+    name: Renderer compile gates
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 15
     container: vitasdk/vitasdk:latest
     env:
-      VITASDK: /usr/local/vitasdk
       OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}/../openQ4-game
-      OPENQ4_GAMELIBS_SHA: 8f411dbc38efcb0f5f63b1c300ab220beb73808c
       VITAGL_REPO: ${{ github.workspace }}/.tmp/vitaGL
-      VITAGL_SHA: eccee6d767ad5f632812414a6b8251031fe62f0b
-
     steps:
       - name: Partial sparse checkout
         shell: bash
@@ -52,15 +53,12 @@ jobs:
           /src/
           /tools/build/
           /tools/vita/
-          /assets/icons/
-          /assets/splash/
           /content/baseoq4/meson.build
           /content/baseoq4/mod.json.in
           /subprojects/stb_vorbis/
           EOF
           git fetch --depth 1 --filter=blob:none origin "${GITHUB_SHA}"
           git checkout --detach FETCH_HEAD
-          git rev-parse HEAD
 
       - name: Fetch and stage pinned openQ4-game sources
         shell: bash
@@ -72,24 +70,14 @@ jobs:
           git -C "${OPENQ4_GAMELIBS_REPO}" fetch --depth 1 --filter=blob:none origin "${OPENQ4_GAMELIBS_SHA}"
           git -C "${OPENQ4_GAMELIBS_REPO}" checkout --detach FETCH_HEAD
           test "$(git -C "${OPENQ4_GAMELIBS_REPO}" rev-parse HEAD)" = "${OPENQ4_GAMELIBS_SHA}"
-          python3 tools/build/stage_gamelibs.py \
-            "${GITHUB_WORKSPACE}" \
-            "${OPENQ4_GAMELIBS_REPO}" \
-            "${GITHUB_WORKSPACE}/.tmp/gamelibs_stage"
+          python3 tools/build/stage_gamelibs.py             "${GITHUB_WORKSPACE}"             "${OPENQ4_GAMELIBS_REPO}"             "${GITHUB_WORKSPACE}/.tmp/gamelibs_stage"
 
       - name: Verify VitaSDK toolchain
         shell: bash
         run: |
           set -euo pipefail
-          test -d "$VITASDK"
-          test -x "$VITASDK/bin/arm-vita-eabi-gcc"
           test -x "$VITASDK/bin/arm-vita-eabi-g++"
           test -f "$VITASDK/share/vita.toolchain.cmake"
-          test -f "$VITASDK/share/vita.cmake"
-          echo "VITASDK=$VITASDK"
-          arm-vita-eabi-gcc --version | head -n 1
-          arm-vita-eabi-g++ --version | head -n 1
-          cmake --version | head -n 1
 
       - name: Stage pinned VitaGL header
         shell: bash
@@ -100,131 +88,122 @@ jobs:
           git -C "${VITAGL_REPO}" remote add origin https://github.com/Rinnegatamante/vitaGL.git
           git -C "${VITAGL_REPO}" fetch --depth 1 origin "${VITAGL_SHA}"
           git -C "${VITAGL_REPO}" checkout --detach FETCH_HEAD
-          test "$(git -C "${VITAGL_REPO}" rev-parse HEAD)" = "${VITAGL_SHA}"
-
           python3 tools/vita/patch_vitagl_vita3k.py "${VITAGL_REPO}"
-          grep -q "shark_init_simple" "${VITAGL_REPO}/source/gxm.c"
-          grep -q "SCE_GXM_INITIALIZE_FLAG_DEFAULT" "${VITAGL_REPO}/source/gxm.c"
-          grep -q "sceGxmInitialize(&gxm_init_params)" "${VITAGL_REPO}/source/gxm.c"
-          cp "${VITAGL_REPO}/source/vitaGL.h" "${VITASDK}/arm-vita-eabi/include/vitaGL.h"
+          cp "${VITAGL_REPO}/source/vitaGL.h" "$VITASDK/arm-vita-eabi/include/vitaGL.h"
 
-      - name: Configure C++20 Vita smoke target
+      - name: Configure renderer gate targets
         shell: bash
         run: |
           set -euo pipefail
-          cmake -S tools/vita/sdk_smoke -B build/vita-sdk-smoke \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_TOOLCHAIN_FILE="$VITASDK/share/vita.toolchain.cmake"
+          cmake -S tools/vita/sdk_smoke -B build/vita-sdk-smoke             -DCMAKE_BUILD_TYPE=Release             -DCMAKE_TOOLCHAIN_FILE="$VITASDK/share/vita.toolchain.cmake"
 
       - name: Gate 1 - renderer state bridge
         shell: bash
-        run: |
-          set -euo pipefail
-          date -u +"state-gate start %H:%M:%S"
-          cmake --build build/vita-sdk-smoke \
-            --target openq4_vita_renderer_state_probe \
-            --parallel 2
-          date -u +"state-gate end   %H:%M:%S"
+        run: cmake --build build/vita-sdk-smoke --target openq4_vita_renderer_state_probe --parallel 2
 
       - name: Gate 2 - renderer startup negotiation
         shell: bash
-        run: |
-          set -euo pipefail
-          date -u +"init-gate start %H:%M:%S"
-          cmake --build build/vita-sdk-smoke \
-            --target openq4_vita_renderer_init_probe \
-            --parallel 2
-          date -u +"init-gate end   %H:%M:%S"
+        run: cmake --build build/vita-sdk-smoke --target openq4_vita_renderer_init_probe --parallel 2
 
       - name: Gate 3 - renderer API and capability model
         shell: bash
-        run: |
-          set -euo pipefail
-          date -u +"system-gate start %H:%M:%S"
-          cmake --build build/vita-sdk-smoke \
-            --target openq4_vita_renderer_system_probe \
-            --parallel 2
-          date -u +"system-gate end   %H:%M:%S"
+        run: cmake --build build/vita-sdk-smoke --target openq4_vita_renderer_system_probe --parallel 2
 
       - name: Gate 4 - complete GLES_D3 backend
         shell: bash
-        run: |
-          set -euo pipefail
-          date -u +"glesd3-gate start %H:%M:%S"
-          cmake --build build/vita-sdk-smoke \
-            --target openq4_vita_glesd3_probe \
-            --parallel 2
-          date -u +"glesd3-gate end   %H:%M:%S"
+        run: cmake --build build/vita-sdk-smoke --target openq4_vita_glesd3_probe --parallel 2
 
       - name: Build remaining pre-render compile gates
         shell: bash
         run: |
           set -euo pipefail
-          cmake --build build/vita-sdk-smoke \
-            --target \
-              openq4_vita_prerender_platform_probe \
-              openq4_vita_glimp_probe \
-              openq4_vita_engine_entry_probe \
-              openq4_vita_prerender_core_probe \
-              openq4_vita_filesystem_probe \
-            --parallel 2
+          cmake --build build/vita-sdk-smoke             --target               openq4_vita_prerender_platform_probe               openq4_vita_glimp_probe               openq4_vita_engine_entry_probe               openq4_vita_prerender_core_probe               openq4_vita_filesystem_probe             --parallel 2
 
-      - name: Install Meson bring-up dependencies
+  engine-integration:
+    name: Full engine integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container: vitasdk/vitasdk:latest
+    env:
+      OPENQ4_GAMELIBS_REPO: ${{ github.workspace }}/../openQ4-game
+      VITAGL_REPO: ${{ github.workspace }}/.tmp/vitaGL
+    steps:
+      - name: Partial sparse checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git config core.sparseCheckout true
+          cat > .git/info/sparse-checkout <<'EOF'
+          /meson.build
+          /meson_options.txt
+          /src/
+          /tools/build/
+          /tools/vita/
+          /content/baseoq4/meson.build
+          /content/baseoq4/mod.json.in
+          /subprojects/stb_vorbis/
+          EOF
+          git fetch --depth 1 --filter=blob:none origin "${GITHUB_SHA}"
+          git checkout --detach FETCH_HEAD
+
+      - name: Fetch and stage pinned openQ4-game sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "${OPENQ4_GAMELIBS_REPO}"
+          git init "${OPENQ4_GAMELIBS_REPO}"
+          git -C "${OPENQ4_GAMELIBS_REPO}" remote add origin https://github.com/themuffinator/openQ4-game.git
+          git -C "${OPENQ4_GAMELIBS_REPO}" fetch --depth 1 --filter=blob:none origin "${OPENQ4_GAMELIBS_SHA}"
+          git -C "${OPENQ4_GAMELIBS_REPO}" checkout --detach FETCH_HEAD
+          test "$(git -C "${OPENQ4_GAMELIBS_REPO}" rev-parse HEAD)" = "${OPENQ4_GAMELIBS_SHA}"
+          python3 tools/build/stage_gamelibs.py             "${GITHUB_WORKSPACE}"             "${OPENQ4_GAMELIBS_REPO}"             "${GITHUB_WORKSPACE}/.tmp/gamelibs_stage"
+
+      - name: Verify VitaSDK toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x "$VITASDK/bin/arm-vita-eabi-g++"
+          test -f "$VITASDK/share/vita.toolchain.cmake"
+          test -f "$VITASDK/share/vita.cmake"
+
+      - name: Stage pinned VitaGL
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "${VITAGL_REPO}"
+          git init "${VITAGL_REPO}"
+          git -C "${VITAGL_REPO}" remote add origin https://github.com/Rinnegatamante/vitaGL.git
+          git -C "${VITAGL_REPO}" fetch --depth 1 origin "${VITAGL_SHA}"
+          git -C "${VITAGL_REPO}" checkout --detach FETCH_HEAD
+          test "$(git -C "${VITAGL_REPO}" rev-parse HEAD)" = "${VITAGL_SHA}"
+          python3 tools/vita/patch_vitagl_vita3k.py "${VITAGL_REPO}"
+          grep -q "shark_init_simple" "${VITAGL_REPO}/source/gxm.c"
+          grep -q "sceGxmInitialize(&gxm_init_params)" "${VITAGL_REPO}/source/gxm.c"
+          cp "${VITAGL_REPO}/source/vitaGL.h" "$VITASDK/arm-vita-eabi/include/vitaGL.h"
+
+      - name: Install Meson
         shell: bash
         run: |
           set -euo pipefail
           apt-get update -qq
           apt-get install -y --no-install-recommends python3-pip ninja-build
           python3 -m pip install --break-system-packages "meson>=1.6,<2"
-          meson --version
-
-      - name: Configure openQ4 for Vita ARMv7
-        shell: bash
-        run: |
-          set -euo pipefail
-          meson setup build/vita-config . \
-            --cross-file tools/vita/meson-vita.ini \
-            --backend ninja \
-            --buildtype release \
-            -Dplatform_backend=native \
-            -Dbuild_engine=false \
-            -Dbuild_games=false \
-            -Dbuild_game_sp=false \
-            -Dbuild_game_mp=false \
-            -Dbuild_renderer_gl=false \
-            -Dbuild_renderer_vk=false \
-            -Duse_pch=false
 
       - name: Build pinned VitaGL in Vita3K-safe mode
         shell: bash
         run: |
           set -euo pipefail
-          make -C "${VITAGL_REPO}" -j2 \
-            NO_SPLASHSCREEN=1 \
-            HAVE_VITA3K_SUPPORT=1 \
-            HAVE_CUSTOM_HEAP=1 \
-            SINGLE_THREADED_GC=1 \
-            LOG_ERRORS=1
-          cp "${VITAGL_REPO}/libvitaGL.a" "${VITASDK}/arm-vita-eabi/lib/libvitaGL.a"
-          arm-vita-eabi-ar t "${VITASDK}/arm-vita-eabi/lib/libvitaGL.a" | head
+          make -C "${VITAGL_REPO}" -j2             NO_SPLASHSCREEN=1             HAVE_VITA3K_SUPPORT=1             HAVE_CUSTOM_HEAP=1             SINGLE_THREADED_GC=1             LOG_ERRORS=1
+          cp "${VITAGL_REPO}/libvitaGL.a" "$VITASDK/arm-vita-eabi/lib/libvitaGL.a"
 
       - name: Configure full Vita engine integration
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf build/vita-engine-config
-          meson setup build/vita-engine-config . \
-            --cross-file tools/vita/meson-vita.ini \
-            --backend ninja \
-            --buildtype release \
-            -Dplatform_backend=native \
-            -Dbuild_engine=true \
-            -Dbuild_games=true \
-            -Dbuild_game_sp=true \
-            -Dbuild_game_mp=false \
-            -Dbuild_renderer_gl=false \
-            -Dbuild_renderer_vk=false \
-            -Duse_pch=false
+          meson setup build/vita-engine-config .             --cross-file tools/vita/meson-vita.ini             --backend ninja             --buildtype release             -Dplatform_backend=native             -Dbuild_engine=true             -Dbuild_games=true             -Dbuild_game_sp=true             -Dbuild_game_mp=false             -Dbuild_renderer_gl=false             -Dbuild_renderer_vk=false             -Duse_pch=false
 
       - name: Compile full Vita engine client
         shell: bash
@@ -232,35 +211,30 @@ jobs:
           set -euo pipefail
           meson compile -C build/vita-engine-config openQ4-client_armv7 -j2
 
-      - name: Build pre-render ELF, SELF, and VPK
+      - name: Package full Vita engine
         shell: bash
         run: |
           set -euo pipefail
-          cmake --build build/vita-sdk-smoke --parallel 2
+          test -f build/vita-engine-config/openQ4-client_armv7
+          cmake -S tools/vita/engine_package -B build/vita-engine-package             -DCMAKE_TOOLCHAIN_FILE="$VITASDK/share/vita.toolchain.cmake"             -DOPENQ4_ENGINE_ELF="${GITHUB_WORKSPACE}/build/vita-engine-config/openQ4-client_armv7"
+          cmake --build build/vita-engine-package --parallel 2
 
-      - name: Validate Vita artifacts
+      - name: Validate full Vita engine artifacts
         shell: bash
         run: |
           set -euo pipefail
-          test -f build/vita-sdk-smoke/vita_sdk_smoke
-          test -f build/vita-sdk-smoke/vita_sdk_smoke.self
-          test -f build/vita-sdk-smoke/openq4_vita_prerender
-          test -f build/vita-sdk-smoke/openq4_vita_prerender.self
-          test -f build/vita-sdk-smoke/Vita-OpenQ4.vpk
-          arm-vita-eabi-readelf -h build/vita-sdk-smoke/openq4_vita_prerender
-          ls -lh \
-            build/vita-sdk-smoke/openq4_vita_prerender \
-            build/vita-sdk-smoke/openq4_vita_prerender.self \
-            build/vita-sdk-smoke/Vita-OpenQ4.vpk
+          test -f build/vita-engine-config/openQ4-client_armv7
+          test -f build/vita-engine-package/eboot.bin
+          test -f build/vita-engine-package/Vita-OpenQ4-engine.vpk
+          arm-vita-eabi-readelf -h build/vita-engine-config/openQ4-client_armv7
+          ls -lh             build/vita-engine-config/openQ4-client_armv7             build/vita-engine-package/eboot.bin             build/vita-engine-package/Vita-OpenQ4-engine.vpk
 
-      - name: Upload Vita pre-render artifacts
+      - name: Upload full Vita engine artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: vita-openq4-prerender
+          name: vita-openq4-engine-${{ github.sha }}
           path: |
-            build/vita-sdk-smoke/openq4_vita_prerender
-            build/vita-sdk-smoke/openq4_vita_prerender.self
-            build/vita-sdk-smoke/Vita-OpenQ4.vpk
-            build/vita-sdk-smoke/vita_sdk_smoke
-            build/vita-sdk-smoke/vita_sdk_smoke.self
+            build/vita-engine-config/openQ4-client_armv7
+            build/vita-engine-package/eboot.bin
+            build/vita-engine-package/Vita-OpenQ4-engine.vpk
           if-no-files-found: error

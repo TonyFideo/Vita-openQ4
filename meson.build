@@ -1929,7 +1929,7 @@ if build_engine or (build_games and (build_game_sp or build_game_mp))
   subdir('content/baseoq4')
 endif
 
-if build_games and build_game_sp
+if build_games and build_game_sp and host_system != 'vita'
   custom_target(
     'openq4_stage_game_sp_direct_run',
     input: game_sp_module_target,
