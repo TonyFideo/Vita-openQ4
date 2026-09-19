@@ -1046,6 +1046,7 @@ if build_engine
       cc.find_library('SceKernelDmacMgr_stub', required: true),
       cc.find_library('SceCtrl_stub', required: true),
       cc.find_library('taihen_stub', required: true),
+      cc.find_library('pthread', required: true),
     ]
   else
     deps = [glew_dep, openal_dep, stb_vorbis_dep]

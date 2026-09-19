@@ -579,4 +579,19 @@ void RB_GLESD3_DrawView( void ) {
 	backEnd.currentScissor.y2 = glConfig.vidHeight - 1;
 }
 
+
+/*
+====================
+RB_UnderwaterViewAvailable
+
+The legacy desktop path implements the underwater post-process in
+draw_common.cpp, which GLES_D3 intentionally replaces on Vita. Until that
+fullscreen pass is ported, report it unavailable so game code takes its
+existing flat-wash fallback rather than calling a missing backend.
+====================
+*/
+bool RB_UnderwaterViewAvailable( void ) {
+	return false;
+}
+
 #endif /* OPENQ4_RENDERER_GLES_MODULE */

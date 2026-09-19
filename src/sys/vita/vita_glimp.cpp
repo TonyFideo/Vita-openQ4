@@ -2,6 +2,7 @@
 #pragma hdrstop
 
 #include "../../renderer/tr_local.h"
+#include "../../renderer/RenderModuleAPI.h"
 #include "vita_public.h"
 
 #include <vitaGL.h>
@@ -186,4 +187,18 @@ void GLimp_EnableLogging( bool enable ) {
 
 void *GLimp_ExtensionPointer( const char *name ) {
 	return name != NULL ? vglGetProcAddress( name ) : NULL;
+}
+
+
+/*
+===================
+Sys_GetRenderWindowServices
+
+Vita uses a single native VitaGL display and has no detachable desktop window
+service table. This matches the native Win32/Linux/macOS backends: the static
+renderer receives NULL and keeps ownership in the platform GLimp layer.
+===================
+*/
+const renderWindowServices_t *Sys_GetRenderWindowServices( void ) {
+	return NULL;
 }
