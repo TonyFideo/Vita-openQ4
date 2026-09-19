@@ -49,6 +49,8 @@ static const char *R_GetBackEndRendererName( backEndName_t renderer ) {
 	switch ( renderer ) {
 		case BE_ARB2:
 			return "ARB2";
+		case BE_GLES_D3:
+			return "GLESD3";
 		default:
 			return "BAD";
 	}
@@ -86,6 +88,12 @@ static backEndName_t R_RequestBackEndRenderer( const char *rendererName ) {
 		return glConfig.allowARB2Path ? BE_ARB2 : BE_BAD;
 	}
 
+#ifdef OPENQ4_RENDERER_GLES_MODULE
+	if ( idStr::Icmp( rendererName, "glesd3" ) == 0 ) {
+		return BE_GLES_D3;
+	}
+#endif
+
 	return BE_BAD;
 }
 
@@ -99,7 +107,14 @@ static backEndName_t R_PickBestBackEndRenderer() {
 		return BE_ARB2;
 	}
 
+#ifdef OPENQ4_RENDERER_GLES_MODULE
+	// Vita has no ARB assembly path. Once the GLES_D3 renderer is compiled into
+	// the executable it is the native fallback instead of failing renderer
+	// selection before the first view is submitted.
+	return BE_GLES_D3;
+#else
 	return BE_BAD;
+#endif
 }
 
 /*
@@ -1254,6 +1269,11 @@ void idRenderSystemLocal::SetBackEndRenderer() {
 		if ( !glConfig.preferSimpleLighting ) {
 			r_lightDetailLevel.SetFloat( 0.0f );
 		}
+		break;
+	case BE_GLES_D3:
+		common->Printf( "using Doom 3-shaped VitaGL renderSystem (glesd3)\n" );
+		backEndRendererHasVertexPrograms = false;
+		backEndRendererMaxLight = 999;
 		break;
 	default:
 		common->FatalError( "SetbackEndRenderer: bad back end" );
