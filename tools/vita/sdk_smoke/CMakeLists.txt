@@ -245,6 +245,40 @@ target_compile_options(openq4_vita_glesd3_probe PRIVATE
 
 target_compile_features(openq4_vita_glesd3_probe PRIVATE cxx_std_20)
 
+
+# Front-end/backend seam compile gate. These are the shared idTech 4 files that
+# choose BE_GLES_D3 and execute render commands before gles_Backend.cpp takes a
+# view. Keeping this separate makes renderer-integration errors visible before
+# attempting a full engine link.
+add_library(openq4_vita_renderer_frontend_probe STATIC
+  ${OPENQ4_ROOT}/src/renderer/RenderSystem.cpp
+  ${OPENQ4_ROOT}/src/renderer/RenderSystem_init.cpp
+  ${OPENQ4_ROOT}/src/renderer/tr_backend.cpp
+)
+
+target_include_directories(openq4_vita_renderer_frontend_probe PRIVATE
+  ${CMAKE_CURRENT_BINARY_DIR}
+  ${OPENQ4_ROOT}
+  ${OPENQ4_ROOT}/src
+  ${OPENQ4_ROOT}/.tmp/gamelibs_stage/src/game
+  ${OPENQ4_ROOT}/.tmp/gamelibs_stage/src/mpgame
+  $ENV{VITASDK}/arm-vita-eabi/include
+)
+
+target_compile_options(openq4_vita_renderer_frontend_probe PRIVATE
+  -fsigned-char
+  -DVITA=1
+  -D__DOOM_DLL__
+  -DUSE_OPENAL
+  -DOPENQ4_RENDERER_GLES_MODULE=1
+  -fno-strict-aliasing
+  -ffp-contract=off
+  -include
+  ${OPENQ4_ROOT}/src/idlib/precompiled.h
+)
+
+target_compile_features(openq4_vita_renderer_frontend_probe PRIVATE cxx_std_20)
+
 add_library(openq4_vita_filesystem_probe STATIC
   ${OPENQ4_ROOT}/src/framework/File.cpp
   ${OPENQ4_ROOT}/src/framework/FileSystem.cpp
