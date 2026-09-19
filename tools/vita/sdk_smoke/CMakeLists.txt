@@ -209,6 +209,7 @@ file(GLOB OPENQ4_VITA_GLESD3_SHADER_SOURCES CONFIGURE_DEPENDS
 )
 
 add_library(openq4_vita_glesd3_probe STATIC
+  ${OPENQ4_ROOT}/src/renderer/GLES/gles_Backend.cpp
   ${OPENQ4_ROOT}/src/renderer/GLES/vita_glesd3_shader_compat.cpp
   ${OPENQ4_ROOT}/src/renderer/GLES_D3/gles_d3_backend.cpp
   ${OPENQ4_ROOT}/src/renderer/GLES_D3/gles_draw.cpp
