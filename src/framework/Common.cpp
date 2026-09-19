@@ -472,6 +472,9 @@ unsigned int	com_msgID = -1;
 #ifdef __DOOM_DLL__
 idGame *		game = NULL;
 idGameEdit *	gameEdit = NULL;
+#if defined(VITA) || defined(__vita__)
+extern "C" gameExport_t *GetGameAPI( gameImport_t *import );
+#endif
 #endif
 
 class rvBSEManagerDisabled : public rvBSEManager {
@@ -6299,17 +6302,33 @@ void idCommonLocal::LoadGameDLL( void ) {
 	openQ4_NormalizeGameTypeForModule( gameModuleBaseName );
 
 #ifdef __DOOM_DLL__
-	char			dllPath[ MAX_OSPATH ];
-	char			preferredGameModuleBinary[ MAX_OSPATH ];
+	char			dllPath[ MAX_OSPATH ] = {};
+	char			preferredGameModuleBinary[ MAX_OSPATH ] = {};
 #if defined( MACOS_X ) || defined( __APPLE__ )
 	char			universalGameModuleBinary[ MAX_OSPATH ];
 #endif
-	const char *	selectedModuleBinary;
+	const char *	selectedModuleBinary = NULL;
 
 	gameImport_t	gameImport;
 	gameExport_t	gameExport;
-	GetGameAPI_t	GetGameAPI;
+	GetGameAPI_t	GetGameAPIEntry = NULL;
 
+#if defined(VITA) || defined(__vita__)
+	if ( idStr::Icmp( gameModuleBaseName, "game_sp" ) != 0 ) {
+		common->FatalError( "Vita bring-up currently supports only the statically linked single-player game module" );
+		return;
+	}
+	Com_SetGameModuleLoadPhase( GAME_MODULE_PHASE_LOCATE );
+	selectedModuleBinary = "builtin:game_sp";
+	idStr::Copynz( preferredGameModuleBinary, selectedModuleBinary, sizeof( preferredGameModuleBinary ) );
+	common->Printf( "Selected Vita static game module: logical='%s' binary='%s'\n",
+			gameModuleBaseName, selectedModuleBinary );
+	// Capture before GetGameAPI registers game cvars, preserving the same
+	// completion/unload accounting contract as a dynamic game module.
+	gameModuleCompletions.Capture();
+	Com_SetGameModuleLoadPhase( GAME_MODULE_PHASE_RESOLVE_ENTRY_POINT );
+	GetGameAPIEntry = &::GetGameAPI;
+#else
 	Com_SetGameModuleLoadPhase( GAME_MODULE_PHASE_LOCATE );
 
 	openQ4_BuildGameModuleBinaryName( gameModuleBaseName, preferredGameModuleBinary );
@@ -6357,13 +6376,14 @@ void idCommonLocal::LoadGameDLL( void ) {
 	gameModuleCompletions.Capture();
 
 	Com_SetGameModuleLoadPhase( GAME_MODULE_PHASE_RESOLVE_ENTRY_POINT );
-	GetGameAPI = (GetGameAPI_t) Sys_DLL_GetProcAddress( gameDLL, "GetGameAPI" );
-	if ( !GetGameAPI ) {
+	GetGameAPIEntry = (GetGameAPI_t) Sys_DLL_GetProcAddress( gameDLL, "GetGameAPI" );
+	if ( !GetGameAPIEntry ) {
 		Com_UnloadGameModuleBinary( gameDLL, gameModuleCompletions );
 		gameDLL = NULL;
 		common->FatalError( "couldn't find game DLL API" );
 		return;
 	}
+#endif
 
 	gameImport.version					= GAME_API_VERSION;
 	gameImport.sys						= ::sys;
@@ -6382,10 +6402,12 @@ void idCommonLocal::LoadGameDLL( void ) {
 	gameImport.bse						= ::bse;
 
 	Com_SetGameModuleLoadPhase( GAME_MODULE_PHASE_CALL_GET_GAME_API );
-	const gameExport_t *gameExportPtr = GetGameAPI( &gameImport );
+	const gameExport_t *gameExportPtr = GetGameAPIEntry( &gameImport );
 	if ( gameExportPtr == NULL ) {
+#if !defined(VITA) && !defined(__vita__)
 		Com_UnloadGameModuleBinary( gameDLL, gameModuleCompletions );
 		gameDLL = NULL;
+#endif
 		common->FatalError(
 			"game module '%s' returned no export table from GetGameAPI",
 			selectedModuleBinary );
@@ -6395,8 +6417,10 @@ void idCommonLocal::LoadGameDLL( void ) {
 
 	Com_SetGameModuleLoadPhase( GAME_MODULE_PHASE_VERIFY_API_VERSION );
 	if ( gameExport.version != GAME_API_VERSION ) {
+#if !defined(VITA) && !defined(__vita__)
 		Com_UnloadGameModuleBinary( gameDLL, gameModuleCompletions );
 		gameDLL = NULL;
+#endif
 		common->FatalError( "wrong game DLL API version" );
 		return;
 	}
