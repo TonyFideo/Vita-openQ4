@@ -1,14 +1,23 @@
 #include "vita_glesd3_shader_compat.h"
 
-#if defined(VITA) || defined(__vita__)
-
 #include <cstring>
+#include <vector>
 
 namespace {
+
+static const unsigned int VITA_GL_VERTEX_SHADER = 0x8B31u;
+static const unsigned int VITA_GL_FRAGMENT_SHADER = 0x8B30u;
 
 static bool StartsWith( const std::string &s, size_t pos, const char *prefix ) {
 	const size_t length = std::strlen( prefix );
 	return pos + length <= s.size() && s.compare( pos, length, prefix ) == 0;
+}
+
+static bool IsIdentifierChar( char c ) {
+	return ( c >= 'a' && c <= 'z' ) ||
+		( c >= 'A' && c <= 'Z' ) ||
+		( c >= '0' && c <= '9' ) ||
+		c == '_';
 }
 
 static void ReplaceAll( std::string &text, const std::string &from, const std::string &to ) {
@@ -22,9 +31,64 @@ static void ReplaceAll( std::string &text, const std::string &from, const std::s
 	}
 }
 
+static void CollectSamplerNames( const std::string &source, const char *type, std::vector<std::string> &names ) {
+	const std::string prefix = std::string( "uniform " ) + type;
+	size_t pos = 0;
+	while ( ( pos = source.find( prefix, pos ) ) != std::string::npos ) {
+		size_t nameStart = pos + prefix.size();
+		while ( nameStart < source.size() && ( source[nameStart] == ' ' || source[nameStart] == '\t' ) ) {
+			++nameStart;
+		}
+		size_t nameEnd = nameStart;
+		while ( nameEnd < source.size() && IsIdentifierChar( source[nameEnd] ) ) {
+			++nameEnd;
+		}
+		if ( nameEnd > nameStart ) {
+			names.push_back( source.substr( nameStart, nameEnd - nameStart ) );
+		}
+		pos = nameEnd;
+	}
 }
 
-std::string Vita_GLESD3_NormalizeShaderSource( const char *source, GLenum stage ) {
+static bool ContainsSampler( const std::vector<std::string> &names, const std::string &name ) {
+	for ( size_t i = 0; i < names.size(); ++i ) {
+		if ( names[i] == name ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static void RewriteTextureCalls( std::string &source ) {
+	std::vector<std::string> cubeSamplers;
+	CollectSamplerNames( source, "samplerCube", cubeSamplers );
+
+	// VitaGL's translator exposes the GLSL 1.x sampling spellings.
+	ReplaceAll( source, "textureProj(", "texture2DProj(" );
+
+	size_t pos = 0;
+	while ( ( pos = source.find( "texture(", pos ) ) != std::string::npos ) {
+		size_t argStart = pos + 8;
+		while ( argStart < source.size() &&
+				( source[argStart] == ' ' || source[argStart] == '\t' ||
+				  source[argStart] == '\n' || source[argStart] == '\r' ) ) {
+			++argStart;
+		}
+
+		size_t argEnd = argStart;
+		while ( argEnd < source.size() && IsIdentifierChar( source[argEnd] ) ) {
+			++argEnd;
+		}
+		const std::string sampler = source.substr( argStart, argEnd - argStart );
+		const char *replacement = ContainsSampler( cubeSamplers, sampler ) ? "textureCube(" : "texture2D(";
+		source.replace( pos, 8, replacement );
+		pos += std::strlen( replacement );
+	}
+}
+
+}
+
+std::string Vita_GLESD3_NormalizeShaderSource( const char *source, unsigned int stage ) {
 	if ( source == NULL ) {
 		return std::string();
 	}
@@ -68,13 +132,13 @@ std::string Vita_GLESD3_NormalizeShaderSource( const char *source, GLenum stage 
 		if ( first != std::string::npos && StartsWith( line, first, "invariant gl_Position;" ) ) {
 			// VitaGL emits gl_Position with the POSITION semantic itself.
 			line.clear();
-		} else if ( first != std::string::npos && stage == GL_VERTEX_SHADER ) {
+		} else if ( first != std::string::npos && stage == VITA_GL_VERTEX_SHADER ) {
 			if ( StartsWith( line, first, "in " ) ) {
 				line.replace( first, 3, "attribute " );
 			} else if ( StartsWith( line, first, "out " ) ) {
 				line.replace( first, 4, "varying " );
 			}
-		} else if ( first != std::string::npos && stage == GL_FRAGMENT_SHADER ) {
+		} else if ( first != std::string::npos && stage == VITA_GL_FRAGMENT_SHADER ) {
 			if ( StartsWith( line, first, "in " ) ) {
 				line.replace( first, 3, "varying " );
 			} else if ( StartsWith( line, first, "out " ) ) {
@@ -105,11 +169,10 @@ std::string Vita_GLESD3_NormalizeShaderSource( const char *source, GLenum stage 
 		cursor = end + 1;
 	}
 
-	if ( stage == GL_FRAGMENT_SHADER && !fragmentOutput.empty() ) {
+	if ( stage == VITA_GL_FRAGMENT_SHADER && !fragmentOutput.empty() ) {
 		ReplaceAll( output, fragmentOutput, "gl_FragColor" );
 	}
+	RewriteTextureCalls( output );
 
 	return output;
 }
-
-#endif

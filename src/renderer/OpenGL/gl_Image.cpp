@@ -542,6 +542,23 @@ void idImage::AllocImage() {
 
 	R_BindTextureForDirectAccess( target, texnum );
 
+#if defined(VITA) || defined(__vita__)
+	if ( opts.textureType == TT_2D && ( opts.format == FMT_DEPTH || opts.format == FMT_DEPTH_STENCIL ) ) {
+		// VitaGL cannot allocate depth textures with glTexImage2D. Keep a real GL
+		// texture name but leave its slot uninitialized until CopyDepthbuffer()
+		// aliases the active GXM depth surface through vglTexImageDepthBuffer().
+		// FBO raster depth/stencil itself is configured separately via the
+		// renderbuffer-descriptor path in gl_RenderTexture.cpp.
+		opts.numLevels = 1;
+		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
+		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
+		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+		glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+		GL_CheckErrors();
+		return;
+	}
+#endif
+
 	if ( wantsMSAA ) {
 		int samples = opts.numMSAASamples;
 #ifdef GL_MAX_SAMPLES

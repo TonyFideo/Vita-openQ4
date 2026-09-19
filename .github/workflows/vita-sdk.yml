@@ -208,13 +208,18 @@ jobs:
           set -euo pipefail
           meson setup build/vita-engine-config .             --cross-file tools/vita/meson-vita.ini             --backend ninja             --buildtype release             -Dplatform_backend=native             -Dbuild_engine=true             -Dbuild_games=true             -Dbuild_game_sp=true             -Dbuild_game_mp=false             -Dbuild_renderer_gl=false             -Dbuild_renderer_vk=false             -Duse_pch=false
 
-      - name: Test silent backend and build driver
+      - name: Test Vita helpers and build driver
         shell: bash
         run: |
           set -euo pipefail
           python3 -m unittest discover -s tools/vita/tests -p 'test_*.py' -v
           c++ -std=c++17 -Wall -Wextra -Werror tools/vita/tests/sound_stub_test.cpp -o build/sound_stub_test
           build/sound_stub_test
+          c++ -std=c++17 -Wall -Wextra -Werror -Isrc/renderer/GLES \
+            tools/vita/tests/vita_shader_compat_test.cpp \
+            src/renderer/GLES/vita_glesd3_shader_compat.cpp \
+            -o build/vita_shader_compat_test
+          build/vita_shader_compat_test
 
       - name: Compile full Vita engine client
         shell: bash

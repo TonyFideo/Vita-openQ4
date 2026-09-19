@@ -1373,6 +1373,65 @@ bool idImage::CopyDepthbuffer( int x, int y, int imageWidth, int imageHeight,
 		? GL_TEXTURE_CUBE_MAP_POSITIVE_X_EXT + cubeFace : GL_TEXTURE_2D;
 	R_BindTextureForDirectAccess( textureTarget, texnum );
 
+#if defined(VITA) || defined(__vita__)
+	if ( isCube ) {
+		static bool warnedCubeDepthCapture = false;
+		if ( !warnedCubeDepthCapture ) {
+			warnedCubeDepthCapture = true;
+			common->Warning( "CopyDepthbuffer: VitaGL cannot alias depth into a cubemap" );
+		}
+		return false;
+	}
+
+	const bool vitaReadingFromRenderTexture =
+		( backEnd.renderTexture != NULL ) && ( backEnd.renderTexture->GetDepthImage() != NULL );
+	const int sourceWidth = vitaReadingFromRenderTexture ? backEnd.renderTexture->GetWidth() : glConfig.vidWidth;
+	const int sourceHeight = vitaReadingFromRenderTexture ? backEnd.renderTexture->GetHeight() : glConfig.vidHeight;
+
+	// vglTexImageDepthBuffer aliases the complete source depth surface. Never
+	// pretend a cropped request succeeded, because that would feed post effects
+	// depth with the wrong coordinate system.
+	if ( x != 0 || y != 0 || imageWidth != sourceWidth || imageHeight != sourceHeight ) {
+		static bool warnedPartialDepthCapture = false;
+		if ( !warnedPartialDepthCapture ) {
+			warnedPartialDepthCapture = true;
+			common->Warning(
+				"CopyDepthbuffer: VitaGL supports full-surface depth aliases only "
+				"(requested %d,%d %dx%d from %dx%d)",
+				x, y, imageWidth, imageHeight, sourceWidth, sourceHeight );
+		}
+		return false;
+	}
+
+	GLint previousReadFbo = 0;
+	glGetIntegerv( GL_READ_FRAMEBUFFER_BINDING, &previousReadFbo );
+	if ( vitaReadingFromRenderTexture ) {
+		glBindFramebuffer( GL_READ_FRAMEBUFFER, backEnd.renderTexture->GetDeviceHandle() );
+	} else {
+		glBindFramebuffer( GL_READ_FRAMEBUFFER, 0 );
+	}
+
+	// This points the bound texture directly at VitaGL's DF32M depth surface and
+	// forces the current GXM render pass to store depth. No GPU->CPU->GPU copy.
+	vglTexImageDepthBuffer( GL_TEXTURE_2D );
+
+	opts.width = imageWidth;
+	opts.height = imageHeight;
+	opts.numLevels = 1;
+	opts.format = FMT_DEPTH;
+	internalFormat = GL_DEPTH_COMPONENT32F;
+	dataFormat = GL_DEPTH_COMPONENT;
+	dataType = GL_FLOAT;
+
+	glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
+	glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
+	glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+	glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+
+	glBindFramebuffer( GL_READ_FRAMEBUFFER, previousReadFbo );
+	return true;
+#endif
+
 	// The destination must hold depth-renderable storage: it gets attached to
 	// GL_DEPTH_ATTACHMENT for the blit path and receives GL_DEPTH_COMPONENT
 	// copies otherwise. Images that were ever allocated with a color format
