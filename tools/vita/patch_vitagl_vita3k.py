@@ -132,6 +132,45 @@ inline float4 vglUnpack(float4 v) { return v; }""",
     )
     custom_shaders_path.write_text(custom_shaders, encoding="utf-8")
 
+    # _glTexImage2D_FlatIMPL accepts GL_HALF_FLOAT for RGBA16F, but the matching
+    # _glTexSubImage2D path rejects the same type. OpenQ4 allocates first and
+    # uploads afterwards, so add a native F16 fast-store subimage path.
+    textures_path = root / "source" / "textures.c"
+    textures = textures_path.read_text(encoding="utf-8")
+    subimage_marker = "static inline __attribute__((always_inline)) void _glTexSubImage2D("
+    subimage_pos = textures.find(subimage_marker)
+    if subimage_pos < 0:
+        raise SystemExit("Vita3K half-float patch: _glTexSubImage2D marker not found")
+
+    textures_prefix = textures[:subimage_pos]
+    textures_subimage = textures[subimage_pos:]
+    textures_subimage = replace_once(
+        textures_subimage,
+        """\tcase GL_RGBA:
+\t\tswitch (type) {
+\t\tcase GL_UNSIGNED_BYTE:
+\t\t\tdata_bpp = 4;
+\t\t\tread_cb = read_rgba8888;
+\t\t\tbreak;""",
+        """\tcase GL_RGBA:
+\t\tswitch (type) {
+\t\tcase GL_HALF_FLOAT:
+\t\tcase GL_HALF_FLOAT_OES:
+\t\t\tif (tex_format != SCE_GXM_TEXTURE_FORMAT_F16F16F16F16_RGBA) {
+\t\t\t\tSET_GL_ERROR_WITH_VALUE(GL_INVALID_ENUM, type)
+\t\t\t}
+\t\t\tdata_bpp = 8;
+\t\t\tfast_store = GL_TRUE;
+\t\t\tbreak;
+\t\tcase GL_UNSIGNED_BYTE:
+\t\t\tdata_bpp = 4;
+\t\t\tread_cb = read_rgba8888;
+\t\t\tbreak;""",
+        "Vita3K half-float texture subimage support",
+    )
+    textures = textures_prefix + textures_subimage
+    textures_path.write_text(textures, encoding="utf-8")
+
     checks = (
         "shark_init_simple(NULL)",
         "SCE_GXM_INITIALIZE_FLAG_DEFAULT",
@@ -144,6 +183,7 @@ inline float4 vglUnpack(float4 v) { return v; }""",
     print("Applied Vita3K compatibility init patch to", path)
     print("Applied Vita3K shader-compiler compatibility patch to", shader_header_path)
     print("Applied Vita3K GLSL link-failure guard to", custom_shaders_path)
+    print("Applied Vita3K half-float subimage support to", textures_path)
     return 0
 
 

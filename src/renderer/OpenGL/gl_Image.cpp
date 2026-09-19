@@ -122,6 +122,15 @@ void idImage::SubImageUpload( int mipLevel, int x, int y, int z, int width, int 
 		uploadTarget = GL_TEXTURE_2D;
 	}
 
+#if defined(VITA) || defined(__vita__)
+	// vitaGL currently allocates cubemap faces only for mip level 0 and reports
+	// every authored higher-level face as a partial cubemap edit. Keep the base
+	// face for bring-up and avoid touching unsupported cubemap mip storage.
+	if ( opts.textureType == TT_CUBIC && mipLevel > 0 ) {
+		return;
+	}
+#endif
+
 	R_BindTextureForDirectAccess( target, texnum );
 
 	if ( pixelPitch != 0 ) {
@@ -292,7 +301,11 @@ void idImage::SetTexParameters() {
 
 #endif
 
+#if defined(VITA) || defined(__vita__)
+	const bool hasMipChain = opts.numLevels > 1 && opts.textureType != TT_CUBIC;
+#else
 	const bool hasMipChain = opts.numLevels > 1;
+#endif
 
 	const imageFilterState_t defaultFilter = R_GetDefaultImageFilterState();
 	switch( filter ) {
@@ -319,6 +332,7 @@ void idImage::SetTexParameters() {
 			common->FatalError( "%s: bad texture filter %d", GetName(), filter );
 	}
 
+#if !defined(VITA) && !defined(__vita__)
 	{
 		// only do aniso filtering on mip mapped images
 		if ( filter == TF_DEFAULT && hasMipChain && defaultFilter.usesMipmaps && defaultFilter.minLinear ) {
@@ -329,6 +343,7 @@ void idImage::SetTexParameters() {
 			glTexParameterf(target, GL_TEXTURE_MAX_ANISOTROPY_EXT, 1 );
 		}
 	}
+#endif
 	//if ( glConfig.textureLODBiasAvailable && ( usage != TD_FONT ) ) {
 	//	// use a blurring LOD bias in combination with high anisotropy to fix our aliasing grate textures...
 	//	glTexParameterf(target, GL_TEXTURE_LOD_BIAS_EXT, r_lodBias.GetFloat() );

@@ -186,15 +186,17 @@ static void HudWritePersistentLine( vitaLoadingLogColor_t color, const char *tex
 			return;
 		}
 
-		// Vita3K can terminate the process on a guest memory exception before an
-		// open descriptor is closed. Sync each short diagnostic line so the log
-		// remains useful even when the renderer crashes abruptly.
-		const int syncResult = sceIoSyncByFd( hud.logFd, 0 );
-		if ( syncResult < 0 ) {
-			sceClibPrintf(
-				"[VOQ4][load] persistent log sync failed fd=%d result=0x%08x\n",
-				static_cast<int>( hud.logFd ),
-				static_cast<unsigned int>( syncResult ) );
+		// Vita3K currently leaves sceIoSyncByFd unimplemented. Force a real
+		// close boundary after every short diagnostic line so an emulator-side
+		// renderer crash cannot leave the whole loading log buffered/empty.
+		sceIoClose( hud.logFd );
+		hud.logFd = sceIoOpen(
+			kLoadingLog,
+			SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND,
+			0666 );
+		if ( hud.logFd < 0 ) {
+			sceClibPrintf( "[VOQ4][load] persistent log reopen failed result=0x%08x\n",
+				static_cast<unsigned int>( hud.logFd ) );
 		}
 	}
 }
