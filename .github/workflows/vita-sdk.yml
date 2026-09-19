@@ -162,6 +162,7 @@ jobs:
           cmake --build build/vita-sdk-smoke \
             --target \
               openq4_vita_prerender_platform_probe \
+              openq4_vita_glimp_probe \
               openq4_vita_prerender_core_probe \
               openq4_vita_filesystem_probe \
             --parallel 2
