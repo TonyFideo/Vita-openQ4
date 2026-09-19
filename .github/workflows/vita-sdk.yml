@@ -107,6 +107,67 @@ jobs:
           grep -q "sceGxmInitialize(&gxm_init_params)" "${VITAGL_REPO}/source/gxm.c"
           cp "${VITAGL_REPO}/source/vitaGL.h" "${VITASDK}/arm-vita-eabi/include/vitaGL.h"
 
+      - name: Configure C++20 Vita smoke target
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S tools/vita/sdk_smoke -B build/vita-sdk-smoke \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$VITASDK/share/vita.toolchain.cmake"
+
+      - name: Gate 1 - renderer state bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          date -u +"state-gate start %H:%M:%S"
+          cmake --build build/vita-sdk-smoke \
+            --target openq4_vita_renderer_state_probe \
+            --parallel 2
+          date -u +"state-gate end   %H:%M:%S"
+
+      - name: Gate 2 - renderer startup negotiation
+        shell: bash
+        run: |
+          set -euo pipefail
+          date -u +"init-gate start %H:%M:%S"
+          cmake --build build/vita-sdk-smoke \
+            --target openq4_vita_renderer_init_probe \
+            --parallel 2
+          date -u +"init-gate end   %H:%M:%S"
+
+      - name: Gate 3 - renderer API and capability model
+        shell: bash
+        run: |
+          set -euo pipefail
+          date -u +"system-gate start %H:%M:%S"
+          cmake --build build/vita-sdk-smoke \
+            --target openq4_vita_renderer_system_probe \
+            --parallel 2
+          date -u +"system-gate end   %H:%M:%S"
+
+      - name: Gate 4 - complete GLES_D3 backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          date -u +"glesd3-gate start %H:%M:%S"
+          cmake --build build/vita-sdk-smoke \
+            --target openq4_vita_glesd3_probe \
+            --parallel 2
+          date -u +"glesd3-gate end   %H:%M:%S"
+
+      - name: Build remaining pre-render compile gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build build/vita-sdk-smoke \
+            --target \
+              openq4_vita_prerender_platform_probe \
+              openq4_vita_glimp_probe \
+              openq4_vita_engine_entry_probe \
+              openq4_vita_prerender_core_probe \
+              openq4_vita_filesystem_probe \
+            --parallel 2
+
       - name: Install Meson bring-up dependencies
         shell: bash
         run: |
@@ -132,43 +193,6 @@ jobs:
             -Dbuild_renderer_gl=false \
             -Dbuild_renderer_vk=false \
             -Duse_pch=false
-
-      - name: Configure C++20 Vita smoke target
-        shell: bash
-        run: |
-          set -euo pipefail
-          cmake -S tools/vita/sdk_smoke -B build/vita-sdk-smoke \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_TOOLCHAIN_FILE="$VITASDK/share/vita.toolchain.cmake"
-
-      - name: Build renderer front-end compile gate
-        shell: bash
-        run: |
-          set -euo pipefail
-          cmake --build build/vita-sdk-smoke \
-            --target openq4_vita_renderer_frontend_probe \
-            --parallel 2
-
-      - name: Build GLES_D3 compile gate
-        shell: bash
-        run: |
-          set -euo pipefail
-          cmake --build build/vita-sdk-smoke \
-            --target openq4_vita_glesd3_probe \
-            --parallel 2
-
-      - name: Build remaining pre-render compile gates
-        shell: bash
-        run: |
-          set -euo pipefail
-          cmake --build build/vita-sdk-smoke \
-            --target \
-              openq4_vita_prerender_platform_probe \
-              openq4_vita_glimp_probe \
-              openq4_vita_engine_entry_probe \
-              openq4_vita_prerender_core_probe \
-              openq4_vita_filesystem_probe \
-            --parallel 2
 
       - name: Build pinned VitaGL in Vita3K-safe mode
         shell: bash
