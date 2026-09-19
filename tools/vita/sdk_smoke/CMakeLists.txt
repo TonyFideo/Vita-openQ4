@@ -201,17 +201,24 @@ target_compile_options(openq4_vita_prerender_core_probe PRIVATE
 target_compile_features(openq4_vita_prerender_core_probe PRIVATE cxx_std_20)
 
 
-# D1 renderer compile gate: the actual GLES_D3 draw/program substrate from the
-# Android renderer, compiled against VitaGL. It stays a static library for now:
-# unresolved engine globals are expected until the full engine link is enabled.
+# Full GLES_D3 compile gate: compile the Android renderer backend and every
+# embedded shader translation unit against VitaGL. This remains a static library
+# until the complete engine/front-end is linked for Vita.
+file(GLOB OPENQ4_VITA_GLESD3_SHADER_SOURCES CONFIGURE_DEPENDS
+  "${OPENQ4_ROOT}/src/renderer/GLES_D3/glsl/*.cpp"
+)
+
 add_library(openq4_vita_glesd3_probe STATIC
   ${OPENQ4_ROOT}/src/renderer/GLES/vita_glesd3_shader_compat.cpp
   ${OPENQ4_ROOT}/src/renderer/GLES_D3/gles_d3_backend.cpp
   ${OPENQ4_ROOT}/src/renderer/GLES_D3/gles_draw.cpp
+  ${OPENQ4_ROOT}/src/renderer/GLES_D3/gles_fog.cpp
+  ${OPENQ4_ROOT}/src/renderer/GLES_D3/gles_interaction.cpp
   ${OPENQ4_ROOT}/src/renderer/GLES_D3/gles_program.cpp
+  ${OPENQ4_ROOT}/src/renderer/GLES_D3/gles_shaderpasses.cpp
   ${OPENQ4_ROOT}/src/renderer/GLES_D3/gles_shaders.cpp
-  ${OPENQ4_ROOT}/src/renderer/GLES_D3/glsl/debugShaderVP.cpp
-  ${OPENQ4_ROOT}/src/renderer/GLES_D3/glsl/debugShaderFP.cpp
+  ${OPENQ4_ROOT}/src/renderer/GLES_D3/gles_stencilshadow.cpp
+  ${OPENQ4_VITA_GLESD3_SHADER_SOURCES}
 )
 
 target_include_directories(openq4_vita_glesd3_probe PRIVATE
