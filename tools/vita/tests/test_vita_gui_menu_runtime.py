@@ -6,6 +6,7 @@ LIST_HEADER = (ROOT / "src/ui/ListWindow.h").read_text(encoding="utf-8")
 LIST_SOURCE = (ROOT / "src/ui/ListWindow.cpp").read_text(encoding="utf-8")
 GUI_SCRIPT = (ROOT / "src/ui/GuiScript.cpp").read_text(encoding="utf-8")
 WINDOW_SOURCE = (ROOT / "src/ui/Window.cpp").read_text(encoding="utf-8")
+MAINMENU = (ROOT / "content/baseoq4/pak0/guis/mainmenu.gui").read_text(encoding="utf-8")
 
 
 def function(text: str, signature: str) -> str:
@@ -41,6 +42,22 @@ class VitaGuiMenuRuntimeTests(unittest.TestCase):
         self.assertIn("target->win->ResetTime", named_branch)
         self.assertIn("window->ResetTime", reset_time)
         self.assertLess(named_branch.index("target->win->ResetTime"), reset_time.rindex("window->ResetTime"))
+
+    def test_zero_duration_transitions_apply_immediately(self):
+        transition = function(GUI_SCRIPT, "void Script_Transition(")
+        self.assertIn("if ( time <= 0 )", transition)
+        self.assertIn("(*src)[0].var->Set( (*src)[2].var->c_str() );", transition)
+        immediate = transition[transition.index("if ( time <= 0 )"):]
+        self.assertLess(immediate.index("return;"), immediate.index("window->AddTransition"))
+
+    def test_settings_container_is_activated_before_tab_branch(self):
+        start = MAINMENU.index("windowDef anim_settingsIn")
+        end = MAINMENU.index("windowDef anim_settingsOut", start)
+        settings_in = MAINMENU[start:end]
+        visible = 'set "p_settings::visible" "1" ;'
+        first_tab = 'if ( "desktop::dest" == 4 )'
+        self.assertEqual(settings_in.count(visible), 1)
+        self.assertLess(settings_in.index(visible), settings_in.index(first_tab))
 
     def test_vita_settings_transition_has_runtime_markers(self):
         reset_time = function(GUI_SCRIPT, "void Script_ResetTime(")

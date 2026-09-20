@@ -321,6 +321,30 @@ void Script_Transition(idWindow *window, idList<idGSWinVar> *src) {
 			ac = atof(*acv);
 			dc = atof(*dcv);
 		}
+
+		// Quake 4 GUIs use zero-duration transitions as atomic state changes
+		// when swapping menu pages. Deferring those writes until the next
+		// RunTimeEvents pass leaves one frame with the new page visible at the
+		// old/off-screen rect (or with stale alpha). Apply the authored end value
+		// immediately and do not create a transition object.
+		if ( time <= 0 ) {
+			(*src)[0].var->Set( (*src)[2].var->c_str() );
+			(*src)[0].var->SetEval( false );
+			if ( valp ) {
+				idWinVec4 *owner = valp->GetOwnerVec4();
+				if ( owner ) {
+					owner->SetEval( false );
+				}
+			}
+			if ( gui_debugScript.GetInteger() > 2 ) {
+				common->Printf( "GUI: transition immediate %s -> %s (caller=%s gui=%s)\n",
+					(*src)[0].var ? (*src)[0].var->GetName() : "<null>",
+					(*src)[2].var ? (*src)[2].var->c_str() : "<null>",
+					window ? window->GetName() : "<null>",
+					window && window->GetGui() ? window->GetGui()->GetSourceFile() : "<null>" );
+			}
+			return;
+		}
 				
 		if (vec4) {
 			vec4->SetEval(false);

@@ -14248,9 +14248,12 @@ windowDef Desktop
 				}
 				
 				transition "p_settings::rect" "$d_main_l::rect" "$d_main::rect" "0" ;
+				// anim_settingsIn is only entered for Settings destinations. Make the
+				// page container live before branching to Controls/Game/System/Audio,
+				// so a tab condition can never leave the whole settings screen hidden.
+				set "p_settings::visible" "1" ;
 				
 				if ( "desktop::dest" == 4 ) {
-					set "p_settings::visible" "1" ;
 					set "p_settings_ctrls::visible" "1" ;
 					set "p_settings_game::visible" "0" ;
 					set "p_settings_sys::visible" "0" ;
@@ -14311,7 +14314,6 @@ windowDef Desktop
 					transition "t_settings_title::forecolor_w" "0" "0.5" "150" ;
 					transition "grad2::matcolor_w" "0" "0.6" "150" ;
 					
-					set "p_settings::visible" "1" ;
 					set "p_settings_ctrls::visible" "0" ;
 					set "p_settings_game::visible" "1" ;
 					set "p_settings_sys::visible" "0" ;
@@ -14329,7 +14331,6 @@ windowDef Desktop
 					transition "t_settings_title::forecolor_w" "0" "0.5" "150" ;
 					transition "grad2::matcolor_w" "0" "0.6" "150" ;
 					
-					set "p_settings::visible" "1" ;
 					set "p_settings_ctrls::visible" "0" ;
 					set "p_settings_game::visible" "0" ;
 					set "p_settings_sys::visible" "1" ;
@@ -14346,7 +14347,6 @@ windowDef Desktop
 					transition "t_settings_title::forecolor_w" "0" "0.5" "150" ;
 					transition "grad2::matcolor_w" "0" "0.6" "150" ;
 					
-					set "p_settings::visible" "1" ;
 					set "p_settings_ctrls::visible" "0" ;
 					set "p_settings_game::visible" "0" ;
 					set "p_settings_sys::visible" "0" ;
