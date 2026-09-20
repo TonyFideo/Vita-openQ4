@@ -277,8 +277,8 @@ void VitaDiagScreen_Finish( void ) {
 		// display thread pointing at the now-unmapped 0x60000000 region.
 		//
 		// Keep the diagnostic framebuffer alive across VitaGL initialization.
-		// VitaGL's first successful swap installs its own framebuffer; the bootstrap
-		// then calls VitaDiagScreen_ReleaseBacking() after that handoff.
+		// A later ownership check releases it only after sceDisplay reports that
+		// the active framebuffer has actually changed.
 		sceDisplayWaitVblankStart();
 		vitaDisplayFrameValid = false;
 	}
@@ -288,19 +288,30 @@ void VitaDiagScreen_Finish( void ) {
 	vitaFrameBuffer = NULL;
 }
 
-void VitaDiagScreen_ReleaseBacking( void ) {
+bool VitaDiagScreen_ReleaseBackingIfDetached( void ) {
 	if ( vitaDisplayBlock < 0 ) {
-		return;
+		return true;
 	}
 
-	// VitaGL queues its display callback asynchronously. Do not guess how many
-	// vblanks it needs: wait until every queued display callback has completed.
-	// On Vita3K sceGxmDisplayQueueFinish() blocks on display_queue.wait_empty();
-	// on hardware it provides the same ownership barrier before freeing CDRAM.
+	// vitaGL submits sceDisplaySetFrameBuf from its asynchronous GXM display
+	// callback.  A queue becoming empty is not, by itself, proof that the callback
+	// has finished: Vita3K removes a callback from the queue before executing it.
+	// Synchronize with the queue and a display vblank, then ask SceDisplay which
+	// framebuffer it actually owns.  Never free the diagnostic CDRAM while that
+	// exact address is still reported as current.
 	sceGxmDisplayQueueFinish();
 	sceDisplayWaitVblankStart();
+
+	SceDisplayFrameBuf activeFrame;
+	memset( &activeFrame, 0, sizeof( activeFrame ) );
+	activeFrame.size = sizeof( activeFrame );
+	const int displayResult = sceDisplayGetFrameBuf( &activeFrame, SCE_DISPLAY_SETBUF_NEXTFRAME );
+	if ( displayResult < 0 || activeFrame.base == vitaDisplayFrame.base ) {
+		return false;
+	}
 
 	sceKernelFreeMemBlock( vitaDisplayBlock );
 	vitaDisplayBlock = -1;
 	memset( &vitaDisplayFrame, 0, sizeof( vitaDisplayFrame ) );
+	return true;
 }

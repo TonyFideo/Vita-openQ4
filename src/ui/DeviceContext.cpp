@@ -1303,17 +1303,6 @@ bool idDeviceContext::FindIcon( const char *code, const embeddedIcon_t **icon ) 
 	embeddedIcon_t *foundIcon = NULL;
 	const bool found = icons.Get( code, &foundIcon );
 	if ( found && foundIcon != NULL && !foundIcon->sized ) {
-#if defined(VITA) || defined(__vita__)
-		// GUI defineicon entries are registered lazily on Vita.  Loading them
-		// while parsing a 24k-line menu forced texture uploads inside the parser
-		// itself; build #231 terminated in Vita3K while uploading icon_repeater.
-		// Only make the image resident once text actually references its escape
-		// code (for example when the server browser becomes visible).
-		if ( foundIcon->material != NULL ) {
-			VitaLoadingHud_LogInfo( "ICON lazy load: %s", code != NULL ? code : "?" );
-			const_cast<idMaterial *>( foundIcon->material )->EnsureNotPurged();
-		}
-#endif
 		// registered before its image was resident
 		SizeIcon( *foundIcon );
 	}
@@ -1688,7 +1677,7 @@ void idDeviceContext::DrawKeyBindingIcon( int keyNum, float x, float baselineY, 
 	SetFontByScale( textScale );
 }
 
-void idDeviceContext::RegisterIcon( const char *code, const char *shader, int x, int y, int w, int h, bool preload ) {
+void idDeviceContext::RegisterIcon( const char *code, const char *shader, int x, int y, int w, int h ) {
 	if ( code == NULL || shader == NULL || code[0] == '\0' || shader[0] == '\0' ) {
 		return;
 	}
@@ -1705,14 +1694,7 @@ void idDeviceContext::RegisterIcon( const char *code, const char *shader, int x,
 		return;
 	}
 
-	if ( preload ) {
-		const_cast<idMaterial *>( icon.material )->EnsureNotPurged();
-	}
-#if defined(VITA) || defined(__vita__)
-	else {
-		VitaLoadingHud_LogInfo( "ICON deferred: %s -> %s", icon.code, shader );
-	}
-#endif
+	const_cast<idMaterial *>( icon.material )->EnsureNotPurged();
 	icon.material->SetSort( SS_GUI );
 	icon.registeredX = x;
 	icon.registeredY = y;

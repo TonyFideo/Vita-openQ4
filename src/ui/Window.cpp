@@ -3716,17 +3716,7 @@ bool idWindow::Parse( idParser *src, bool rebuild) {
 			}
 
 			if ( dc != NULL ) {
-#if defined(VITA) || defined(__vita__)
-				// Do not turn defineicon parsing into synchronous GPU work on
-				// Vita.  The icon registry can hold an unsized material safely;
-				// idDeviceContext::FindIcon makes it resident on first real use.
-				dc->RegisterIcon( keyToken.c_str(), valueToken.c_str(), iconX, iconY, iconW, iconH, false );
-				if ( vitaMainMenu ) {
-					VitaLoadingHud_LogInfo( "MAINMENU defineicon diferido: %s -> %s", keyToken.c_str(), valueToken.c_str() );
-				}
-#else
 				dc->RegisterIcon( keyToken.c_str(), valueToken.c_str(), iconX, iconY, iconW, iconH );
-#endif
 			}
 		}
 // jmarshall end

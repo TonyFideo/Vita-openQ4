@@ -157,9 +157,11 @@ void GLimp_PreserveWindowOnShutdown( bool preserve ) {
 
 void GLimp_SwapBuffers( void ) {
 	if ( vitaGLReady ) {
-		const bool firstHudSwap = !VitaLoadingHud_RendererHandoffComplete();
 		vglSwapBuffers( GL_FALSE );
-		if ( firstHudSwap ) {
+		if ( !VitaLoadingHud_RendererHandoffComplete() ) {
+			// Retry until SceDisplay itself confirms that the old diagnostic
+			// framebuffer is no longer current.  This is an ownership check, not
+			// a timing delay, and is equally valid on hardware and Vita3K.
 			VitaLoadingHud_EndRendererHandoff();
 		}
 	}

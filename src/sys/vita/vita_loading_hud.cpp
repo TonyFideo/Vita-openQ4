@@ -26,6 +26,7 @@ struct vitaLoadingHudState_t {
 	bool nativeReady;
 	bool rendererInitialized;
 	bool rendererHandoffComplete;
+	bool rendererHandoffPendingLogged;
 	SceUID logFd;
 	uint64_t lastNativeDrawUsec;
 	char lastLoggedGuiAsset[128];
@@ -622,7 +623,13 @@ void VitaLoadingHud_EndRendererHandoff( void ) {
 	if ( !hud.initialized || hud.rendererHandoffComplete ) {
 		return;
 	}
-	VitaDiagScreen_ReleaseBacking();
+	if ( !VitaDiagScreen_ReleaseBackingIfDetached() ) {
+		if ( !hud.rendererHandoffPendingLogged ) {
+			hud.rendererHandoffPendingLogged = true;
+			VitaLoadingHud_LogInfo( "HUD handoff pendiente: SceDisplay aun usa el framebuffer nativo" );
+		}
+		return;
+	}
 	hud.rendererHandoffComplete = true;
 	hud.snapshot.rendererHandoffComplete = true;
 	VitaLoadingHud_LogOk( "HUD transferido a VitaGL" );

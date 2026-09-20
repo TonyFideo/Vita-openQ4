@@ -378,8 +378,14 @@ int main( int argc, char **argv ) {
 
 	if ( rendererReady ) {
 		Vita_WriteLogLine( "diagnostic.handoff=vitagl-presented" );
-		VitaDiagScreen_ReleaseBacking();
-		Vita_WriteLogLine( "diagnostic.backing=released" );
+		if ( VitaDiagScreen_ReleaseBackingIfDetached() ) {
+			Vita_WriteLogLine( "diagnostic.backing=released" );
+		} else {
+			// The renderer is valid, but SceDisplay has not relinquished the
+			// diagnostic surface yet.  Retaining 2 MiB is preferable to freeing a
+			// buffer that the display controller may still scan out.
+			Vita_WriteLogLine( "diagnostic.backing=retained-active-display" );
+		}
 		VitaRendererSmoke_Run();
 	}
 
