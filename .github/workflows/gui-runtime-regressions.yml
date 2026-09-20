@@ -1,0 +1,68 @@
+name: GUI runtime regressions
+
+on:
+  push:
+    branches: [vita-port]
+    paths:
+      - .github/workflows/gui-runtime-regressions.yml
+      - src/ui/**
+      - src/idlib/**
+      - tools/vita/tests/test_vita_gui*.py
+      - content/baseoq4/pak0/guis/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gui-runtime-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gui-runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Source-only checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git config core.sparseCheckout true
+          cat > .git/info/sparse-checkout <<'EOF'
+          /src/ui/
+          /src/idlib/
+          /src/framework/
+          /src/renderer/
+          /src/sys/vita/
+          /tools/vita/tests/
+          /content/baseoq4/pak0/guis/
+          /.github/workflows/
+          EOF
+          git fetch --depth 1 --filter=blob:none origin "${GITHUB_SHA}"
+          git checkout --detach FETCH_HEAD
+
+      - name: Run GUI regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p gui-diagnostics
+          python3 -m unittest discover -s tools/vita/tests -p 'test_vita_gui*.py' -v 2>&1 | tee gui-diagnostics/tests.log
+
+      - name: Preserve exact source context
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p gui-diagnostics
+          git rev-parse HEAD > gui-diagnostics/commit.txt
+          git archive HEAD src/ui src/idlib src/framework src/renderer src/sys/vita tools/vita/tests content/baseoq4/pak0/guis .github/workflows | gzip > gui-diagnostics/gui-source.tar.gz
+
+      - name: Upload GUI test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-runtime-${{ github.sha }}
+          path: gui-diagnostics/
+          retention-days: 7
