@@ -10,6 +10,15 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 CODE = r'''
 #include "vita_safe_printf.h"
+#ifdef VOQ_TEST_POISON
+#ifndef vsnprintf
+#error "platform adapter must restore the engine poison macro"
+#endif
+#else
+#ifdef vsnprintf
+#error "platform adapter must not define a previously absent macro"
+#endif
+#endif
 #include <assert.h>
 #include <string.h>
 static void check(char *out, size_t cap, const char *format, ...) {
@@ -36,17 +45,37 @@ int main(void) {
 '''
 class SafePrintfTest(unittest.TestCase):
     def test_formatting(self):
+        self._formatting(False)
+
+    def test_force_included_engine_macro(self):
+        self._formatting(True)
+
+    def _formatting(self, poisoned):
         cc = os.environ.get("HOST_CC") or shutil.which("clang") or shutil.which("cc")
-        if not cc: self.skipTest("native C compiler required")
+        if not cc:
+            self.skipTest("native C/C++ compiler required")
         with tempfile.TemporaryDirectory(prefix="voq-print-") as directory:
-            root=pathlib.Path(directory)
-            source=root/"test.c"; source.write_text(CODE,encoding="utf-8")
-            command=[cc,"-std=c99","-O1","-g","-I",str(ROOT/"src/sys/vita"),str(source),"-o",str(root/"test")]
-            if os.environ.get("VOQ_MIP_SANITIZE")=="1": command += ["-fsanitize=address,undefined"]
-            subprocess.run(command,check=True,capture_output=True,text=True)
-            run=subprocess.run([str(root/"test")],capture_output=True,text=True)
-            self.assertEqual(run.returncode,0,run.stdout+run.stderr)
-            print(run.stdout.strip())
+            root = pathlib.Path(directory)
+            source = root / "test.c"
+            source.write_text(CODE, encoding="utf-8")
+            poison = root / "engine_poison.h"
+            poison.write_text(
+                '#include <stdio.h>\n'
+                '#define vsnprintf use_idStr_vsnPrintf\n', encoding="utf-8")
+            for language, standard in (("c", "c99"), ("c++", "c++20")):
+                with self.subTest(language=language, force_include=poisoned):
+                    command = [cc, "-x", language, "-std=" + standard, "-O1", "-g",
+                               "-I", str(ROOT / "src/sys/vita"), str(source),
+                               "-o", str(root / "test")]
+                    if poisoned:
+                        command += ["-include", str(poison), "-DVOQ_TEST_POISON=1"]
+                    if os.environ.get("VOQ_MIP_SANITIZE") == "1":
+                        command += ["-fsanitize=address,undefined"]
+                    build = subprocess.run(command, capture_output=True, text=True)
+                    self.assertEqual(build.returncode, 0, build.stdout + build.stderr)
+                    run = subprocess.run([str(root / "test")], capture_output=True, text=True)
+                    self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+                    print(f"{language} force_include={poisoned}: {run.stdout.strip()}")
     def test_no_va_list_hle_bridge(self):
         source=(ROOT/"src/sys/vita/vita_system.cpp").read_text(encoding="utf-8")
         self.assertNotIn("sceClibVprintf(",source)

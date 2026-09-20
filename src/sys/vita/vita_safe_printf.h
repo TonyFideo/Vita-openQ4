@@ -1,8 +1,13 @@
 #ifndef OPENQ4_VITA_SAFE_PRINTF_H
 #define OPENQ4_VITA_SAFE_PRINTF_H
 
-// Include before idlib's legacy C-string poison macros. Format with the
-// toolchain's own va_list consumer, not Vita3K's sceClibVprintf HLE bridge.
+// The full engine force-includes idlib before this header. Temporarily suspend
+// its vsnprintf poison macro only inside this platform adapter, then restore it.
+// Consume va_list with the guest toolchain, not Vita3K's Vprintf HLE bridge.
+#pragma push_macro("vsnprintf")
+#ifdef vsnprintf
+#undef vsnprintf
+#endif
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -19,4 +24,5 @@ static inline void VitaFormatPrint(char *text, size_t capacity,
     if (result < 0) text[0] = '\0';
     text[capacity - 1] = '\0';
 }
+#pragma pop_macro("vsnprintf")
 #endif
