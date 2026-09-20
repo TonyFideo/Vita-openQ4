@@ -144,7 +144,7 @@ idCVar com_updateLoadSize( "com_updateLoadSize", "0", CVAR_BOOL | CVAR_SYSTEM | 
 idCVar com_videoRam( "com_videoRam", "64", CVAR_INTEGER | CVAR_SYSTEM | CVAR_NOCHEAT | CVAR_ARCHIVE, "holds the last amount of detected video ram" );
 idCVar com_activeGameModule( "com_activeGameModule", "", CVAR_SYSTEM | CVAR_NOCHEAT, "active game module (game_sp/game_mp)" );
 idCVar com_nextGameModule( "com_nextGameModule", "", CVAR_SYSTEM | CVAR_NOCHEAT, "internal one-shot game module override for reloadEngine" );
-idCVar com_platformProfile( "com_platformProfile", "default", CVAR_SYSTEM | CVAR_INIT, "startup platform profile (default or steamdeck)" );
+idCVar com_platformProfile( "com_platformProfile", "default", CVAR_SYSTEM | CVAR_INIT, "startup platform profile (default, steamdeck or vita)" );
 
 static bool openQ4_IsValidGameModuleName( const char *moduleName );
 
@@ -801,7 +801,7 @@ static idStr Common_BuildPlatformProfileConfigName( const char *profileName ) {
 	if ( sanitized.Length() == 0 || sanitized.Icmp( "default" ) == 0 ) {
 		return "";
 	}
-	if ( sanitized.Icmp( "steamdeck" ) != 0 ) {
+	if ( sanitized.Icmp( "steamdeck" ) != 0 && sanitized.Icmp( "vita" ) != 0 ) {
 		return "";
 	}
 
@@ -6605,6 +6605,11 @@ void idCommonLocal::ApplyAutomaticPlatformProfile( void ) {
 		return;
 	}
 
+#if defined(VITA) || defined(__vita__)
+	Printf( "Auto-selecting vita platform profile.\n" );
+	com_platformProfile.SetString( "vita" );
+	return;
+#else
 	if ( Common_IsEnvFlagTrue( Common_GetNonEmptyEnv( "OPENQ4_DISABLE_STEAMDECK_AUTODETECT" ) ) ||
 		 Common_IsEnvFlagTrue( Common_GetNonEmptyEnv( "OPENQ4_NO_STEAMDECK_AUTODETECT" ) ) ) {
 		Printf( "Steam Deck platform profile auto-detection disabled by environment.\n" );
@@ -6617,6 +6622,7 @@ void idCommonLocal::ApplyAutomaticPlatformProfile( void ) {
 
 	Printf( "Auto-selecting steamdeck platform profile from host environment.\n" );
 	com_platformProfile.SetString( "steamdeck" );
+#endif
 }
 
 static double Common_AdjustMachineSpecGHz( double ghz, cpuid_t cpu ) {
