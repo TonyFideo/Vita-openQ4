@@ -391,6 +391,8 @@ def main() -> int:
     patch_vertex_streams(pathlib.Path(sys.argv[1]))
     patch_read_buffer_query(pathlib.Path(sys.argv[1]))
     patch_memory_query(pathlib.Path(sys.argv[1]))
+    from patch_vitagl_cube import patch as patch_cube
+    patch_cube(pathlib.Path(sys.argv[1]))
     return 0
 
 

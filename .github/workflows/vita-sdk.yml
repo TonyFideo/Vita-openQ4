@@ -173,7 +173,7 @@ jobs:
           # Deliberately separate from the old HAVE_CUSTOM_HEAP cache. Action
           # #216 symbolicated a deterministic corruption inside heap_blk_*.
           path: .ci-cache/vitagl-mspace
-          key: vita-vitagl-mspace-v1-${{ env.VITAGL_SHA }}-${{ hashFiles('tools/vita/patch_vitagl_vita3k.py') }}
+          key: vita-vitagl-mspace-v1-${{ env.VITAGL_SHA }}-${{ hashFiles('tools/vita/patch_vitagl*.py') }}
 
       - name: Restore Vita runtime pak0
         uses: actions/cache@v4

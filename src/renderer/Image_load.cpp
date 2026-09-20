@@ -29,6 +29,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "tr_local.h"
+#include "../imagetools/CubeStream.h"
 #if defined(VITA) || defined(__vita__)
 #include "../sys/vita/vita_loading_hud.h"
 #endif
@@ -150,6 +151,7 @@ static void R_AddMissingQ4StockImageCacheIdentity( idStr &generatedName, bool st
 
 static unsigned int R_GetImageDownsizeSignature( const char *name, textureUsage_t usage, bool allowDownSize );
 static void R_DownsizeLoadedImageData( const char *name, textureUsage_t usage, bool allowDownSize, byte *&pic, int &width, int &height );
+static bool R_ImageUsageUsesGammaMips( textureUsage_t usage );
 static void R_DownsizeLoadedCubeImageData( const char *name, textureUsage_t usage, bool allowDownSize, byte *pics[6], int &size );
 
 imageLoadPhaseTimings_t imageLoadPhaseTimings;
@@ -828,6 +830,47 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 		im.Clear();
 		bool loadedPrecompressedDDS = false;
 		if ( cubeFiles != CF_2D ) {
+#if defined(VITA) || defined(__vita__)
+			// Stream raw RGBA cube faces without retaining six full images or a
+			// second mip pyramid. Compression/replacement paths retain their
+			// existing general loader and content-selection semantics.
+			idCubeImageStream stream;
+			if ( !cvarSystem->GetCVarBool( "com_makingBuild" ) && opts.format == FMT_RGBA8 && stream.Open( GetName(), cubeFiles ) ) {
+				imageDownsizePolicy_t policy;
+				R_GetImageDownsizePolicy( GetName(), usage, allowDownSize, policy );
+				int selectedSize = stream.Size(), selectedHeight = selectedSize;
+				R_ApplyImageDownsizePolicy( policy, selectedSize, selectedHeight );
+				int firstLevel = 0;
+				while ( ( stream.Size() >> firstLevel ) > selectedSize ) ++firstLevel;
+				if ( ( stream.Size() >> firstLevel ) == selectedSize && selectedSize == selectedHeight ) {
+					opts.textureType = TT_CUBIC;
+					opts.width = opts.height = selectedSize;
+					opts.numLevels = 0;
+					repeat = TR_CLAMP;
+					DeriveOpts();
+					AllocImage();
+					const auto uploadRow = []( void *context, int side, int level,
+						int x, int y, int width, int height, const byte *pixels ) -> bool {
+						idImage *image = static_cast<idImage *>( context );
+						image->SubImageUpload( level, x, y, side, width, height, pixels );
+						return glGetError() == GL_NO_ERROR;
+					};
+					sceClibPrintf( "[VOQ4][cube-stream] begin name=%s source=%d size=%d levels=%d\n",
+						GetName(), stream.Size(), selectedSize, opts.numLevels );
+					if ( !stream.Upload( firstLevel, opts.numLevels, R_ImageUsageUsesGammaMips( usage ),
+						opts.gammaMips, uploadRow, this ) ) {
+						PurgeImage();
+						stream.Close();
+						common->Error( "Incomplete cube image stream: %s", GetName() );
+						return;
+					}
+					sourceFileTime = stream.Timestamp();
+					sceClibPrintf( "[VOQ4][cube-stream] done name=%s\n", GetName() );
+					return;
+				}
+			}
+			stream.Close(); // No open source streams survive into the general fallback.
+#endif
 			int size;
 			byte * pics[6];
 

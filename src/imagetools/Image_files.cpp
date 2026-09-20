@@ -32,6 +32,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "../renderer/Image.h"
 #include "ImageTools.h"
+#include "CubeStream.h"
 #include "DXT/DXTCodec.h"
 
 idCVar image_usePrecompressedTextures(
@@ -1789,6 +1790,63 @@ R_LoadCubeImages
 Loads six files with proper extensions
 =======================
 */
+// Source-authoritative row streaming. A DDS replacement or unsupported source
+// keeps the existing general loader; it is never silently ignored.
+idCubeImageStream::idCubeImageStream() : timestamp( 0 ), camera( false ) {
+	memset( faces, 0, sizeof( faces ) );
+	memset( headers, 0, sizeof( headers ) );
+}
+idCubeImageStream::~idCubeImageStream() { Clear(); }
+void idCubeImageStream::Clear() {
+	for ( int i = 0; i < 6; ++i ) {
+		if ( faces[i] != NULL ) fileSystem->CloseFile( faces[i] );
+		faces[i] = NULL;
+	}
+}
+bool idCubeImageStream::Open( const char *name, cubeFiles_t extensions ) {
+	Clear();
+	timestamp = 0;
+	if ( name == NULL || ( extensions != CF_CAMERA && extensions != CF_NATIVE ) ) return false;
+	camera = extensions == CF_CAMERA;
+	const char *cameraSides[6] = { "_forward.tga", "_back.tga", "_left.tga", "_right.tga", "_up.tga", "_down.tga" };
+	const char *axisSides[6] = { "_px.tga", "_nx.tga", "_py.tga", "_ny.tga", "_pz.tga", "_nz.tga" };
+	idSuppressRetailProgramDDS noRetailProgramFaces;
+	for ( int i = 0; i < 6; ++i ) {
+		idStr path = name;
+		path += camera ? cameraSides[i] : axisSides[i];
+		idStr replacement;
+		if ( R_ResolvePreferredDDSImageSource( path.c_str(), replacement, NULL, false, NULL ) ) { Clear(); return false; }
+		faces[i] = fileSystem->OpenFileRead( path.c_str() );
+		if ( !R_TgaStreamHeader( faces[i], headers[i] ) ) { Clear(); return false; }
+		const int size = headers[i].width;
+		if ( size > 4096 || ( size & ( size - 1 ) ) || headers[i].height != size ||
+			( i > 0 && size != headers[0].width ) ) { Clear(); return false; }
+		timestamp = Max( timestamp, faces[i]->Timestamp() );
+	}
+	return true;
+}
+bool idCubeImageStream::Upload( int firstLevel, int levels, bool downsizeGamma, bool mipGamma,
+	cubeStreamSink_t sink, void *context ) {
+	const int size = Size();
+	if ( sink == NULL || firstLevel < 0 || firstLevel > 12 || levels < 1 || levels > 13 - firstLevel ||
+		size <= 0 || ( size >> ( firstLevel + levels - 1 ) ) < 1 ) return false;
+	for ( int side = 0; side < 6; ++side ) {
+		if ( faces[side] == NULL ) return false;
+		idTempArray<byte> row( size * 4 );
+		idCubeStreamRows pyramid( size, firstLevel, levels, side, camera,
+			downsizeGamma, mipGamma, sink, context );
+		idTgaStreamDecoder decoder( faces[side], headers[side] );
+		for ( int fileRow = 0; fileRow < size; ++fileRow ) {
+			const int y = ( headers[side].attributes & 0x20 ) ? fileRow : size - 1 - fileRow;
+			if ( !decoder.ReadRow( row.Ptr() ) || !pyramid.Push( 0, y, row.Ptr() ) ) return false;
+		}
+		if ( !decoder.Finished() ) return false;
+		fileSystem->CloseFile( faces[side] );
+		faces[side] = NULL;
+	}
+	return true;
+}
+
 bool R_LoadCubeImages( const char *imgName, cubeFiles_t extensions, byte *pics[6], int *outSize, ID_TIME_T *timestamp ) {
 	int		i, j;
 	char	*cameraSides[6] =  { "_forward.tga", "_back.tga", "_left.tga", "_right.tga", 

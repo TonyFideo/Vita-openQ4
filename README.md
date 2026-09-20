@@ -1,12 +1,9 @@
 <a id="top"></a>
 
-> Vita development: the latest DDS loader reduces temporary CPU staging without
-> changing authored texture levels. Gameplay validation remains pending; see
-> [DDS loading investigation](tools/vita/GAMEPLAY_DDS_STREAMING.md).
-
-> **Vita development:** the current candidate reduces avoidable model-loading
-> memory and adds gameplay-load milestones. Gameplay acceptance and the separate
-> menu brightness issue remain pending. [Details](tools/vita/GAMEPLAY_MEMORY.md).
+> **Vita development:** the current candidate adds row-bounded RGBA8 sky loading
+> with full native cube mip storage. Gameplay entry and the remaining menu
+> brightness require target validation. See the [cube-loading investigation](tools/vita/GAMEPLAY_CUBE_STREAMING.md),
+> [DDS staging notes](tools/vita/GAMEPLAY_DDS_STREAMING.md) and [model memory work](tools/vita/GAMEPLAY_MEMORY.md).
 
 <div align="center">
 

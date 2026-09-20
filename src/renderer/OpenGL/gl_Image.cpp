@@ -123,10 +123,9 @@ void idImage::SubImageUpload( int mipLevel, int x, int y, int z, int width, int 
 	}
 
 #if defined(VITA) || defined(__vita__)
-	// vitaGL currently allocates cubemap faces only for mip level 0 and reports
-	// every authored higher-level face as a partial cubemap edit. Keep the base
-	// face for bring-up and avoid touching unsupported cubemap mip storage.
-	if ( opts.textureType == TT_CUBIC && mipLevel > 0 ) {
+	// RGBA8 uses the complete immutable cube path. The pre-existing compressed
+	// cube path is not converted here; its higher-level storage remains unsupported.
+	if ( opts.textureType == TT_CUBIC && opts.format != FMT_RGBA8 && mipLevel > 0 ) {
 		return;
 	}
 #endif
@@ -302,7 +301,7 @@ void idImage::SetTexParameters() {
 #endif
 
 #if defined(VITA) || defined(__vita__)
-	const bool hasMipChain = opts.numLevels > 1 && opts.textureType != TT_CUBIC;
+	const bool hasMipChain = opts.numLevels > 1 && ( opts.textureType != TT_CUBIC || opts.format == FMT_RGBA8 );
 #else
 	const bool hasMipChain = opts.numLevels > 1;
 #endif
@@ -653,6 +652,21 @@ void idImage::AllocImage() {
 #endif
 		glTexImage2DMultisample( GL_TEXTURE_2D_MULTISAMPLE, samples, internalFormat, opts.width, opts.height, GL_TRUE );
 		GL_CheckErrors();
+		return;
+	}
+#endif
+
+#if defined(VITA) || defined(__vita__)
+	if ( opts.textureType == TT_CUBIC && opts.format == FMT_RGBA8 ) {
+		// One allocation fixes the native face/mip stride before row uploads.
+		glTexStorage2D( GL_TEXTURE_CUBE_MAP_EXT, opts.numLevels, GL_RGBA8, opts.width, opts.height );
+		const GLenum error = glGetError();
+		if ( error != GL_NO_ERROR ) {
+			PurgeImage();
+			common->Error( "Cube storage allocation failed for %s (GL 0x%x)", GetName(), (unsigned)error );
+			return;
+		}
+		SetTexParameters();
 		return;
 	}
 #endif
