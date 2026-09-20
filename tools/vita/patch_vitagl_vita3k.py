@@ -1,238 +1,268 @@
 #!/usr/bin/env python3
-"""Apply the pinned vitaGL compatibility profile required by Vita3K."""
+"""Apply the pinned Vita3K profile and bounded uncompressed mip storage.
 
+The pre-existing compatibility edits are preserved in
+patch_vitagl_vita3k_base.py (blob 4356b1acae867856905ecd4b151e0ad87c5e2355).
+All additional generated code lives here so the existing CI cache hash covers it.
+"""
 from __future__ import annotations
-
 import pathlib
 import sys
 
+LAYOUT_HEADER = r'''/* OpenQ4 Vita3K compatibility profile: shared linear mip layout.
+ * No GXM dependencies: exercised by the native regression test.
+ */
+#ifndef VGL_VITA3K_MIP_LAYOUT_H
+#define VGL_VITA3K_MIP_LAYOUT_H
+#include <stdint.h>
+#include <stddef.h>
+#define VGL_VITA3K_MAX_MIPS 16
+
+typedef struct {
+    uint32_t width[VGL_VITA3K_MAX_MIPS];
+    uint32_t height[VGL_VITA3K_MAX_MIPS];
+    uint32_t stride[VGL_VITA3K_MAX_MIPS];
+    size_t offset[VGL_VITA3K_MAX_MIPS];
+    size_t size;
+    unsigned levels;
+} vgl_vita3k_mip_layout;
+
+static int vgl_vita3k_build_mip_layout(uint32_t width, uint32_t height,
+                                      uint32_t bpp, int mipmapped,
+                                      vgl_vita3k_mip_layout *out) {
+    if (!out || !width || !height || width > 4096 || height > 4096 ||
+        !bpp || bpp > 16) return 0;
+    uint32_t sw = width, sh = height;
+    if (mipmapped) {
+        sw = sh = 1;
+        while (sw < width) sw <<= 1;
+        while (sh < height) sh <<= 1;
+    }
+    out->levels = 0;
+    out->size = 0;
+    do {
+        const unsigned i = out->levels++;
+        out->width[i] = width;
+        out->height[i] = height;
+        out->stride[i] = ((sw + 7u) & ~7u) * bpp;
+        out->offset[i] = out->size;
+        out->size += (size_t)out->stride[i] * sh;
+        if (!mipmapped || (width == 1 && height == 1)) break;
+        width = width > 1 ? width >> 1 : 1;
+        height = height > 1 ? height >> 1 : 1;
+        sw = sw > 1 ? sw >> 1 : 1;
+        sh = sh > 1 ? sh >> 1 : 1;
+    } while (out->levels < VGL_VITA3K_MAX_MIPS);
+    return 1;
+}
+#endif
+'''
+
+MIP_ALLOCATOR = r'''void gpu_alloc_mipmaps(int level, texture *tex) {
+#ifdef HAVE_VITA3K_SUPPORT
+    /* Vita3K's transfer-downscale HLE path is intentionally not used here.
+     * Allocation and uploads must agree on the entire chain, including 1xN,
+     * Nx1 and the rectangular tail. Preserve the engine-authored mip levels.
+     */
+    if (tex->status != TEX_VALID || !tex->data) return;
+    const SceGxmTextureFormat format = vglGetTexFormat(&tex->gxm_tex);
+    const uint32_t bpp = tex_format_to_bytespp(format);
+    uint32_t orig_w, orig_h;
+    vglGetTexSizes(&tex->gxm_tex, &orig_w, &orig_h);
+    vgl_vita3k_mip_layout layout;
+    if (!vgl_vita3k_build_mip_layout(orig_w, orig_h, bpp, 1, &layout)) {
+        SET_GL_ERROR(GL_INVALID_VALUE)
+    }
+    if (level >= (int)layout.levels) {
+        SET_GL_ERROR(GL_INVALID_VALUE)
+    }
+    const unsigned requested = level < 0 ? layout.levels : (unsigned)level + 1;
+    if (requested <= 1 || (level >= 0 && requested <= tex->mip_count)) return;
+
+    const int already_mipped = tex->mip_count > 1;
+#ifdef LOG_ERRORS
+    if (!already_mipped) {
+        sceClibPrintf("[VOQ4][mip] alloc %ux%u bpp=%u levels=%u bytes=%u\n",
+            orig_w, orig_h, bpp, layout.levels, (unsigned)layout.size);
+    }
+#endif
+    int copy_on_write = 0;
+#ifndef TEXTURES_SPEEDHACK
+    copy_on_write = tex->last_frame != OBJ_NOT_USED &&
+        vgl_framecount - tex->last_frame <= FRAME_PURGE_FREQ;
+#endif
+    uint8_t *new_data = (uint8_t *)tex->data;
+    if (!already_mipped || copy_on_write) {
+        /* Do not realloc a potentially in-flight GXM pointer; preserve mapping
+         * alignment and let the normal texture GC retire the old allocation.
+         */
+        new_data = (uint8_t *)gpu_alloc_mapped_for_gpu(layout.size);
+        if (!new_data) {
+            SET_GL_ERROR(GL_OUT_OF_MEMORY)
+        }
+        if (already_mipped) {
+            vgl_memcpy(new_data, tex->data, layout.size);
+        } else {
+            vgl_memset(new_data, 0, layout.size);
+            const uint32_t old_stride = VGL_ALIGN(orig_w, 8) * bpp;
+            for (uint32_t y = 0; y < orig_h; ++y) {
+                vgl_memcpy(new_data + y * layout.stride[0],
+                    (const uint8_t *)tex->data + y * old_stride, orig_w * bpp);
+            }
+        }
+    }
+    /* Same nearest-neighbour CPU policy as the prior emulator patch, with
+     * clamped dimensions, floor-sized NPOT levels and explicit row pitches.
+     */
+    for (unsigned i = 1; i < requested; ++i) {
+        const uint8_t *src = new_data + layout.offset[i - 1];
+        uint8_t *dst = new_data + layout.offset[i];
+        for (uint32_t y = 0; y < layout.height[i]; ++y) {
+            const uint32_t sy = layout.height[i - 1] > 1 ? y * 2 : 0;
+            for (uint32_t x = 0; x < layout.width[i]; ++x) {
+                const uint32_t sx = layout.width[i - 1] > 1 ? x * 2 : 0;
+                sceClibMemcpy(dst + y * layout.stride[i] + x * bpp,
+                    src + sy * layout.stride[i - 1] + sx * bpp, bpp);
+            }
+        }
+    }
+    if (new_data != tex->data) gpu_free_texture_data(tex);
+    tex->mip_count = requested;
+    vglInitLinearTexture(&tex->gxm_tex, new_data, format, orig_w, orig_h,
+                        tex->use_mips ? tex->mip_count : 0);
+    tex->palette_data = NULL;
+    tex->status = TEX_VALID;
+    tex->data = new_data;
+#ifndef TEXTURES_SPEEDHACK
+    tex->last_frame = OBJ_NOT_USED;
+#endif
+#ifdef HAVE_TEX_CACHE
+    mark_as_cacheable(tex)
+#endif
+#else
+__ORIGINAL_BODY__
+#endif
+}'''
+
+SUBIMAGE_GUARD = r'''
+#ifdef HAVE_VITA3K_SUPPORT
+    vgl_vita3k_mip_layout voq_layout;
+    int voq_linear_target = target == GL_TEXTURE_2D;
+#ifdef HAVE_UNPURE_TEXFORMATS
+    voq_linear_target |= target == GL_TEXTURE_1D;
+#endif
+    if (voq_linear_target) {
+        if (tex->status != TEX_VALID || !tex->data) {
+            SET_GL_ERROR(GL_INVALID_OPERATION)
+        }
+        if (!vgl_vita3k_build_mip_layout(orig_w, orig_h, bpp,
+                                        tex->mip_count > 1, &voq_layout) ||
+            level < 0 || (unsigned)level >= voq_layout.levels ||
+            (unsigned)level >= tex->mip_count || xoffset < 0 || yoffset < 0 ||
+            width < 0 || height < 0 ||
+            (uint32_t)xoffset > voq_layout.width[level] ||
+            (uint32_t)yoffset > voq_layout.height[level] ||
+            (uint32_t)width > voq_layout.width[level] - (uint32_t)xoffset ||
+            (uint32_t)height > voq_layout.height[level] - (uint32_t)yoffset) {
+            SET_GL_ERROR(GL_INVALID_VALUE)
+        }
+        if (width == 0 || height == 0) return;
+        if (!pixels) { SET_GL_ERROR(GL_INVALID_VALUE) }
+    }
+#endif
+'''
+
+SUBIMAGE_ADDRESS = r'''#ifdef HAVE_VITA3K_SUPPORT
+        /* The same layout is used for allocation, copy-on-write and upload.
+         * In particular never derive pitch from an uninitialized local when
+         * the dirty-texture branch has already calculated the jump table.
+         */
+        mip_w = voq_layout.width[level];
+        mip_stride = voq_layout.stride[level];
+        ptr += voq_layout.offset[level];
+#else
+__ORIGINAL_ADDRESS__
+#endif
+'''
+
 
 def replace_once(text: str, old: str, new: str, label: str) -> str:
-    count = text.count(old)
-    if count != 1:
-        raise SystemExit(f"{label}: expected exactly one match, found {count}")
+    if text.count(old) != 1:
+        raise RuntimeError(f"{label}: expected one pinned-source match, got {text.count(old)}")
     return text.replace(old, new, 1)
+
+
+def function_span(text: str, signature: str) -> tuple[int, int]:
+    """Pinned functions have no unmatched braces in strings/comments."""
+    if text.count(signature) != 1:
+        raise RuntimeError(f"expected one function: {signature}")
+    start = text.index(signature)
+    opening = text.index("{", start)
+    depth = 1
+    for pos in range(opening + 1, len(text)):
+        depth += (text[pos] == "{") - (text[pos] == "}")
+        if depth == 0:
+            return start, pos + 1
+    raise RuntimeError(f"unterminated function: {signature}")
+
+
+def patch_mips(root: pathlib.Path) -> None:
+    gpu_path = root / "source/utils/gpu_utils.c"
+    text = gpu_path.read_text(encoding="utf-8")
+    start, end = function_span(text, "void gpu_alloc_mipmaps(int level, texture *tex)")
+    old = text[start:end]
+    # Fail closed if the pinned dependency no longer has the problematic loop.
+    if "while ((w > 1) && (h > 1))" not in old:
+        raise RuntimeError("unexpected original mip allocator")
+    original_body = old[old.index("{") + 1:old.rfind("}")]
+    replacement = MIP_ALLOCATOR.replace("__ORIGINAL_BODY__", original_body)
+    text = text[:start] + replacement + text[end:]
+    text = replace_once(text, '#include "../shared.h"',
+        '#include "../shared.h"\n#ifdef HAVE_VITA3K_SUPPORT\n#include "vita3k_mip_layout.h"\n#endif',
+        "mip allocator layout include")
+    # Compressed 2D/cube upload paths pass w/4,h/4 (or w/8,h/4)
+    # to GXM. Sub-block authored DDS mips must use the existing CPU swizzler;
+    # otherwise these calls submit a zero width/height to the transfer backend.
+    transfer_predicate = "aligned_width == w && aligned_height == h && h <= 2048"
+    if text.count(transfer_predicate) < 2:
+        raise RuntimeError("expected compressed transfer predicates in pinned vitaGL")
+    text = text.replace(transfer_predicate,
+        "w >= 8 && h >= 4 && " + transfer_predicate)
+    gpu_path.write_text(text, encoding="utf-8")
+    (root / "source/utils/vita3k_mip_layout.h").write_text(LAYOUT_HEADER, encoding="utf-8")
+
+    path = root / "source/textures.c"
+    text = path.read_text(encoding="utf-8")
+    start, end = function_span(text, "static inline __attribute__((always_inline)) void _glTexSubImage2D(")
+    sub = text[start:end]
+    sub = replace_once(sub, "\tuint32_t po2_h;", "\tuint32_t po2_h;\n" + SUBIMAGE_GUARD,
+                       "per-mip upload bounds")
+    alloc = "\t\tvoid *texture_data = gpu_alloc_mapped_for_gpu(size);"
+    sub = replace_once(sub, alloc,
+        "#ifdef HAVE_VITA3K_SUPPORT\n"
+        "\t\tif (voq_linear_target) size = voq_layout.size;\n"
+        "#endif\n" + alloc + "\n"
+        "#ifdef HAVE_VITA3K_SUPPORT\n"
+        "\t\tif (!texture_data) { SET_GL_ERROR(GL_OUT_OF_MEMORY) }\n"
+        "#endif", "copy-on-write capacity and OOM")
+    a = sub.index("\t\tif (level > 0) {", sub.index("uint32_t mip_w, mip_stride;"))
+    b = sub.index("\t\tptr += xoffset * bpp + yoffset * mip_stride;", a)
+    old_address = sub[a:b]
+    sub = sub[:a] + SUBIMAGE_ADDRESS.replace("__ORIGINAL_ADDRESS__", old_address) + sub[b:]
+    text = text[:start] + sub + text[end:]
+    # Append the include before the function; shared.h has already been included.
+    start = text.index("static inline __attribute__((always_inline)) void _glTexSubImage2D(")
+    text = text[:start] + '#ifdef HAVE_VITA3K_SUPPORT\n#include "utils/vita3k_mip_layout.h"\n#endif\n\n' + text[start:]
+    path.write_text(text, encoding="utf-8")
+    print("Applied bounded Vita3K linear mip allocation/upload and copy-on-write")
 
 
 def main() -> int:
     if len(sys.argv) != 2:
         raise SystemExit("usage: patch_vitagl_vita3k.py <vitaGL-repo>")
-
-    root = pathlib.Path(sys.argv[1])
-    path = root / "source" / "gxm.c"
-    text = path.read_text(encoding="utf-8")
-
-    text = replace_once(
-        text,
-        "\tis_shark_online = shark_init(NULL) >= 0;",
-        """#ifdef HAVE_VITA3K_SUPPORT
-\tis_shark_online = shark_init_simple(NULL) >= 0;
-#else
-\tis_shark_online = shark_init(NULL) >= 0;
-#endif""",
-        "primary shark init",
-    )
-
-    text = replace_once(
-        text,
-        '\t\tis_shark_online = shark_init("ur0:data/external/libshacccg.suprx") >= 0;',
-        """#ifdef HAVE_VITA3K_SUPPORT
-\t\tis_shark_online = shark_init_simple("ur0:data/external/libshacccg.suprx") >= 0;
-#else
-\t\tis_shark_online = shark_init("ur0:data/external/libshacccg.suprx") >= 0;
-#endif""",
-        "fallback shark init",
-    )
-
-    text = replace_once(
-        text,
-        "\tgxm_init_params.flags = SCE_GXM_INITIALIZE_FLAG_EXTENDED_FORMAT;",
-        """#ifdef HAVE_VITA3K_SUPPORT
-\tgxm_init_params.flags = SCE_GXM_INITIALIZE_FLAG_DEFAULT;
-#else
-\tgxm_init_params.flags = SCE_GXM_INITIALIZE_FLAG_EXTENDED_FORMAT;
-#endif""",
-        "GXM init flags",
-    )
-
-    text = replace_once(
-        text,
-        "\tsceGxmVshInitialize(&gxm_init_params);",
-        """#ifdef HAVE_VITA3K_SUPPORT
-\tsceGxmInitialize(&gxm_init_params);
-#else
-\tsceGxmVshInitialize(&gxm_init_params);
-#endif""",
-        "GXM init entrypoint",
-    )
-
-    path.write_text(text, encoding="utf-8")
-
-    # Current vitaGL injects helper functions using Cg bit_cast into every
-    # translated GLSL program. The libshacccg path used by Vita3K rejects that
-    # identifier while linking, even when the helpers are dead code. Our
-    # Vita3K profile does not enable HAVE_FIXED_ATTRIBUTES, so vglUnpack is not
-    # injected into shader main() and can safely be an identity helper here.
-    shader_header_path = root / "source" / "shaders" / "glsl_translator_hdr.h"
-    shader_header = shader_header_path.read_text(encoding="utf-8")
-    shader_header = replace_once(
-        shader_header,
-        """#define GLFixedToFloat(fx) (float(bit_cast<short2>(fx).y + (bit_cast<unsigned short2>(fx).x * (1.0f / 65536.0f))))
-inline float vglUnpack(float v) {
-\tint bits = bit_cast<int>(v);
-\tint exponent = (bits >> 23) & 0xFF;
-\tif ((exponent == 0) || (exponent == 255))
-\t\treturn GLFixedToFloat(v);
-\treturn v;
-}
-inline float2 vglUnpack(float2 v) {
-\treturn float2(vglUnpack(v.x), vglUnpack(v.y));
-}
-inline float3 vglUnpack(float3 v) {
-\t\treturn float3(vglUnpack(v.x), vglUnpack(v.y), vglUnpack(v.z));
-}
-inline float4 vglUnpack(float4 v) {
-\t\treturn float4(vglUnpack(v.x), vglUnpack(v.y), vglUnpack(v.z), vglUnpack(v.w));
-}""",
-        """#define GLFixedToFloat(fx) (float(fx))
-inline float vglUnpack(float v) { return v; }
-inline float2 vglUnpack(float2 v) { return v; }
-inline float3 vglUnpack(float3 v) { return v; }
-inline float4 vglUnpack(float4 v) { return v; }""",
-        "Vita3K shader bit_cast helpers",
-    )
-    if "bit_cast" in shader_header:
-        raise SystemExit("Vita3K shader compatibility patch left bit_cast in translator header")
-    shader_header_path.write_text(shader_header, encoding="utf-8")
-
-    # vitaGL's postponed GLSL path performs the actual shader compilation from
-    # glLinkProgram().  Upstream currently assumes both compiles succeeded and
-    # immediately dereferences the resulting GXM program pointers. Vita3K turns
-    # any compiler rejection into an access violation at a small address. Keep
-    # PROG_UNLINKED on failure so glGetProgramiv(GL_LINK_STATUS) can report it.
-    custom_shaders_path = root / "source" / "custom_shaders.c"
-    custom_shaders = custom_shaders_path.read_text(encoding="utf-8")
-    custom_shaders = replace_once(
-        custom_shaders,
-        """\t\tglsl_sema_mode = VGL_MODE_POSTPONED;
-\t}
-
-\tif (p->status == PROG_LINKED) {""",
-        """\t\tglsl_sema_mode = VGL_MODE_POSTPONED;
-#ifndef SKIP_ERROR_HANDLING
-\t\tif (!p->vshader->prog || !p->fshader->prog) {
-\t\t\tvgl_log("%s:%d: %s: GLSL shader-pair compilation failed; link aborted.\\n", __FILE__, __LINE__, __func__);
-\t\t\treturn;
-\t\t}
-#endif
-\t}
-
-\tif (p->status == PROG_LINKED) {""",
-        "Vita3K GLSL link failure guard",
-    )
-    custom_shaders_path.write_text(custom_shaders, encoding="utf-8")
-
-    # _glTexImage2D_FlatIMPL accepts GL_HALF_FLOAT for RGBA16F, but the matching
-    # _glTexSubImage2D path rejects the same type. OpenQ4 allocates first and
-    # uploads afterwards, so add a native F16 fast-store subimage path.
-    textures_path = root / "source" / "textures.c"
-    textures = textures_path.read_text(encoding="utf-8")
-    subimage_marker = "static inline __attribute__((always_inline)) void _glTexSubImage2D("
-    subimage_pos = textures.find(subimage_marker)
-    if subimage_pos < 0:
-        raise SystemExit("Vita3K half-float patch: _glTexSubImage2D marker not found")
-
-    textures_prefix = textures[:subimage_pos]
-    textures_subimage = textures[subimage_pos:]
-    textures_subimage = replace_once(
-        textures_subimage,
-        """\tcase GL_RGBA:
-\t\tswitch (type) {
-\t\tcase GL_UNSIGNED_BYTE:
-\t\t\tdata_bpp = 4;
-\t\t\tread_cb = read_rgba8888;
-\t\t\tbreak;""",
-        """\tcase GL_RGBA:
-\t\tswitch (type) {
-\t\tcase GL_HALF_FLOAT:
-\t\tcase GL_HALF_FLOAT_OES:
-\t\t\tif (tex_format != SCE_GXM_TEXTURE_FORMAT_F16F16F16F16_RGBA) {
-\t\t\t\tSET_GL_ERROR_WITH_VALUE(GL_INVALID_ENUM, type)
-\t\t\t}
-\t\t\tdata_bpp = 8;
-\t\t\tfast_store = GL_TRUE;
-\t\t\tbreak;
-\t\tcase GL_UNSIGNED_BYTE:
-\t\t\tdata_bpp = 4;
-\t\t\tread_cb = read_rgba8888;
-\t\t\tbreak;""",
-        "Vita3K half-float texture subimage support",
-    )
-    textures = textures_prefix + textures_subimage
-    textures_path.write_text(textures, encoding="utf-8")
-
-    gpu_utils_path = root / "source" / "utils" / "gpu_utils.c"
-    gpu_utils = gpu_utils_path.read_text(encoding="utf-8")
-    gpu_utils = replace_once(
-        gpu_utils,
-        """			if (curWidth <= 1024 && curHeight <= 1024) {
-				sceGxmTransferDownscale(
-					fmt, curPtr, 0, 0,
-					curWidth, curHeight,
-					curSrcStride * bpp,
-					fmt, dstPtr, 0, 0,
-					curDstStride * bpp,
-					NULL, 0, NULL);
-			} else { // sceGxmTransferDownscale doesn't support higher sizes, so we go for CPU downscaling
-				for (int y = 0, y2 = 0; y < curHeight; y += 2, y2++) {
-					uint8_t *srcLine = curPtr + curSrcStride * bpp * y;
-					uint8_t *dstLine = dstPtr + curDstStride * bpp * y2;
-					for (int x = 0, x2 = 0; x < curWidth; x += 2, x2++) {
-						sceClibMemcpy(dstLine + x2 * bpp, srcLine + x * bpp, bpp);
-					}
-				}
-			}""",
-        """#ifndef HAVE_VITA3K_SUPPORT
-			if (curWidth <= 1024 && curHeight <= 1024) {
-				sceGxmTransferDownscale(
-					fmt, curPtr, 0, 0,
-					curWidth, curHeight,
-					curSrcStride * bpp,
-					fmt, dstPtr, 0, 0,
-					curDstStride * bpp,
-					NULL, 0, NULL);
-			} else
-#endif
-			{
-				// Vita3K's transfer-downscale HLE path has crashed while vitaGL was
-				// building tiny OpenQ4 intrinsic mip chains. Keep the same nearest
-				// downscale semantics entirely in guest memory on the emulator.
-				for (int y = 0, y2 = 0; y < curHeight; y += 2, y2++) {
-					uint8_t *srcLine = curPtr + curSrcStride * bpp * y;
-					uint8_t *dstLine = dstPtr + curDstStride * bpp * y2;
-					for (int x = 0, x2 = 0; x < curWidth; x += 2, x2++) {
-						sceClibMemcpy(dstLine + x2 * bpp, srcLine + x * bpp, bpp);
-					}
-				}
-			}""",
-        "Vita3K guest-CPU mip downscale",
-    )
-    gpu_utils_path.write_text(gpu_utils, encoding="utf-8")
-
-    checks = (
-        "shark_init_simple(NULL)",
-        "SCE_GXM_INITIALIZE_FLAG_DEFAULT",
-        "sceGxmInitialize(&gxm_init_params)",
-    )
-    for token in checks:
-        if token not in text:
-            raise SystemExit(f"compat patch verification failed: {token}")
-
-    print("Applied Vita3K compatibility init patch to", path)
-    print("Applied Vita3K shader-compiler compatibility patch to", shader_header_path)
-    print("Applied Vita3K GLSL link-failure guard to", custom_shaders_path)
-    print("Applied Vita3K half-float subimage support to", textures_path)
-    print("Applied Vita3K guest-CPU mip downscale patch to", gpu_utils_path)
+    import patch_vitagl_vita3k_base
+    patch_vitagl_vita3k_base.main()
+    patch_mips(pathlib.Path(sys.argv[1]))
     return 0
 
 

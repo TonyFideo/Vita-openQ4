@@ -1,6 +1,8 @@
+#include "vita_safe_printf.h"
 #include "../../idlib/precompiled.h"
 #include "vita_public.h"
 
+#include <psp2/io/fcntl.h>
 #include <psp2/io/stat.h>
 #include <psp2/kernel/clib.h>
 #include <psp2/kernel/processmgr.h>
@@ -24,6 +26,35 @@ const char *VITA_EBOOT_PATH = "app0:/eboot.bin";
 
 uint64_t vitaTimeBaseUsec = 0;
 int vitaLastMilliseconds = 0;
+
+// Keep warnings/fatal messages independently of Vita3K's buffered host log.
+// This is a diagnostic sink only: it never calls the engine filesystem/logger.
+static void VitaPrintText( const char *text, bool persist = false ) {
+	sceClibPrintf( "%s", text );
+	if ( !persist && strstr( text, "WARNING" ) == NULL &&
+		 strstr( text, "ERROR" ) == NULL && strstr( text, "FATAL" ) == NULL ) {
+		return;
+	}
+	const SceUID fd = sceIoOpen( VITA_OPENQ4_WRITABLE_ROOT "/logs/errors.log",
+		SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND, 0666 );
+	if ( fd >= 0 ) {
+		const SceSize size = static_cast<SceSize>( sceClibStrnlen( text, 4096 ) );
+		SceSize offset = 0;
+		while ( offset < size ) {
+			const int written = sceIoWrite( fd, text + offset, size - offset );
+			if ( written <= 0 ) break;
+			offset += static_cast<SceSize>( written );
+		}
+		sceIoClose( fd );
+	}
+}
+
+static void VitaPrintV( const char *format, va_list args ) {
+	if ( format == NULL ) return;
+	char text[4096];
+	VitaFormatPrint( text, sizeof( text ), format, args );
+	VitaPrintText( text );
+}
 
 static int Vita_BytesToMegabytes( uint64_t bytes ) {
 	const uint64_t megabytes = bytes >> 20;
@@ -55,6 +86,7 @@ void Sys_Init( void ) {
 	sceIoMkdir( "ux0:data/Vita-OpenQ4/config", 0777 );
 	sceIoMkdir( "ux0:data/Vita-OpenQ4/cache", 0777 );
 	sceIoMkdir( "ux0:data/Vita-OpenQ4/logs", 0777 );
+	sceIoRemove( VITA_OPENQ4_WRITABLE_ROOT "/logs/errors.log" );
 	Vita_InitThreads();
 	Sys_Milliseconds();
 }
@@ -70,15 +102,14 @@ void Sys_Quit( void ) {
 
 void Sys_Error( const char *error, ... ) {
 	char text[4096];
-	text[0] = '\0';
-
 	va_list args;
 	va_start( args, error );
-	sceClibVsnprintf( text, sizeof( text ), error != NULL ? error : "Unknown error", args );
+	VitaFormatPrint( text, sizeof( text ), error != NULL ? error : "Unknown error", args );
 	va_end( args );
-	text[sizeof( text ) - 1] = '\0';
 
-	sceClibPrintf( "[openQ4] FATAL: %s\n", text );
+	VitaPrintText( "[openQ4] FATAL: ", true );
+	VitaPrintText( text, true );
+	VitaPrintText( "\n", true );
 	Sys_Shutdown();
 	sceKernelExitProcess( -1 );
 }
@@ -96,29 +127,21 @@ void Sys_SetClipboardData( const char *string ) {
 }
 
 void Sys_Printf( const char *msg, ... ) {
-	if ( msg == NULL ) {
-		return;
-	}
 	va_list args;
 	va_start( args, msg );
-	sceClibVprintf( msg, args );
+	VitaPrintV( msg, args );
 	va_end( args );
 }
 
 void Sys_DebugPrintf( const char *fmt, ... ) {
-	if ( fmt == NULL ) {
-		return;
-	}
 	va_list args;
 	va_start( args, fmt );
-	sceClibVprintf( fmt, args );
+	VitaPrintV( fmt, args );
 	va_end( args );
 }
 
 void Sys_DebugVPrintf( const char *fmt, va_list arg ) {
-	if ( fmt != NULL ) {
-		sceClibVprintf( fmt, arg );
-	}
+	VitaPrintV( fmt, arg );
 }
 
 void Sys_Sleep( int msec ) {
