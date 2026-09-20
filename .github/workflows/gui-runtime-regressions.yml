@@ -7,6 +7,8 @@ on:
       - .github/workflows/gui-runtime-regressions.yml
       - src/ui/**
       - src/idlib/**
+      - src/renderer/**
+      - tools/vita/patch_vitagl*.py
       - tools/vita/tests/test_vita_gui*.py
       - content/baseoq4/pak0/guis/**
   workflow_dispatch:
@@ -36,15 +38,34 @@ jobs:
           /src/framework/
           /src/renderer/
           /src/sys/vita/
-          /tools/vita/tests/
+          /tools/vita/
           /content/baseoq4/pak0/guis/
           /.github/workflows/
+          /AGENTS.md
+          /meson.build
           EOF
           git fetch --depth 1 --filter=blob:none origin "${GITHUB_SHA}"
           git checkout --detach FETCH_HEAD
 
+      - name: Fetch the renderer's pinned VitaGL source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .tmp gui-diagnostics
+          pin=$(sed -n 's/^  VITAGL_SHA: //p' .github/workflows/vita-sdk.yml)
+          [[ "$pin" =~ ^[0-9a-f]{40}$ ]]
+          git init .tmp/vitagl
+          git -C .tmp/vitagl remote add origin https://github.com/Rinnegatamante/vitaGL.git
+          git -C .tmp/vitagl fetch --depth 1 origin "$pin"
+          git -C .tmp/vitagl checkout --detach FETCH_HEAD
+          git -C .tmp/vitagl rev-parse HEAD > gui-diagnostics/vitagl-commit.txt
+          git -C .tmp/vitagl archive HEAD | gzip > gui-diagnostics/vitagl-source.tar.gz
+          python3 tools/vita/patch_vitagl_vita3k.py .tmp/vitagl | tee gui-diagnostics/vitagl-patch.log
+
       - name: Run GUI regression tests
         shell: bash
+        env:
+          VOQ_VITAGL_SOURCE: ${{ github.workspace }}/.tmp/vitagl
         run: |
           set -euo pipefail
           mkdir -p gui-diagnostics
@@ -57,7 +78,7 @@ jobs:
           set -euo pipefail
           mkdir -p gui-diagnostics
           git rev-parse HEAD > gui-diagnostics/commit.txt
-          git archive HEAD src/ui src/idlib src/framework src/renderer src/sys/vita tools/vita/tests content/baseoq4/pak0/guis .github/workflows | gzip > gui-diagnostics/gui-source.tar.gz
+          git archive HEAD AGENTS.md meson.build src/ui src/idlib src/framework src/renderer src/sys/vita tools/vita content/baseoq4/pak0/guis .github/workflows | gzip > gui-diagnostics/gui-source.tar.gz
 
       - name: Upload GUI test evidence
         if: always()
