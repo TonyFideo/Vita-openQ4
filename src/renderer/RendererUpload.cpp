@@ -13,13 +13,15 @@ static const int RENDERER_UPLOAD_MIN_FRAME_BUFFERS = 3;
 static const int RENDERER_UPLOAD_MIN_MEGS = 1;
 static const int RENDERER_UPLOAD_MAX_MEGS = 128;
 #if defined(VITA) || defined(__vita__)
-// Pinned VitaGL keeps recently submitted buffer storage alive for four frames.
-// Five rotating slots let normal reuse fall outside that window without a
-// 16 MiB-per-frame orphan/COW cycle. Four MiB is already twice idTech4's
-// historical 2 MiB frame-temp budget; overflow still falls back to the existing
-// static allocation path instead of corrupting the stream.
+// The pinned VitaGL marks a VBO busy for FRAME_PURGE_FREQ == 4 display frames.
+// Keep five stream slots, but retire them against VitaGL's own presentation
+// counter rather than idTech4's front-end frame counter. Those clocks normally
+// move together, but menu/loading work can advance the engine without presenting.
+// Four MiB is already twice idTech4's historical 2 MiB frame-temp budget.
 static const int VITA_RENDERER_UPLOAD_MAX_MEGS = 4;
 static const int VITA_RENDERER_UPLOAD_FRAME_BUFFERS = 5;
+static const unsigned int VITA_RENDERER_UPLOAD_REUSE_WINDOW = 4u;
+static const unsigned int VITA_RENDERER_UPLOAD_UNUSED_FRAME = 0xffffffffu;
 #endif
 static const int RENDERER_UPLOAD_FENCE_WAIT_RETRIES = 2;
 static const GLuint64 RENDERER_UPLOAD_FENCE_WAIT_NS = 1000000ull;
@@ -344,6 +346,11 @@ const rendererUploadStats_t &idLegacyStreamBuffer::Stats( void ) const {
 idUploadManager::idUploadManager() {
 	memset( &stats, 0, sizeof( stats ) );
 	memset( frameBuffers, 0, sizeof( frameBuffers ) );
+#if defined(VITA) || defined(__vita__)
+	for ( int i = 0; i < RENDERER_UPLOAD_MAX_FRAME_BUFFERS; ++i ) {
+		frameBuffers[i].vitaLastUseFrame = VITA_RENDERER_UPLOAD_UNUSED_FRAME;
+	}
+#endif
 	path = UPLOAD_PATH_DISABLED;
 	currentFrameBuffer = 0;
 	frameBufferCount = 0;
@@ -504,21 +511,21 @@ void idUploadManager::BeginFrame( int frameCount ) {
 		return;
 	}
 
+#if defined(VITA) || defined(__vita__)
+	const unsigned int vitaFrame = vglGetFrameNumber();
+	if ( !SelectVitaFrameBufferForFrame( vitaFrame, frameCount ) ) {
+		return;
+	}
+	stats.frameBufferIndex = currentFrameBuffer;
+	frameBuffer_t &frame = frameBuffers[currentFrameBuffer];
+	(void)frame;
+#else
 	const int preferredFrameBuffer = frameCount % frameBufferCount;
 	currentFrameBuffer = preferredFrameBuffer;
 	SelectFrameBufferForFrame( preferredFrameBuffer );
 	stats.frameBufferIndex = currentFrameBuffer;
 	frameBuffer_t &frame = frameBuffers[currentFrameBuffer];
 
-#if defined(VITA) || defined(__vita__)
-	// Do not orphan VitaGL VBO storage at BeginFrame. glBufferData allocates a
-	// brand-new CPU-mapped block and retires the old one, so the desktop-style
-	// orphan caused a full ring-sized allocation every loading-HUD frame. The
-	// five-slot rotation is longer than VitaGL's four-frame purge window. If a
-	// slot is nevertheless still referenced, VitaGL's glBufferSubData path keeps
-	// its own copy-on-write guard, bounded by the 4 MiB platform ring cap.
-	(void)frame;
-#else
 	if ( path != UPLOAD_PATH_PERSISTENT ) {
 		// The modern executor may have rebound GL_ARRAY_BUFFER through its state
 		// cache since the legacy vertex-cache shadow was last updated. Force the
@@ -579,6 +586,30 @@ bool idUploadManager::AllocFrameTemp( void *data, int bytes, int alignment, rend
 		idVertexCache::BindArrayBuffer( frame.vbo );
 	}
 
+#if defined(VITA) || defined(__vita__)
+	// VitaGL's glBufferSubData performs whole-buffer copy-on-write whenever the
+	// VBO was drawn in the previous four presentation frames. With a 4 MiB ring
+	// slot, changing a few KB could therefore allocate/copy another full 4 MiB.
+	//
+	// The slot selector above proves this backing is outside VitaGL's busy
+	// window (or explicitly finishes the GPU in the exceptional no-free-slot
+	// case), so update the CPU-mapped VBO in place through VitaGL's map API.
+	// This preserves the GL buffer contract without transient whole-ring copies.
+	void *vitaMapped = glMapBufferRange( GL_ARRAY_BUFFER, offset, bytes, GL_MAP_WRITE_BIT );
+	if ( vitaMapped == NULL ) {
+		stats.frameOverflowBytes += bytes;
+		R_GLStateCache_InvalidateBufferBinding( GL_ARRAY_BUFFER, "renderer upload Vita map failure" );
+		return false;
+	}
+	SIMDProcessor->Memcpy( vitaMapped, data, bytes );
+	if ( glUnmapBuffer( GL_ARRAY_BUFFER ) != GL_TRUE ) {
+		stats.frameOverflowBytes += bytes;
+		R_GLStateCache_InvalidateBufferBinding( GL_ARRAY_BUFFER, "renderer upload Vita unmap failure" );
+		return false;
+	}
+	frame.vitaLastUseFrame = vglGetFrameNumber();
+	stats.frameMapRangeWrites++;
+#else
 	if ( persistentWrite ) {
 		SIMDProcessor->Memcpy( frame.mapped + offset, data, bytes );
 		stats.framePersistentWrites++;
@@ -600,6 +631,7 @@ bool idUploadManager::AllocFrameTemp( void *data, int bytes, int alignment, rend
 		glBufferSubDataARB( GL_ARRAY_BUFFER_ARB, offset, (GLsizeiptrARB)bytes, data );
 		stats.frameSubDataWrites++;
 	}
+#endif
 
 	allocation.vbo = frame.vbo;
 	allocation.offset = offset;
@@ -683,13 +715,15 @@ bool idUploadManager::CreateFrameBuffers( uploadPath_t requestedPath ) {
 	}
 
 #if defined(VITA) || defined(__vita__)
-	// The Vita path is always SUBDATA. Allocate orphanable stream buffers with
-	// the GL2/VBO API that VitaGL implements.
+	// VitaGL backs STREAM_DRAW VBOs with CPU-mapped memory. Allocate each slot
+	// once; frame updates are mapped in place after the display-frame lifetime
+	// check in SelectVitaFrameBufferForFrame().
 	for ( int i = 0; i < frameBufferCount; ++i ) {
 		glGenBuffersARB( 1, &frameBuffers[i].vbo );
 		idVertexCache::InvalidateBufferBindings();
 		idVertexCache::BindArrayBuffer( frameBuffers[i].vbo );
 		glBufferDataARB( GL_ARRAY_BUFFER_ARB, (GLsizeiptrARB)stats.ringSizeBytes, NULL, GL_STREAM_DRAW_ARB );
+		frameBuffers[i].vitaLastUseFrame = VITA_RENDERER_UPLOAD_UNUSED_FRAME;
 	}
 #else
 	const GLbitfield persistentFlags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT | GL_DYNAMIC_STORAGE_BIT;
@@ -738,6 +772,9 @@ void idUploadManager::ShutdownFrameBuffers( void ) {
 			}
 			R_RendererUpload_DeleteBufferName( frameBuffers[i].vbo );
 		}
+#if defined(VITA) || defined(__vita__)
+		frameBuffers[i].vitaLastUseFrame = VITA_RENDERER_UPLOAD_UNUSED_FRAME;
+#endif
 	}
 	idVertexCache::InvalidateBufferBindings();
 	idVertexCache::BindArrayBuffer( 0 );
@@ -831,6 +868,47 @@ bool idUploadManager::RetireFrameFence( frameBuffer_t &frame, bool allowBlocking
 	return true;
 }
 
+#endif
+
+#if defined(VITA) || defined(__vita__)
+bool idUploadManager::SelectVitaFrameBufferForFrame( unsigned int vitaFrame, int engineFrameCount ) {
+	if ( frameBufferCount <= 0 ) {
+		return false;
+	}
+
+	const int preferredFrameBuffer = static_cast<int>( vitaFrame % static_cast<unsigned int>( frameBufferCount ) );
+	for ( int i = 0; i < frameBufferCount; ++i ) {
+		const int candidate = ( preferredFrameBuffer + i ) % frameBufferCount;
+		const unsigned int lastUse = frameBuffers[candidate].vitaLastUseFrame;
+		if ( lastUse == VITA_RENDERER_UPLOAD_UNUSED_FRAME ||
+			 static_cast<unsigned int>( vitaFrame - lastUse ) > VITA_RENDERER_UPLOAD_REUSE_WINDOW ) {
+			currentFrameBuffer = candidate;
+			if ( i != 0 ) {
+				VitaLoadingHud_LogInfo(
+					"UPLOAD VITA slot alternativo: engine=%d vgl=%u preferido=%d elegido=%d ultimo=%u",
+					engineFrameCount, vitaFrame, preferredFrameBuffer, candidate, lastUse );
+			}
+			return true;
+		}
+	}
+
+	// The engine advanced without enough VitaGL presentations to age any slot
+	// out of the four-frame GPU lifetime. Waiting here is rare but correct:
+	// after glFinish no submitted draw can still reference any stream backing.
+	// Reset our ownership stamps and reuse existing VBO memory instead of asking
+	// VitaGL's glBufferSubData COW path for another 4 MiB allocation.
+	VitaLoadingHud_LogWarn(
+		"UPLOAD VITA sync: engine=%d vgl=%u, ningun slot fuera de ventana GPU",
+		engineFrameCount, vitaFrame );
+	glFinish();
+	stats.frameStalls++;
+	R_RendererMetrics_AddBufferStall();
+	for ( int i = 0; i < frameBufferCount; ++i ) {
+		frameBuffers[i].vitaLastUseFrame = VITA_RENDERER_UPLOAD_UNUSED_FRAME;
+	}
+	currentFrameBuffer = preferredFrameBuffer;
+	return true;
+}
 #endif
 
 bool idUploadManager::SelectFrameBufferForFrame( int preferredFrameBuffer ) {

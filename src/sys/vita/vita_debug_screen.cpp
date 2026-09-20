@@ -293,12 +293,12 @@ bool VitaDiagScreen_ReleaseBackingIfDetached( void ) {
 		return true;
 	}
 
-	// vitaGL submits sceDisplaySetFrameBuf from its asynchronous GXM display
-	// callback.  A queue becoming empty is not, by itself, proof that the callback
-	// has finished: Vita3K removes a callback from the queue before executing it.
-	// Synchronize with the queue and a display vblank, then ask SceDisplay which
-	// framebuffer it actually owns.  Never free the diagnostic CDRAM while that
-	// exact address is still reported as current.
+	// Finish the GXM display queue, cross a display vblank, and verify ownership
+	// with SceDisplay itself before freeing the bootstrap framebuffer. Current
+	// Vita3K executes the display callback before removing it from the queue, so
+	// queue completion is already a strong barrier; the explicit framebuffer
+	// check remains as a defensive ownership invariant for emulator and hardware
+	// implementations alike.
 	sceGxmDisplayQueueFinish();
 	sceDisplayWaitVblankStart();
 

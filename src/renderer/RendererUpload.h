@@ -155,11 +155,17 @@ private:
 		unsigned int	vbo;
 		byte			*mapped;
 		GLsync			fence;
+#if defined(VITA) || defined(__vita__)
+		unsigned int	vitaLastUseFrame;
+#endif
 	};
 
 	bool CreateFrameBuffers( uploadPath_t requestedPath );
 	void ShutdownFrameBuffers( void );
 	bool RetireFrameFence( frameBuffer_t &frame, bool allowBlocking );
+#if defined(VITA) || defined(__vita__)
+	bool SelectVitaFrameBufferForFrame( unsigned int vitaFrame, int engineFrameCount );
+#endif
 	bool SelectFrameBufferForFrame( int preferredFrameBuffer );
 	void FenceCurrentFrame( void );
 	void UpdateAllocatorStats( void );

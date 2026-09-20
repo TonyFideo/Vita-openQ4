@@ -1,48 +1,63 @@
-# Crash de la compilacion 232: propiedad del framebuffer de diagnostico
+# Crash de la compilacion 232: atlas visible y COW del ring de vertices
 
-## Evidencia nueva
+## Evidencia de #232
 
-La captura de #232 muestra simultaneamente el HUD nativo de arranque y un atlas
-grande de glifos de openQ4. Es una combinacion que el motor no dibuja como una
-pantalla normal: el HUD nativo escribe directamente en un bloque CDRAM propio,
-mientras que los glifos se crean como recursos de VitaGL.
+La captura de #232 muestra el HUD de arranque y un atlas de glifos grande antes
+del cierre. El log llega a INITIALIZING MENUS y, exactamente en esa transicion,
+VitaGL informa de una reserva CPU-mapped de 4194304 bytes que falla inicialmente
+y solo sale adelante tras forzar un ciclo de garbage collection.
 
-El log de Vita3K tambien registra, durante el arranque de menus, una reserva
-forzada de 4 MiB en gpu_utils.c. Un atlas RGBA de 1024x1024 ocupa exactamente
-4 MiB. La aparicion de ese atlas sobre el antiguo HUD es consistente con que
-CDRAM liberada haya sido reutilizada mientras el display seguia apuntando a la
-direccion antigua.
+El renderer habia registrado previamente:
 
-## Carrera encontrada
+    Renderer upload manager: ... buffers=5, ring=4096KB
+    UPLOAD VITA: 5 buffers x 4096 KB
 
-openQ4 hacia lo siguiente al primer swap de VitaGL:
+Por tanto los 4194304 bytes coinciden exactamente con un slot completo del ring
+de streaming de vertices.
 
-1. vglSwapBuffers encola un callback GXM.
-2. VitaLoadingHud_EndRendererHandoff llama sceGxmDisplayQueueFinish.
-3. VitaDiagScreen_ReleaseBacking libera inmediatamente el framebuffer nativo.
+## Hipotesis descartadas
 
-La implementacion actual de Vita3K de sceGxmDisplayQueueFinish solo ejecuta
-display_queue.wait_empty(). La cola puede quedar vacia cuando el worker extrae
-el callback, antes de que ese callback termine. En vitaGL, el propio callback es
-el que llama sceDisplaySetFrameBuf. Por tanto "cola vacia" no demuestra que
-SceDisplay haya dejado de usar el framebuffer antiguo.
+La reserva no es el backing RGBA8 de un atlas de 1024x1024. Las texturas
+ordinarias de VitaGL usan la ruta GPU-mapped, mientras el mensaje observado
+procede de gpu_alloc_mapped_aligned_for_cpu.
 
-## Correccion
+Tambien se reviso la implementacion de sceGxmDisplayQueueFinish de Vita3K. El
+worker ejecuta el callback de display antes de hacer pop de la cola, de modo que
+la explicacion anterior de una cola vacia antes de completar sceDisplaySetFrameBuf
+era incorrecta. La comprobacion explicita de propiedad con
+sceDisplayGetFrameBuf se conserva como invariante defensivo, pero no se considera
+la causa demostrada del crash.
 
-La liberacion pasa a estar gobernada por propiedad real:
+## Contrato real del VBO en VitaGL
 
-- se sincroniza la cola GXM;
-- se cruza un vblank de display;
-- se consulta sceDisplayGetFrameBuf;
-- si SceDisplay aun devuelve la direccion del framebuffer de diagnostico, el
-  bloque CDRAM se conserva;
-- los siguientes swaps vuelven a comprobarlo;
-- solo se libera cuando SceDisplay confirma una direccion distinta.
+En el VitaGL fijado por el port:
 
-No hay sleeps ni numero de frames supuesto. La condicion es el estado real del
-subsistema de display y tambien es valida en hardware.
+- FRAME_PURGE_FREQ es 4.
+- un VBO utilizado por un draw recibe last_frame = vgl_framecount.
+- glBufferSubData comprueba esa edad.
+- si el VBO fue usado en los ultimos cuatro frames, no escribe en el backing
+  existente: reserva otro bloque del tamano COMPLETO del VBO y copia todo el
+  contenido antes de aplicar el cambio.
 
-El defineicon lazy introducido en #232 se elimina. Los defineicon vuelven a la
-semantica normal del motor: FindMaterial, EnsureNotPurged, SetSort, SizeIcon y
-registro inmediato. Se mantienen unicamente las trazas de GPU/mips y el progreso
-de parser, porque no alteran el comportamiento del juego.
+El ring de openQ4 tiene cinco VBO de 4 MiB. Hasta #233 se elegia el slot con
+tr.frameCount % 5, pero VitaGL decide la seguridad con vgl_framecount, que solo
+avanza en vglSwapBuffers. Los dos contadores no representan necesariamente el
+mismo ciclo de vida durante carga, UI, capturas o trabajo de frontend.
+
+## Correccion #234
+
+La vida del ring de Vita pasa a seguir el reloj que realmente usa VitaGL:
+
+1. BeginFrame consulta vglGetFrameNumber().
+2. Solo selecciona un slot nunca usado o cuya ultima utilizacion tenga mas de
+   cuatro frames VitaGL de antiguedad.
+3. Si el slot preferido sigue ocupado, busca otro slot seguro.
+4. Si excepcionalmente no queda ninguno, glFinish establece una barrera GPU
+   real y se reinician las marcas de propiedad.
+5. Los datos de frame se escriben mediante glMapBufferRange/glUnmapBuffer sobre
+   el backing CPU-mapped ya existente. No se usa glBufferSubData para el ring de
+   Vita, por lo que una actualizacion pequena no puede disparar un COW de 4 MiB.
+
+Esto no reduce calidad, no omite recursos, no difiere parsing y no cambia la
+semantica de los GUI. El defineicon lazy de #232 permanece eliminado: los iconos
+se cargan por la ruta normal del motor.
