@@ -323,6 +323,10 @@ static bool NavigateFocus( idWindow *window, int direction, bool runHoverScripts
 }
 
 bool idWindow::registerIsTemporary[MAX_EXPRESSION_REGISTERS];		// statics to assist during parsing
+#if defined(VITA) || defined(__vita__)
+static_assert( sizeof( idWindow ) < 8 * 1024,
+	"idWindow expression storage regressed to a per-window fixed allocation" );
+#endif
 //float idWindow::shaderRegisters[MAX_EXPRESSION_REGISTERS];
 //wexpOp_t idWindow::shaderOps[MAX_EXPRESSION_OPS];
 
@@ -534,7 +538,6 @@ void idWindow::CommonInit() {
 	captureChild = NULL;
 	overChild = NULL;
 	parent = NULL;
-	saveOps = NULL;
 	saveRegs = NULL;
 	timeLine = -1;
 	textShadow = 0;
@@ -546,8 +549,7 @@ void idWindow::CommonInit() {
 
 	hideCursor = false;
 
-// jmarshall - gui crash
-	numOps = 0;
+	ClearExpressionOps();
 
 	backColor_r.Bind(backColor, 0);
 	backColor_g.Bind(backColor, 1);
@@ -622,6 +624,13 @@ size_t idWindow::Allocated() {
 	for (i = 0; i < c; i++) {
 		if (drawWindows[i].simp) {
 			sz += drawWindows[i].simp->Size();
+		}
+	}
+
+	sz += expressionOpBlocks.Allocated();
+	for ( i = 0; i < expressionOpBlocks.Num(); i++ ) {
+		if ( expressionOpBlocks[i] != NULL ) {
+			sz += EXPRESSION_OP_BLOCK_SIZE * sizeof( wexpOp_t );
 		}
 	}
 
@@ -4039,16 +4048,55 @@ int idWindow::ExpressionTemporary() {
 idWindow::ExpressionOp
 ================
 */
-wexpOp_t *idWindow::ExpressionOp() {
-// jmarshall - gui crash
-	if (numOps == MAX_EXPRESSION_OPS ) {
-		common->Warning( "expressionOp: gui %s hit MAX_EXPRESSION_OPS", gui->GetSourceFile());
-		return &ops[0];
+void idWindow::ClearExpressionOps() {
+	for ( int i = 0; i < expressionOpBlocks.Num(); i++ ) {
+		delete [] expressionOpBlocks[i];
 	}
-	wexpOp_t wop;
-	memset(&wop, 0, sizeof(wexpOp_t));	
-	return &ops[numOps++];
-// jmarshall end
+	expressionOpBlocks.Clear();
+	numOps = 0;
+}
+
+wexpOp_t *idWindow::ExpressionOpAt( int index ) {
+	assert( index >= 0 && index < numOps );
+	const int block = index / EXPRESSION_OP_BLOCK_SIZE;
+	const int slot = index % EXPRESSION_OP_BLOCK_SIZE;
+	assert( block >= 0 && block < expressionOpBlocks.Num() );
+	assert( expressionOpBlocks[block] != NULL );
+	return &expressionOpBlocks[block][slot];
+}
+
+const wexpOp_t *idWindow::ExpressionOpAt( int index ) const {
+	assert( index >= 0 && index < numOps );
+	const int block = index / EXPRESSION_OP_BLOCK_SIZE;
+	const int slot = index % EXPRESSION_OP_BLOCK_SIZE;
+	assert( block >= 0 && block < expressionOpBlocks.Num() );
+	assert( expressionOpBlocks[block] != NULL );
+	return &expressionOpBlocks[block][slot];
+}
+
+wexpOp_t *idWindow::ExpressionOp() {
+	if ( numOps >= MAX_EXPRESSION_OPS ) {
+		common->Warning( "expressionOp: gui %s hit MAX_EXPRESSION_OPS", gui->GetSourceFile() );
+		return ExpressionOpAt( 0 );
+	}
+
+	const int blockIndex = numOps / EXPRESSION_OP_BLOCK_SIZE;
+	const int slotIndex = numOps % EXPRESSION_OP_BLOCK_SIZE;
+	while ( expressionOpBlocks.Num() <= blockIndex ) {
+		// Grow the relocatable pointer table before allocating a backing block.
+		// Moving this table never moves any previously returned wexpOp_t.
+		expressionOpBlocks.Append( NULL );
+	}
+	if ( expressionOpBlocks[blockIndex] == NULL ) {
+		expressionOpBlocks[blockIndex] = new wexpOp_t[EXPRESSION_OP_BLOCK_SIZE];
+		memset( expressionOpBlocks[blockIndex], 0,
+			EXPRESSION_OP_BLOCK_SIZE * sizeof( wexpOp_t ) );
+	}
+
+	wexpOp_t *op = &expressionOpBlocks[blockIndex][slotIndex];
+	memset( op, 0, sizeof( *op ) );
+	numOps++;
+	return op;
 }
 
 /*
@@ -4334,7 +4382,7 @@ void idWindow::EvaluateRegisters(float *registers) {
 	registers[WEXP_REG_TIME] = gui->GetTime();
 
 	for ( i = 0 ; i < oc ; i++ ) {
-		op = &ops[i];
+		op = ExpressionOpAt( i );
 		if (op->b == -2) {
 			continue;
 		}
@@ -4564,6 +4612,7 @@ void idWindow::ReadFromDemoFile( class idDemoFile *f, bool rebuild ) {
 	f->SetLog(true, (work + "-regstuff"));
 	if (rebuild) {
 		f->ReadInt( c );
+		ClearExpressionOps();
 		for (i = 0; i < c; i++) {
 			wexpOp_t w;
 			f->ReadInt( (int&)w.opType );
@@ -4571,7 +4620,7 @@ void idWindow::ReadFromDemoFile( class idDemoFile *f, bool rebuild ) {
 			f->ReadInt( w.b );
 			f->ReadInt( w.c );
 			f->ReadInt( w.d );
-			ops.Append(w);
+			*ExpressionOp() = w;
 		}
 
 		f->ReadInt( c );
@@ -5817,13 +5866,14 @@ void idWindow::FixupParms() {
 
 	c = numOps;
 	for (i = 0; i < c; i++) {
-		if (ops[i].b == -2) {
+		wexpOp_t *op = ExpressionOpAt( i );
+		if ( op->b == -2 ) {
 			// need to fix this up
-			const char *p = (const char*)(ops[i].a);
-			idWinVar *var = GetWinVarByName(p, true);
+			const char *p = (const char *)( op->a );
+			idWinVar *var = GetWinVarByName( p, true );
 			delete []p;
-			ops[i].a = (intptr_t)var;
-			ops[i].b = -1;
+			op->a = (intptr_t)var;
+			op->b = -1;
 		}
 	}
 	
@@ -6172,9 +6222,8 @@ bool idWindow::UpdateFromDictionary ( idDict& dict ) {
 	
 	// Clear all registers since they will get recreated
 	regList.Reset ( );
-	expressionRegisters.Clear ( );
-	//ops.Clear ( );
-	numOps = 0;
+	expressionRegisters.Clear();
+	ClearExpressionOps();
 	
 	for ( i = 0; i < dict.GetNumKeyVals(); i ++ ) {
 		kv = dict.GetKeyVal ( i );

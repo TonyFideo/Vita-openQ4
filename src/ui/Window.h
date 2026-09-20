@@ -416,6 +416,9 @@ protected:
 
 	int ExpressionTemporary();
 	wexpOp_t *ExpressionOp();
+	wexpOp_t *ExpressionOpAt( int index );
+	const wexpOp_t *ExpressionOpAt( int index ) const;
+	void ClearExpressionOps();
 	int EmitOp(intptr_t a, intptr_t b, wexpOpType_t opType, wexpOp_t **opp = NULL );
 	intptr_t ParseEmitOp( idParser *src, intptr_t a, wexpOpType_t opType, int priority, wexpOp_t **opp = NULL );
 	intptr_t ParseTerm( idParser *src, idWinVar *var = NULL, intptr_t component = 0 );
@@ -537,12 +540,15 @@ protected:
 	idList<idTransitionData> transitions;
 
 	static bool registerIsTemporary[MAX_EXPRESSION_REGISTERS]; // statics to assist during parsing
-// jmarshall - gui crash
-	wexpOp_t ops[MAX_EXPRESSION_OPS];			   	// evaluate to make expressionRegisters
+	// Expression operations are demand-allocated in fixed-address blocks.
+	// Recursive ternary parsing keeps a wexpOp_t* while emitting the false arm,
+	// so a single relocatable idList<wexpOp_t> is not sufficient.  Blocks keep
+	// those addresses stable without embedding MAX_EXPRESSION_OPS (~80 KiB on
+	// 32-bit) in every idWindow.
+	enum { EXPRESSION_OP_BLOCK_SIZE = 32 };
+	idList<wexpOp_t *> expressionOpBlocks;
 	int numOps;
-// jmarshall end
 	idList<float> expressionRegisters;
-	idList<wexpOp_t> *saveOps;			   	// evaluate to make expressionRegisters
 	idList<rvNamedEvent*>		namedEvents;		//  added named events
 	idList<float> *saveRegs;
 
