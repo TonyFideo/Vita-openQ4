@@ -32,6 +32,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "DeviceContext.h"
 #include "UserInterface.h"
 #include "../framework/KeyInput.h"
+#if defined(VITA) || defined(__vita__)
+#include "../sys/vita/vita_loading_hud.h"
+#endif
 
 idVec4 idDeviceContext::colorPurple;
 idVec4 idDeviceContext::colorOrange;
@@ -1739,11 +1742,22 @@ void idDeviceContext::Init() {
 		fontsVideoRestartCount = renderSystem->GetVideoRestartCount();
 		fontsCodePageGeneration = LangDict_GetCodePageGeneration();
 	}
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_LogInfo( "UI DC: fuentes" );
+#endif
 	SetupFonts();
 	activeFont = fonts.Num() > 0 ? &fonts[0] : NULL;
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_LogOk( "UI DC: fuentes OK" );
+	VitaLoadingHud_LogInfo( "UI DC: iconos integrados" );
+#endif
 	icons.Clear();
 	idStr::ClearIconEscapeCodes();
 	RegisterBuiltinIcons();
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_LogOk( "UI DC: iconos OK" );
+	VitaLoadingHud_LogInfo( "UI DC: cursores y scrollbars" );
+#endif
 	colorPurple = idVec4(1, 0, 1, 1);
 	colorOrange = idVec4(1, 1, 0, 1);
 	colorYellow = idVec4(0, 1, 1, 1);
@@ -1771,6 +1785,9 @@ void idDeviceContext::Init() {
 	scrollBarImages[SCROLLBAR_LEFT]->SetSort( SS_GUI );
 	scrollBarImages[SCROLLBAR_UP]->SetSort( SS_GUI );
 	scrollBarImages[SCROLLBAR_DOWN]->SetSort( SS_GUI );
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_LogOk( "UI DC: cursores y scrollbars OK" );
+#endif
 	cursor = CURSOR_ARROW;
 	enableClipping = true;
 	overStrikeMode = true;
@@ -1779,6 +1796,9 @@ void idDeviceContext::Init() {
 	mat.Identity();
 	origin.Zero();
 	initialized = true;
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_LogOk( "UI DC: listo" );
+#endif
 }
 
 void idDeviceContext::Shutdown() {

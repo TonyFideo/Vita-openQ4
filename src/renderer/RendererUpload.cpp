@@ -5,10 +5,22 @@
 #include "RendererUpload.h"
 #include "RendererMetrics.h"
 #include "GLStateCache.h"
+#if defined(VITA) || defined(__vita__)
+#include "../sys/vita/vita_loading_hud.h"
+#endif
 
 static const int RENDERER_UPLOAD_MIN_FRAME_BUFFERS = 3;
 static const int RENDERER_UPLOAD_MIN_MEGS = 1;
 static const int RENDERER_UPLOAD_MAX_MEGS = 128;
+#if defined(VITA) || defined(__vita__)
+// Pinned VitaGL keeps recently submitted buffer storage alive for four frames.
+// Five rotating slots let normal reuse fall outside that window without a
+// 16 MiB-per-frame orphan/COW cycle. Four MiB is already twice idTech4's
+// historical 2 MiB frame-temp budget; overflow still falls back to the existing
+// static allocation path instead of corrupting the stream.
+static const int VITA_RENDERER_UPLOAD_MAX_MEGS = 4;
+static const int VITA_RENDERER_UPLOAD_FRAME_BUFFERS = 5;
+#endif
 static const int RENDERER_UPLOAD_FENCE_WAIT_RETRIES = 2;
 static const GLuint64 RENDERER_UPLOAD_FENCE_WAIT_NS = 1000000ull;
 
@@ -363,9 +375,16 @@ void idUploadManager::Init( const renderBackendCaps_t &caps ) {
 	const bool usePersistent = lowOverheadPersistentDefault && syncAvailable && caps.hasBufferStorage && caps.hasMapBufferRange && glBufferStorage != NULL && glMapBufferRange != NULL;
 	const bool useMapRange = caps.hasMapBufferRange && glMapBufferRange != NULL;
 #endif
-	const int ringMegs = idMath::ClampInt( RENDERER_UPLOAD_MIN_MEGS, RENDERER_UPLOAD_MAX_MEGS, r_rendererUploadMegs.GetInteger() );
-	const int ringBytes = ringMegs * 1024 * 1024;
+	int ringMegs = idMath::ClampInt( RENDERER_UPLOAD_MIN_MEGS, RENDERER_UPLOAD_MAX_MEGS, r_rendererUploadMegs.GetInteger() );
 	frameBufferCount = idMath::ClampInt( RENDERER_UPLOAD_MIN_FRAME_BUFFERS, RENDERER_UPLOAD_MAX_FRAME_BUFFERS, r_rendererUploadFrameBuffers.GetInteger() );
+#if defined(VITA) || defined(__vita__)
+	// The desktop defaults (16 MiB x 4 plus a fresh 16 MiB orphan every frame)
+	// are pathological on VitaGL's mapped-memory heap. Keep a bounded platform
+	// profile instead. The public cvars remain untouched for config portability.
+	ringMegs = Min( ringMegs, VITA_RENDERER_UPLOAD_MAX_MEGS );
+	frameBufferCount = VITA_RENDERER_UPLOAD_FRAME_BUFFERS;
+#endif
+	const int ringBytes = ringMegs * 1024 * 1024;
 	uploadPath_t requestedPath = UPLOAD_PATH_DISABLED;
 
 	if ( caps.hasVBO ) {
@@ -440,6 +459,9 @@ void idUploadManager::Init( const renderBackendCaps_t &caps ) {
 		frameBufferCount,
 		activeRingBytes / 1024,
 		hasSync ? "yes" : "no" );
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_LogInfo( "UPLOAD VITA: %d buffers x %d KB, rotacion sin orphan", frameBufferCount, activeRingBytes / 1024 );
+#endif
 }
 
 void idUploadManager::Shutdown( void ) {
@@ -488,6 +510,15 @@ void idUploadManager::BeginFrame( int frameCount ) {
 	stats.frameBufferIndex = currentFrameBuffer;
 	frameBuffer_t &frame = frameBuffers[currentFrameBuffer];
 
+#if defined(VITA) || defined(__vita__)
+	// Do not orphan VitaGL VBO storage at BeginFrame. glBufferData allocates a
+	// brand-new CPU-mapped block and retires the old one, so the desktop-style
+	// orphan caused a full ring-sized allocation every loading-HUD frame. The
+	// five-slot rotation is longer than VitaGL's four-frame purge window. If a
+	// slot is nevertheless still referenced, VitaGL's glBufferSubData path keeps
+	// its own copy-on-write guard, bounded by the 4 MiB platform ring cap.
+	(void)frame;
+#else
 	if ( path != UPLOAD_PATH_PERSISTENT ) {
 		// The modern executor may have rebound GL_ARRAY_BUFFER through its state
 		// cache since the legacy vertex-cache shadow was last updated. Force the
@@ -498,6 +529,7 @@ void idUploadManager::BeginFrame( int frameCount ) {
 		glBufferDataARB( GL_ARRAY_BUFFER_ARB, (GLsizeiptrARB)stats.ringSizeBytes, NULL, GL_STREAM_DRAW_ARB );
 		R_GLStateCache_InvalidateBufferBinding( GL_ARRAY_BUFFER, "renderer upload frame orphan" );
 	}
+#endif
 }
 
 void idUploadManager::EndFrame( void ) {
