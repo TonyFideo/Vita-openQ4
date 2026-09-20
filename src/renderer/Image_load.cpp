@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "tr_local.h"
 #include "../imagetools/CubeStream.h"
 #if defined(VITA) || defined(__vita__)
+#include <psp2/kernel/clib.h>
 #include "../sys/vita/vita_loading_hud.h"
 #endif
 

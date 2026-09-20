@@ -222,7 +222,7 @@ jobs:
         run: |
           set -euo pipefail
           apt-get update -qq
-          apt-get install -y --no-install-recommends python3-pip ninja-build ccache
+          apt-get install -y --no-install-recommends python3-pip ninja-build ccache libegl1 libgl1-mesa-dri
           python3 -m pip install --break-system-packages "meson>=1.6,<2"
 
           JOBS="$(nproc)"
@@ -283,6 +283,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export VOQ_VITAGL_SOURCE="$(realpath "${VITAGL_REPO}")"
+          export VOQ_REQUIRE_GPU_TESTS=1 LIBGL_ALWAYS_SOFTWARE=1
           python3 -m unittest discover -s tools/vita/tests -p 'test_*.py' -v
           c++ -std=c++17 -Wall -Wextra -Werror tools/vita/tests/sound_stub_test.cpp -o build/sound_stub_test
           build/sound_stub_test

@@ -96,3 +96,21 @@ log, loading.log and errors.log and a capture of the world or stopping point.
 correctness. Then look for load:images:done, load:renderer-finalize:done and
 load:ready, and verify the actual sky, world/HUD and player controls. Repeat
 return-to-menu/reload after first entry to qualify ownership over several loads.
+
+## Target integration and real PK4 coverage
+
+The first target attempt (#253) built the entire pinned VitaGL archive, but
+identified two integration errors: Image_load.cpp did not include the VitaSDK
+clib declaration used by its trace calls, and the engine test step did not
+provide VOQ_VITAGL_SOURCE although VITAGL_REPO was available. The follow-up
+includes the platform header explicitly and supplies the canonical test source
+path. The full-engine lane also installs the offscreen EGL runtime and requires
+GPU host tests, instead of weakening or skipping the new tests.
+
+An additional ASan/UBSan harness uses the repository's actual Unzip.cpp and the
+exact idFile_InZip Read/Length/destructor with stored and deflated synthetic
+PK4s. All 1152 combinations pass: six cube faces, native/camera orientation,
+raw/RLE gray/RGB/RGBA, source origins, gamma/downsize and every mip byte. This
+qualifies the real ZIP I/O integration; allocation/submission to GXM remain
+mocked. The harness and output are retained as supplemental evidence, not game
+asset or hardware validation.
