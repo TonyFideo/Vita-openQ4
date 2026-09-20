@@ -62,6 +62,7 @@ static int VitaGLimp_FreeCdramBytes( void ) {
 // Readbacks serialize GXM and can affect timing; the log is evidence about the
 // observed frame only. The untouched frames between samples remain essential.
 extern "C" void __real_glClear(GLbitfield mask);
+extern "C" int voq_vgl_query_free_pools(size_t freeBytes[3]);
 static bool vitaClearAuditStarted = false;
 static unsigned vitaClearAuditSamples = 0;
 static uint64_t vitaClearAuditNext = 0;
@@ -75,10 +76,9 @@ void VitaRuntimeAudit_Start() {
 
 bool VitaRuntimeAudit_GpuFree(size_t freeBytes[3]) {
     if (!vitaGLReady) return false;
-    freeBytes[0] = vglMemFree(VGL_MEM_RAM);
-    freeBytes[1] = vglMemFree(VGL_MEM_VRAM);
-    freeBytes[2] = vglMemFree(VGL_MEM_PHYCONT);
-    return true;
+    // A ready context does not imply working allocator-stat HLE. The pinned
+    // query validates initialized output and reports unavailable otherwise.
+    return voq_vgl_query_free_pools(freeBytes) != 0;
 }
 
 static void VitaClearAuditPixels(const char *phase, unsigned sample) {

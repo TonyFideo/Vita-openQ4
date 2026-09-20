@@ -333,6 +333,56 @@ def patch_read_buffer_query(root: pathlib.Path) -> None:
     print('Applied GL_READ_BUFFER query for state-preserving readbacks')
 
 
+
+MEMORY_QUERY = r"""
+/* Diagnostic query: a non-empty pool must receive valid stats. Some emulators
+ * leave sceClibMspaceMallocStats output untouched; never expose stack garbage
+ * as free memory. This does not participate in allocation or pool sizing.
+ */
+int voq_vgl_query_free_pools(size_t free_bytes[3]) {
+    if (!free_bytes) return 0;
+    free_bytes[0] = free_bytes[1] = free_bytes[2] = 0;
+#ifdef PHYCONT_ON_DEMAND
+    /* There is no bounded physical pool to measure in this allocator mode. */
+    return 0;
+#else
+    const vglMemType types[3] = { VGL_MEM_RAM, VGL_MEM_VRAM, VGL_MEM_PHYCONT };
+    size_t observed[3] = {0, 0, 0};
+    for (unsigned i = 0; i < 3; ++i) {
+        const vglMemType type = types[i];
+        if (!mempool_size[type]) continue;
+#ifdef HAVE_CUSTOM_HEAP
+        observed[i] = tm_free[type];
+        if (observed[i] > mempool_size[type]) return 0;
+#else
+        if (!mempool_mspace[type]) return 0;
+        /* SDK declares a void return: validity comes from the filled struct,
+         * not an invented status code. Zero capacity cannot describe a live
+         * non-empty mspace, so an unimplemented HLE remains unavailable.
+         */
+        SceClibMspaceStats stats = {0};
+        sceClibMspaceMallocStats(mempool_mspace[type], &stats);
+        if (!stats.capacity || stats.capacity > mempool_size[type] ||
+            stats.current_in_use > stats.capacity) return 0;
+        observed[i] = stats.capacity - stats.current_in_use;
+#endif
+    }
+    for (unsigned i = 0; i < 3; ++i) free_bytes[i] = observed[i];
+    return 1;
+#endif
+}
+"""
+
+
+def patch_memory_query(root: pathlib.Path) -> None:
+    path = root / 'source/utils/mem_utils.c'
+    text = path.read_text(encoding='utf-8')
+    marker = 'size_t vgl_mem_get_total_space(vglMemType type) {'
+    text = _legacy().replace_once(text, marker, MEMORY_QUERY + '\n' + marker,
+                                  'validated diagnostic pool query')
+    path.write_text(text, encoding='utf-8')
+    print('Applied initialized and validated diagnostic mspace query')
+
 def main() -> int:
     if len(sys.argv) != 2:
         raise SystemExit('usage: patch_vitagl_vita3k.py <vitaGL-repo>')
@@ -340,6 +390,7 @@ def main() -> int:
     patch_bc(pathlib.Path(sys.argv[1]))
     patch_vertex_streams(pathlib.Path(sys.argv[1]))
     patch_read_buffer_query(pathlib.Path(sys.argv[1]))
+    patch_memory_query(pathlib.Path(sys.argv[1]))
     return 0
 
 

@@ -131,7 +131,8 @@ static unsigned clearCalls=0,reads=0,queries=0;
 static GLenum lastMask=0, readMode=GL_FRONT;
 static GLint readFbo=13,drawFbo=0;
 static uint64_t now=1;
-static size_t vglMemFree(int i){return 100+i;}
+static bool statsAvailable=true;
+extern "C" int voq_vgl_query_free_pools(size_t p[3]){if(!statsAvailable)return 0;for(int i=0;i<3;++i)p[i]=100+i;return 1;}
 static uint64_t sceKernelGetProcessTimeWide(){return now;}
 static void glGetIntegerv(GLenum e,GLint*p) {
     ++queries;
@@ -157,6 +158,7 @@ extern "C" void __real_glClear(GLbitfield m){++clearCalls;lastMask=m;}
 int main() {
     size_t gpu[3]={};assert(VitaRuntimeAudit_GpuFree(gpu)&&gpu[0]==100);
     vitaGLReady=false;assert(!VitaRuntimeAudit_GpuFree(gpu));vitaGLReady=true;
+    statsAvailable=false;assert(!VitaRuntimeAudit_GpuFree(gpu));statsAvailable=true;
     __wrap_glClear(GL_COLOR_BUFFER_BIT);assert(clearCalls==1 && reads==0 && queries==0);
     VitaRuntimeAudit_Start();
     __wrap_glClear(0x100);assert(clearCalls==2 && lastMask==0x100 && queries==0);

@@ -24,6 +24,29 @@ The observers retain native allocator behavior. They do not retry a failed
 allocation, grow a pool, or return a different kind of memory. The clear observer
 forwards the real GL clear once and restores the read-framebuffer selection.
 
+## Pool statistics are optional, not fabricated
+
+VitaSDK declares `sceClibMspaceMallocStats` with a void return. The upstream
+Vita3K implementation currently returns UNIMPLEMENTED without filling the
+caller-provided structure. VitaGL's existing `vglMemFree` did not initialize
+that structure, so directly using it could record arbitrary stack data.
+
+The diagnostic path now calls `voq_vgl_query_free_pools`, which zero-initializes
+each stats structure, validates capacity and current usage against the actual
+pool, and publishes the three counters only when every non-empty pool has
+valid observations. Empty pools report zero without an HLE call. In a profile
+with on-demand physical allocation, the bounded-pool query is unavailable.
+This query does not change or participate in memory allocation.
+
+`gpuReady=0` in this diagnostic means GPU pool counters are unavailable; it
+does not mean the renderer failed to initialize. CPU/newlib and kernel bank
+observations remain separate. The tests include a no-op HLE with the real void
+signature, inconsistent capacities/usage, empty/full pools and custom heaps.
+
+References: VitaSDK `include/psp2/kernel/clib.h`; Vita3K
+`vita3k/modules/SceLibKernel/SceLibKernel.cpp`; pinned VitaGL
+`source/utils/mem_utils.c`. No emulation result is treated as real hardware.
+
 ## Test session
 
 Install the full-engine VPK, not the isolated Render Probe. On a fresh launch,
@@ -90,8 +113,8 @@ collision/scripts, animation/lighting, combat/AI, audio and persistence checks.
 
 ## Host validation and limits
 
-The complete local suite passes 85 tests: the preceding 77 plus eight streaming
-report tests. Native linking, extracted observer bodies, EGL shader pixels and
+The complete local suite passes 88 tests: the preceding 77, eight streaming
+report tests and three pool-query test groups. Native linking, extracted observer bodies, EGL shader pixels and
 mocked GXM address submissions are host tests, not execution on Vita/Vita3K.
 The cross compilation and packaging must succeed separately before a VPK is
 presented as testable. Runtime correctness remains dependent on target results.
