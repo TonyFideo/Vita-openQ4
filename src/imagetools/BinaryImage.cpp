@@ -70,7 +70,17 @@ CPU path, and each distinct downsize signature stores its own copy.
 ========================
 */
 static bool R_ShouldWriteGeneratedImages() {
+#if defined(VITA) || defined(__vita__)
+	// Runtime .bimage creation is optional on Vita. Vita3K currently terminates
+	// host-side while reopening a decoded startup image cache for write, leaving
+	// a truncated file that is rejected on the next boot. Keep consuming valid
+	// generated caches (including build-time packaged caches), but do not mutate
+	// the generated tree during a normal Vita run. Build/resource generation
+	// remains enabled so prebuilt caches can still be produced deliberately.
+	return cvarSystem->GetCVarBool( "com_makingBuild" );
+#else
 	return image_writeGeneratedImages.GetBool() || cvarSystem->GetCVarBool( "com_makingBuild" );
+#endif
 }
 
 /*

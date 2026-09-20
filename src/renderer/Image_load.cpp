@@ -928,6 +928,11 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 			}
 		}
 		if ( !loadedPrecompressedDDS ) {
+#if defined(VITA) || defined(__vita__)
+			if ( !cvarSystem->GetCVarBool( "com_makingBuild" ) ) {
+				VitaLoadingHud_SetAssetPhase( GetName(), "CACHE write skipped" );
+			}
+#endif
 			binaryFileTime = im.WriteGeneratedFile( sourceFileTime );
 		}
 	}
