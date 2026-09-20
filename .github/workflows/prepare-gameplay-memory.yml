@@ -1,0 +1,147 @@
+name: Prepare reviewed gameplay memory sources
+
+on:
+  push:
+    branches: [gameplay-memory-preparation]
+    paths:
+      - .github/workflows/prepare-gameplay-memory.yml
+      - .github/review/gameplay-memory.patch.zlib
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Apply exact reviewed patch to immutable source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git config core.sparseCheckout true
+          printf '/.github/review/gameplay-memory.patch.zlib\n' > .git/info/sparse-checkout
+          git fetch --depth 1 --filter=blob:none origin "$GITHUB_SHA"
+          git checkout --detach FETCH_HEAD
+          python3 - <<'PY'
+          import hashlib, pathlib, zlib
+          patch = zlib.decompress(pathlib.Path('.github/review/gameplay-memory.patch.zlib').read_bytes())
+          assert hashlib.sha256(patch).hexdigest() == '168f6c996ad81be068279244086f473d33a8c0659ce04c049b1c5efb7a73c356'
+          pathlib.Path('/tmp/reviewed-gameplay.patch').write_bytes(patch)
+          PY
+          cat > .git/info/sparse-checkout <<'EOF'
+          /src/
+          /tools/vita/
+          /content/baseoq4/pak0/
+          /.github/workflows/
+          /docs/dev/releases/
+          /README.md
+          /AGENTS.md
+          /meson.build
+          EOF
+          git fetch --depth 1 --filter=blob:none origin 1ad2041e9c8c9292d4d334894d236b8f69d034d6
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = 1ad2041e9c8c9292d4d334894d236b8f69d034d6
+          git apply --index --whitespace=error-all /tmp/reviewed-gameplay.patch
+          git diff --cached --check
+          git diff --cached --stat
+          mkdir -p publication
+          cp /tmp/reviewed-gameplay.patch publication/reviewed.patch
+
+      - name: Prepare pinned test dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init .tmp/vitagl
+          git -C .tmp/vitagl remote add origin https://github.com/Rinnegatamante/vitaGL.git
+          git -C .tmp/vitagl fetch --depth 1 origin eccee6d767ad5f632812414a6b8251031fe62f0b
+          git -C .tmp/vitagl checkout --detach FETCH_HEAD
+          python3 tools/vita/patch_vitagl_vita3k.py .tmp/vitagl | tee publication/dependency.log
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libegl1 libgl1-mesa-dri
+
+      - name: Execute complete host regression suite
+        shell: bash
+        env:
+          VOQ_VITAGL_SOURCE: ${{ github.workspace }}/.tmp/vitagl
+          VITAGL_REPO: ${{ github.workspace }}/.tmp/vitagl
+          VOQ_REQUIRE_GPU_TESTS: '1'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tools/vita/tests -p 'test_*.py' -v 2>&1 | tee publication/tests.log
+
+      - name: Store reviewed canonical source tree without updating a branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, hashlib, io, json, os, pathlib, subprocess, tarfile, urllib.request
+          def git(*args):
+              return subprocess.check_output(['git', *args])
+          expected = {
+              '.github/workflows/gui-runtime-regressions.yml',
+              'README.md',
+              'docs/dev/releases/vita-0.1-gameplay-memory.md',
+              'src/framework/Session.cpp',
+              'src/renderer/GpuSkinning.cpp',
+              'src/renderer/GpuSkinning.h',
+              'src/renderer/Model_md5.cpp',
+              'src/renderer/Model_md5r.cpp',
+              'src/sys/vita/vita_main.cpp',
+              'tools/vita/GAMEPLAY_MEMORY.md',
+              'tools/vita/tests/test_vita_gui_gameplay_memory.py',
+              'tools/vita/tests/test_vita_gui_runtime_audit.py',
+          }
+          paths = git('diff', '--cached', '--name-only', '-z').decode().strip('\0').split('\0')
+          assert set(paths) == expected, paths
+          base = git('rev-parse', 'HEAD').decode().strip()
+          assert base == '1ad2041e9c8c9292d4d334894d236b8f69d034d6'
+          base_tree = git('rev-parse', 'HEAD^{tree}').decode().strip()
+          assert base_tree == 'd874dd0a1c77ba140122b792ef133171ab0b81f6'
+          def post(endpoint, data):
+              req = urllib.request.Request(
+                  'https://api.github.com/repos/' + os.environ['GITHUB_REPOSITORY'] + endpoint,
+                  data=json.dumps(data).encode(), method='POST', headers={
+                      'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                      'Accept': 'application/vnd.github+json',
+                      'Content-Type': 'application/json',
+                      'X-GitHub-Api-Version': '2022-11-28',
+                  })
+              with urllib.request.urlopen(req, timeout=60) as response:
+                  return json.load(response)
+          entries, manifest = [], []
+          with tarfile.open('publication/canonical-sources.tar.gz', 'w:gz') as archive:
+              for path in sorted(paths):
+                  data = git('show', ':' + path)
+                  expected_blob = git('rev-parse', ':' + path).decode().strip()
+                  result = post('/git/blobs', {'encoding': 'base64', 'content': base64.b64encode(data).decode()})
+                  assert result['sha'] == expected_blob, path
+                  entries.append({'path': path, 'type': 'blob', 'mode': '100644', 'sha': result['sha']})
+                  manifest.append({'path': path, 'blob': result['sha'], 'sha256': hashlib.sha256(data).hexdigest()})
+                  info = tarfile.TarInfo(path)
+                  info.size, info.mode = len(data), 0o644
+                  archive.addfile(info, io.BytesIO(data))
+          tree = post('/git/trees', {'base_tree': base_tree, 'tree': entries})
+          report = {
+              'base_commit': base, 'base_tree': base_tree, 'tree_sha': tree['sha'],
+              'patch_sha256': hashlib.sha256(pathlib.Path('/tmp/reviewed-gameplay.patch').read_bytes()).hexdigest(),
+              'files': manifest,
+              'scope': 'Canonical source objects only; no production commit or branch ref was written.'
+          }
+          pathlib.Path('publication/publication.json').write_text(json.dumps(report, indent=2) + '\n')
+          print(json.dumps(report, indent=2))
+          PY
+
+      - name: Preserve preparation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reviewed-gameplay-memory-${{ github.sha }}
+          path: publication/
+          retention-days: 7
