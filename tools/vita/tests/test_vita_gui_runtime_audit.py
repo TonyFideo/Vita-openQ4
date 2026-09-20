@@ -232,9 +232,54 @@ int main() {
             print(result.stdout.strip())
 
     def test_link_contract(self):
-        cross=(ROOT/'tools/vita/meson-vita.ini').read_text()
-        for name in ('malloc','calloc','realloc','memalign','glClear'):
-            self.assertEqual(cross.count('--wrap='+name),2)
+        import ast
+        cross = (ROOT / 'tools/vita/meson-vita.ini').read_text()
+        meson = (ROOT / 'meson.build').read_text()
+        for name in ('malloc', 'calloc', 'realloc', 'memalign', 'glClear'):
+            self.assertNotIn('--wrap=' + name, cross)
+            self.assertEqual(meson.count('--wrap=' + name), 1)
+        target = meson.split('  client_link_args = engine_link_args', 1)[1]
+        target = target.split("  if host_system != 'vita'", 1)[0]
+        self.assertTrue(target.lstrip().startswith("if host_system == 'vita'"))
+        self.assertEqual(target.count('link_args: client_link_args,'), 3)
+        flags = ast.literal_eval(re.search(
+            r'client_link_args \+= (\[[^\n]+\])', target)[1])
+        # Link a dependency probe with ordinary libc, then a target with the
+        # exact production wrapping flags and definitions. This catches flags
+        # escaping into the compiler checks, without a VitaSDK installation.
+        for compiler in ('cc', 'c++'):
+            cc = shutil.which(compiler)
+            self.assertIsNotNone(cc, 'native C and C++ compilers are required')
+            with tempfile.TemporaryDirectory(prefix='voq-link-scope-') as directory:
+                out = Path(directory)
+                probe = '#include <stdlib.h>\nint main(void) { void *p = calloc(2,7); free(p); return 0; }\n'
+                (out / 'probe.c').write_text(probe)
+                result = subprocess.run([cc, '-fno-builtin', str(out / 'probe.c'),
+                    '-o', str(out / 'probe')], text=True, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                (out / 'wrap.c').write_text("""
+#include <stdlib.h>
+#include <stddef.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+void *__real_malloc(size_t); void *__real_calloc(size_t,size_t);
+void *__real_realloc(void*,size_t);
+void *__wrap_malloc(size_t n) { return __real_malloc(n); }
+void *__wrap_calloc(size_t n,size_t s) { return __real_calloc(n,s); }
+void *__wrap_realloc(void *p,size_t n) { return __real_realloc(p,n); }
+void *__wrap_memalign(size_t a,size_t n) { (void)a; return __real_malloc(n); }
+void __wrap_glClear(unsigned m) { (void)m; }
+#ifdef __cplusplus
+}
+#endif
+""")
+                result = subprocess.run([cc, '-fno-builtin', str(out / 'probe.c'),
+                    str(out / 'wrap.c'), *flags, '-o', str(out / 'client')],
+                    text=True, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                result = subprocess.run([str(out / 'client')], text=True, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__=='__main__': unittest.main()

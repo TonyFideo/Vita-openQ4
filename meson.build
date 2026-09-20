@@ -1511,6 +1511,13 @@ if build_engine
 endif
 
 if build_engine
+  # Runtime observers are defined by vita_main.cpp and vita_glimp.cpp, not by
+  # Meson's compiler/library probes or any unrelated test/module executable.
+  # Keep their ld wrapping on the Vita client target, never in the cross file.
+  client_link_args = engine_link_args
+  if host_system == 'vita'
+    client_link_args += ['-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=memalign,--wrap=glClear']
+  endif
   client_link_with = [bse_library, imagetools_library, render_geo_library]
   if host_system == 'vita' and build_games and build_game_sp
     client_link_with += [vita_game_sp_library]
@@ -1528,7 +1535,7 @@ if build_engine
       c_args: engine_c_args,
       cpp_pch: pch_headers,
       win_subsystem: 'windows',
-      link_args: engine_link_args,
+      link_args: client_link_args,
       install: true,
       install_dir: install_root_dir,
     )
@@ -1544,7 +1551,7 @@ if build_engine
       objcpp_args: engine_objcpp_args,
       objc_args: engine_objc_args,
       cpp_pch: pch_headers,
-      link_args: engine_link_args,
+      link_args: client_link_args,
       install_rpath: macos_openal_install_rpath,
       install: true,
       install_dir: install_root_dir,
@@ -1559,7 +1566,7 @@ if build_engine
       cpp_args: client_engine_cpp_args,
       c_args: engine_c_args,
       cpp_pch: pch_headers,
-      link_args: engine_link_args,
+      link_args: client_link_args,
       pie: linux_executable_pie,
       install: true,
       install_dir: install_root_dir,
