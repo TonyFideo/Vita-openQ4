@@ -288,12 +288,39 @@ def patch_vertex_streams(root: pathlib.Path) -> None:
     print('Applied full-width VBO stream bases and bounded relative GXM attributes (3 draw paths)')
 
 
+
+def patch_read_buffer_query(root: pathlib.Path) -> None:
+    """Expose the read selection already maintained by glReadBuffer.
+
+    Necessary for state-preserving readbacks, not a new rendering policy.
+    """
+    header = root / 'source/vitaGL.h'
+    text = header.read_text(encoding='utf-8')
+    text = _legacy().replace_once(text,
+        '#define GL_FRAMEBUFFER_BINDING                          0x8CA6',
+        '#define GL_READ_BUFFER                                  0x0C02\n'
+        '#define GL_FRAMEBUFFER_BINDING                          0x8CA6',
+        'GL_READ_BUFFER query enum')
+    header.write_text(text, encoding='utf-8')
+    path = root / 'source/get_info.c'
+    text = path.read_text(encoding='utf-8')
+    text = _legacy().replace_once(text,
+        '\tcase GL_READ_FRAMEBUFFER_BINDING:\n\t\t*data = (GLint)active_read_fb;\n\t\tbreak;',
+        '\tcase GL_READ_FRAMEBUFFER_BINDING:\n\t\t*data = (GLint)active_read_fb;\n\t\tbreak;\n'
+        '\tcase GL_READ_BUFFER:\n'
+        '\t\t*data = active_read_fb ? GL_COLOR_ATTACHMENT0 : display_read_mode;\n'
+        '\t\tbreak;', 'read buffer selection query')
+    path.write_text(text, encoding='utf-8')
+    print('Applied GL_READ_BUFFER query for state-preserving readbacks')
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         raise SystemExit('usage: patch_vitagl_vita3k.py <vitaGL-repo>')
     _legacy().main()
     patch_bc(pathlib.Path(sys.argv[1]))
     patch_vertex_streams(pathlib.Path(sys.argv[1]))
+    patch_read_buffer_query(pathlib.Path(sys.argv[1]))
     return 0
 
 

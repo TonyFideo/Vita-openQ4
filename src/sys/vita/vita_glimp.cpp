@@ -5,6 +5,8 @@
 #include "../../renderer/RenderModuleAPI.h"
 #include "vita_public.h"
 #include "vita_loading_hud.h"
+#include "vita_runtime_audit.h"
+#include <psp2/kernel/processmgr.h>
 
 #include <vitaGL.h>
 
@@ -49,6 +51,102 @@ static int VitaGLimp_FreeCdramBytes( void ) {
 }
 
 }
+
+
+#ifndef GL_READ_BUFFER
+#define GL_READ_BUFFER 0x0C02
+#endif
+
+// BEGIN VITA CLEAR AUDIT
+// A bounded observer, not a replacement glClear or an alternative renderer.
+// Readbacks serialize GXM and can affect timing; the log is evidence about the
+// observed frame only. The untouched frames between samples remain essential.
+extern "C" void __real_glClear(GLbitfield mask);
+static bool vitaClearAuditStarted = false;
+static unsigned vitaClearAuditSamples = 0;
+static uint64_t vitaClearAuditNext = 0;
+static bool vitaClearAuditPresent = false;
+
+void VitaRuntimeAudit_Start() {
+    vitaClearAuditStarted = true;
+    vitaClearAuditSamples = 0;
+    vitaClearAuditNext = 0;
+}
+
+bool VitaRuntimeAudit_GpuFree(size_t freeBytes[3]) {
+    if (!vitaGLReady) return false;
+    freeBytes[0] = vglMemFree(VGL_MEM_RAM);
+    freeBytes[1] = vglMemFree(VGL_MEM_VRAM);
+    freeBytes[2] = vglMemFree(VGL_MEM_PHYCONT);
+    return true;
+}
+
+static void VitaClearAuditPixels(const char *phase, unsigned sample) {
+    // Only called for the default RGBA8 framebuffer. VitaGL's half-float
+    // readback path has different restrictions; do not probe it as RGBA8.
+    GLint previousRead = 0, displayReadBuffer = GL_BACK;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousRead);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    glGetIntegerv(GL_READ_BUFFER, &displayReadBuffer);
+    glReadBuffer(GL_BACK);
+    const int x[5] = {48, 480, 912, 48, 912};
+    const int y[5] = {272, 272, 272, 490, 54};
+    GLubyte pixel[5][4] = {};
+    for (int i = 0; i < 5; ++i)
+        glReadPixels(x[i], y[i], 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel[i]);
+    glReadBuffer((GLenum)displayReadBuffer);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)previousRead);
+    sceClibPrintf("[VOQ4][clear-audit] sample=%u phase=%s "
+        "L=%u,%u,%u,%u C=%u,%u,%u,%u R=%u,%u,%u,%u "
+        "TL=%u,%u,%u,%u BR=%u,%u,%u,%u\n", sample, phase,
+        pixel[0][0],pixel[0][1],pixel[0][2],pixel[0][3],
+        pixel[1][0],pixel[1][1],pixel[1][2],pixel[1][3],
+        pixel[2][0],pixel[2][1],pixel[2][2],pixel[2][3],
+        pixel[3][0],pixel[3][1],pixel[3][2],pixel[3][3],
+        pixel[4][0],pixel[4][1],pixel[4][2],pixel[4][3]);
+}
+
+extern "C" void __wrap_glClear(GLbitfield mask) {
+    if (!vitaClearAuditStarted || vitaClearAuditSamples >= 12 ||
+        !(mask & GL_COLOR_BUFFER_BIT)) {
+        __real_glClear(mask);
+        return;
+    }
+    const uint64_t now = sceKernelGetProcessTimeWide();
+    GLint drawFbo = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &drawFbo);
+    if (drawFbo != 0 || now < vitaClearAuditNext) {
+        __real_glClear(mask);
+        return;
+    }
+    const unsigned sample = ++vitaClearAuditSamples;
+    vitaClearAuditNext = now + 5000000u;
+    GLboolean writeMask[4] = {};
+    GLfloat clearColor[4] = {};
+    GLint scissor[4] = {};
+    glGetBooleanv(GL_COLOR_WRITEMASK, writeMask);
+    glGetFloatv(GL_COLOR_CLEAR_VALUE, clearColor);
+    glGetIntegerv(GL_SCISSOR_BOX, scissor);
+    sceClibPrintf("[VOQ4][clear-audit] sample=%u drawFbo=%d mask=0x%x "
+        "rgba=%.3f,%.3f,%.3f,%.3f writes=%u%u%u%u scissor=%d box=%d,%d,%d,%d\n",
+        sample, drawFbo, (unsigned)mask, (double)clearColor[0],
+        (double)clearColor[1], (double)clearColor[2], (double)clearColor[3],
+        writeMask[0],writeMask[1],writeMask[2],writeMask[3],
+        glIsEnabled(GL_SCISSOR_TEST) != GL_FALSE,
+        scissor[0],scissor[1],scissor[2],scissor[3]);
+    // Alternate before+after and after-only to expose readback-induced changes.
+    if (sample & 1u) VitaClearAuditPixels("before", sample);
+    __real_glClear(mask);
+    VitaClearAuditPixels("after", sample);
+    vitaClearAuditPresent = true;
+}
+
+static void VitaClearAuditBeforePresent() {
+    if (!vitaClearAuditPresent) return;
+    vitaClearAuditPresent = false;
+    VitaClearAuditPixels("present", vitaClearAuditSamples);
+}
+// END VITA CLEAR AUDIT
 
 /*
 ===================
@@ -157,6 +255,7 @@ void GLimp_PreserveWindowOnShutdown( bool preserve ) {
 
 void GLimp_SwapBuffers( void ) {
 	if ( vitaGLReady ) {
+		VitaClearAuditBeforePresent();
 		vglSwapBuffers( GL_FALSE );
 		if ( !VitaLoadingHud_RendererHandoffComplete() ) {
 			// Retry until SceDisplay itself confirms that the old diagnostic
