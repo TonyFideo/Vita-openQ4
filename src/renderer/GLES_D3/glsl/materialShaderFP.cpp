@@ -31,6 +31,11 @@ precision highp int;
 uniform sampler2D uTexture0;
 uniform vec4 uColor;
 uniform vec4 uVertexColor;
+// CFM_GREEN_ALPHA stores coverage in green, not in BC1's alpha. Desktop GL
+// applies the image's (ONE, ONE, ONE, GREEN) swizzle in the sampler. VitaGL
+// has no texture-swizzle API, so reproduce that result here, before tint,
+// vertex colour, alpha testing and blending. Zero preserves ordinary RGBA.
+uniform float uTextureGreenAlpha;
 #ifdef GLESD3_ALPHATEST
 uniform float uAlphaTest;
 #endif
@@ -42,6 +47,7 @@ out vec4 outColor;
 
 void main() {
     vec4 texel = texture(uTexture0, vTexCoord);
+    texel = mix(texel, vec4(1.0, 1.0, 1.0, texel.g), uTextureGreenAlpha);
     vec4 vertexTerm = vec4(vColor.rgb * uVertexColor.x + uVertexColor.y,
                            vColor.a   * uVertexColor.z + uVertexColor.w);
     vec4 result = texel * uColor * vertexTerm;

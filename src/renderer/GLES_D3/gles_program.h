@@ -72,6 +72,7 @@ typedef struct glesProgram_s {
 	GLint		uTexMatrixS;		// vec4, stage texture matrix row S
 	GLint		uTexMatrixT;		// vec4, row T
 	GLint		uVertexColor;		// vec4, (rgbMul, rgbAdd, alphaMul, alphaAdd) -- the SVC packing
+	GLint		uTextureGreenAlpha;	// float, emulate (ONE, ONE, ONE, GREEN) without native texture swizzle
 
 	// interaction program only
 	GLint		uLocalLightOrigin;

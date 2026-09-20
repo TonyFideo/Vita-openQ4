@@ -555,8 +555,29 @@ static void	RB_SetBuffer( const void *data ) {
 		} else {
 			glClearColor( 0.4f, 0.0f, 0.25f, 1.0f );
 		}
+#if !defined(VITA) && !defined(__vita__)
 		glClear( GL_COLOR_BUFFER_BIT );
+#endif
 	}
+#if defined(VITA) || defined(__vita__)
+	else {
+		glClearColor( 0.0f, 0.0f, 0.0f, 1.0f );
+	}
+
+	// A presented buffer is not a retained canvas. The menu's translucent
+	// and additive layers may extend beyond its opaque 640-wide background.
+	// Initialize colour once, at RC_SET_BUFFER, not at each 2D view (which
+	// would erase the scene underneath HUDs, dialogs and in-game menus).
+	// A clear is affected by scissor and write masks, not by the viewport.
+	const GLboolean scissorEnabled = glIsEnabled( GL_SCISSOR_TEST );
+	glDisable( GL_SCISSOR_TEST );
+	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
+	glClear( GL_COLOR_BUFFER_BIT );
+	if ( scissorEnabled ) {
+		glEnable( GL_SCISSOR_TEST );
+	}
+	GL_ClearStateDelta();
+#endif
 }
 
 /*

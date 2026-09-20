@@ -62,10 +62,18 @@ jobs:
           git -C .tmp/vitagl archive HEAD | gzip > gui-diagnostics/vitagl-source.tar.gz
           python3 tools/vita/patch_vitagl_vita3k.py .tmp/vitagl | tee gui-diagnostics/vitagl-patch.log
 
+      - name: Install offscreen OpenGL ES test runtime
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libegl1 libgl1-mesa-dri
+
       - name: Run GUI regression tests
         shell: bash
         env:
           VOQ_VITAGL_SOURCE: ${{ github.workspace }}/.tmp/vitagl
+          VOQ_REQUIRE_GPU_TESTS: "1"
+          LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           set -euo pipefail
           mkdir -p gui-diagnostics

@@ -282,6 +282,7 @@ static void GLESD3_ResolveUniforms( glesProgram_t *program ) {
 	program->uTexMatrixS = glGetUniformLocation( program->program, "uTexMatrixS" );
 	program->uTexMatrixT = glGetUniformLocation( program->program, "uTexMatrixT" );
 	program->uVertexColor = glGetUniformLocation( program->program, "uVertexColor" );
+	program->uTextureGreenAlpha = glGetUniformLocation( program->program, "uTextureGreenAlpha" );
 
 	program->uLocalLightOrigin = glGetUniformLocation( program->program, "uLocalLightOrigin" );
 	program->uLocalViewOrigin = glGetUniformLocation( program->program, "uLocalViewOrigin" );
@@ -364,6 +365,7 @@ static bool GLESD3_BuildProgram( glesD3ProgramId_t id, glesD3ProgramVariant_t va
 	program->uMVP = program->uColor = program->uTextureMatrix = -1;
 	program->uAlphaTest = program->uTexture0 = program->uTexture1 = -1;
 	program->uTexMatrixS = program->uTexMatrixT = program->uVertexColor = -1;
+	program->uTextureGreenAlpha = -1;
 	program->uLocalLightOrigin = program->uLocalViewOrigin = -1;
 	program->uLightProjectionS = program->uLightProjectionT = program->uLightProjectionQ = -1;
 	program->uLightFalloffS = program->uBumpMatrixS = program->uBumpMatrixT = -1;

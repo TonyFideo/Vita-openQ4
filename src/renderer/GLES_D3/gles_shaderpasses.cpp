@@ -469,25 +469,47 @@ The cinematic half is not optional: the menu background and every briefing
 screen is a cinematic stage.
 ====================
 */
-static void GLESD3_BindStageImage( const textureStage_t *texture, const float *shaderRegisters ) {
+static const idImage *GLESD3_BindStageImage( const textureStage_t *texture, const float *shaderRegisters ) {
 	( void )shaderRegisters;
 	if ( texture->cinematic ) {
 		if ( r_skipDynamicTextures.GetBool() ) {
 			globalImages->defaultImage->Bind();
-			return;
+			return globalImages->defaultImage;
 		}
 		cinData_t cin = texture->cinematic->ImageForTime(
 				(int)( 1000 * ( backEnd.viewDef->floatTime + backEnd.viewDef->renderView.shaderParms[11] ) ) );
 		if ( cin.image ) {
 			globalImages->cinematicImage->UploadScratch( cin.image, cin.imageWidth, cin.imageHeight );
+			return globalImages->cinematicImage;
 		} else {
 			globalImages->blackImage->Bind();
+			return globalImages->blackImage;
 		}
-		return;
 	}
 	if ( texture->image ) {
 		texture->image->Bind();
 	}
+	return texture->image;
+}
+
+/*
+====================
+GLESD3_TextureGreenAlpha
+
+Called after BindStageImage: lazy loading may change the image's format.
+Use the storage contract, never a font/material name. Cinematics supply RGBA
+scratch images. Other platforms already apply the native image swizzle.
+====================
+*/
+static float GLESD3_TextureGreenAlpha( const idImage *image ) {
+#if defined(VITA) || defined(__vita__)
+	if ( image != NULL && image->GetOpts().colorFormat == CFM_GREEN_ALPHA ) {
+		return 1.0f;
+	}
+#else
+	( void )image;
+#endif
+	return 0.0f;
 }
 
 /*
@@ -746,6 +768,7 @@ static void RB_GLESD3_T_FillDepthBuffer( const drawSurf_t *surf, glesProgram_t *
 			glUniform4fv( alphaTestProgram->uTexMatrixS, 1, matrixS.ToFloatPtr() );
 			glUniform4fv( alphaTestProgram->uTexMatrixT, 1, matrixT.ToFloatPtr() );
 			glUniform4fv( alphaTestProgram->uColor, 1, color );
+			glUniform1f( alphaTestProgram->uTextureGreenAlpha, GLESD3_TextureGreenAlpha( pStage->texture.image ) );
 			// the stage's own reference, not the GLS_ATEST buckets: a
 			// perforated stage carries an arbitrary alphaTestRegister
 			glUniform1f( alphaTestProgram->uAlphaTest, regs[ pStage->alphaTestRegister ] );
@@ -770,6 +793,7 @@ static void RB_GLESD3_T_FillDepthBuffer( const drawSurf_t *surf, glesProgram_t *
 		glUniform4fv( program->uVertexColor, 1, ignoreVertexColor );
 		GL_SelectTexture( 0 );
 		globalImages->whiteImage->Bind();
+		glUniform1f( program->uTextureGreenAlpha, GLESD3_TextureGreenAlpha( globalImages->whiteImage ) );
 		glUniform4fv( program->uTexMatrixS, 1, identityS.ToFloatPtr() );
 		glUniform4fv( program->uTexMatrixT, 1, identityT.ToFloatPtr() );
 		glUniform4fv( program->uColor, 1, color );
@@ -1565,7 +1589,7 @@ static void RB_GLESD3_T_RenderShaderPasses( const drawSurf_t *surf ) {
 		( void )glGetError();	// drain, so the step probe attributes correctly
 		GL_SelectTexture( 0 );
 		GLESD3_StepError( "GL_SelectTexture", shader );
-		GLESD3_BindStageImage( &pStage->texture, regs );
+		const idImage *stageImage = GLESD3_BindStageImage( &pStage->texture, regs );
 		GLESD3_StepError( "BindStageImage", shader );
 		GL_State( pStage->drawStateBits );
 		GLESD3_StepError( "GL_State", shader );
@@ -1574,6 +1598,9 @@ static void RB_GLESD3_T_RenderShaderPasses( const drawSurf_t *surf ) {
 		glUniform4fv( stageProgram->uTexMatrixS, 1, matrixS.ToFloatPtr() );
 		glUniform4fv( stageProgram->uTexMatrixT, 1, matrixT.ToFloatPtr() );
 		glUniform4fv( stageProgram->uVertexColor, 1, vertexColorPacking );
+		// Set for EVERY stage, including the transition back to an ordinary
+		// image; uniforms survive program switches and surface boundaries.
+		glUniform1f( stageProgram->uTextureGreenAlpha, GLESD3_TextureGreenAlpha( stageImage ) );
 		glUniform1f( stageProgram->uAlphaTest, alphaTestRef );
 		if ( hasBakedDecalStageColor ) {
 			glUniform4f( stageProgram->uColor, 1.0f, 1.0f, 1.0f, 1.0f );
