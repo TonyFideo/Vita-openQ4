@@ -1694,6 +1694,50 @@ idCVar	idFileSystemLocal::fs_caseSensitiveOS( "fs_caseSensitiveOS", "1", CVAR_SY
 idCVar	idFileSystemLocal::fs_searchAddons( "fs_searchAddons", "0", CVAR_SYSTEM | CVAR_BOOL, "search all addon pk4s ( disables addon functionality )" );
 idCVar	idFileSystemLocal::fs_validateOfficialPaks( "fs_validateOfficialPaks", "1", CVAR_SYSTEM | CVAR_INIT | CVAR_BOOL, "verify required official q4base media pk4 checksums on startup" );
 
+#if defined(VITA) || defined(__vita__)
+static idCVar fs_vitaLooseImageOverrides(
+	"fs_vitaLooseImageOverrides",
+	"0",
+	CVAR_SYSTEM | CVAR_BOOL,
+	"search loose directories before PK4s for retail image sources on Vita; disabled by default to avoid Vita3K host filesystem churn" );
+
+static bool FS_VitaPackedImagePath( const char *relativePath ) {
+	if ( relativePath == NULL || relativePath[0] == '\0' ) {
+		return false;
+	}
+
+	idStr path = relativePath;
+	path.BackSlashesToSlashes();
+	path.ToLower();
+
+	// Generated caches and user/runtime artifacts must remain directory-backed.
+	if ( !path.Icmpn( "generated/", 10 ) || !path.Icmpn( "screenshots/", 12 ) ) {
+		return false;
+	}
+
+	idStr ext;
+	path.ExtractFileExtension( ext );
+	const bool imageExtension =
+		!ext.Icmp( "dds" ) ||
+		!ext.Icmp( "tga" ) ||
+		!ext.Icmp( "jpg" ) ||
+		!ext.Icmp( "jpeg" ) ||
+		!ext.Icmp( "png" );
+	if ( !imageExtension ) {
+		return false;
+	}
+
+	return
+		!path.Icmpn( "dds/", 4 ) ||
+		!path.Icmpn( "gfx/", 4 ) ||
+		!path.Icmpn( "textures/", 9 ) ||
+		!path.Icmpn( "models/", 7 ) ||
+		!path.Icmpn( "guis/", 5 ) ||
+		!path.Icmpn( "fonts/", 6 ) ||
+		!path.Icmpn( "env/", 4 );
+}
+#endif
+
 idFileSystemLocal	fileSystemLocal;
 idFileSystem *		fileSystem = &fileSystemLocal;
 
@@ -7071,6 +7115,29 @@ idFileSystemLocal::OpenFileRead
 ===========
 */
 idFile *idFileSystemLocal::OpenFileRead( const char *relativePath, bool allowCopyFiles, const char* gamedir ) {
+#if defined(VITA) || defined(__vita__)
+	// Retail Quake 4 image data lives in PK4s. The normal idTech search order
+	// probes every loose root before each pack, which turns a single missing DDS
+	// candidate into dozens of host stat/open calls under Vita3K. The emulator
+	// has repeatedly terminated host-side during that traversal at startup.
+	//
+	// Resolve packed image sources entirely through the already-built in-memory
+	// PK4 hash table. Developers who intentionally use loose image overrides can
+	// restore the original search order with fs_vitaLooseImageOverrides 1.
+	if ( !fs_vitaLooseImageOverrides.GetBool() && FS_VitaPackedImagePath( relativePath ) ) {
+		idFile *packedFile = OpenFileReadFlags(
+			relativePath,
+			FSFLAG_SEARCH_PAKS,
+			NULL,
+			allowCopyFiles,
+			gamedir );
+
+		if ( relativePath != NULL && idStr::FindText( relativePath, "gfx/lights/squarelight", false ) >= 0 ) {
+			VitaLoadingHud_SetAssetPhase( relativePath, packedFile != NULL ? "FS pak hit" : "FS pak miss" );
+		}
+		return packedFile;
+	}
+#endif
 	return OpenFileReadFlags( relativePath, FSFLAG_SEARCH_DIRS | FSFLAG_SEARCH_PAKS, NULL, allowCopyFiles, gamedir );
 }
 
