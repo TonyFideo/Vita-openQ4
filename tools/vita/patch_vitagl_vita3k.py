@@ -212,11 +212,88 @@ def patch_bc(root: pathlib.Path) -> None:
     print('Applied lossless BC upload storage, source lifetime and sampled-texture COW')
 
 
+
+# SceGxmVertexAttribute::offset is uint16_t. A GL buffer offset is not: keep
+# the common allocation offset in the stream pointer and only the field offset
+# in the GXM descriptor. This is a GXM contract, not a Vita3K-only workaround.
+PACKED_VBO_GUARD = r"""
+#ifndef STRICT_DRAW_COMPLIANCE
+    const uintptr_t voq_packed_vbo_base = cur_vao->vertex_attrib_offsets[p->attr_map[0]];
+    if (is_packed && target_vbo) {
+        /* All enabled attributes must fit the SAME rebased stream. Checking
+         * just attr_map[1] misses separate/earlier UV streams and mixed strides.
+         * The existing unpacked VBO route is also zero-copy and handles those
+         * layouts with one full-width address per attribute.
+         */
+        for (int i = 0; i < p->attr_num; ++i) {
+            const uint8_t attr_idx = p->attr_map[i];
+            if (!(cur_vao->vertex_attrib_state & (1 << attr_idx))) continue;
+            const uintptr_t offset = cur_vao->vertex_attrib_offsets[attr_idx];
+            if ((vbo *)cur_vao->vertex_attrib_vbo[attr_idx] != target_vbo ||
+                offset < voq_packed_vbo_base ||
+                offset - voq_packed_vbo_base > UINT16_MAX ||
+                streams[i].stride != streams[0].stride) {
+                is_packed = GL_FALSE;
+                break;
+            }
+        }
+#ifdef LOG_ERRORS
+        static int voq_reported_large_vbo_base = 0;
+        if (is_packed && !voq_reported_large_vbo_base && voq_packed_vbo_base > UINT16_MAX) {
+            voq_reported_large_vbo_base = 1;
+            sceClibPrintf("[VOQ4][vertex] %s: rebased VBO base=%u stride=%u attrs=%u\n",
+                __func__, (unsigned)voq_packed_vbo_base, (unsigned)streams[0].stride,
+                (unsigned)p->attr_num);
+        }
+#endif
+    }
+#endif
+"""
+
+
+def patch_vertex_streams(root: pathlib.Path) -> None:
+    """Rebase the three packed VBO draw paths without truncating GL offsets."""
+    path = root / 'source/custom_shaders.c'
+    text = path.read_text(encoding='utf-8')
+    if 'voq_packed_vbo_base' in text:
+        raise RuntimeError('Packed VBO addressing patch already applied')
+    # Only this macro copies an absolute VBO offset into GXM's uint16 field.
+    # Independent/client streams retain their original pointer semantics.
+    old = 'attributes[i].offset = cur_vao->vertex_attrib_offsets[attr_idx];'
+    new = ('attributes[i].offset = (uint16_t)'
+           '(cur_vao->vertex_attrib_offsets[attr_idx] - voq_packed_vbo_base);')
+    text = _legacy().replace_once(text, old, new, 'packed VBO relative offset')
+    entries = (
+        ('void _glMultiDrawArrays_CustomShadersIMPL(',
+         '#ifdef STRICT_DRAW_COMPLIANCE\n\t// Gathering real attribute data pointers',
+         '(void *)target_vbo->ptr + lowest * streams[0].stride',
+         '(uint8_t *)target_vbo->ptr + voq_packed_vbo_base + lowest * streams[0].stride'),
+        ('GLboolean _glDrawArrays_CustomShadersIMPL(',
+         '#ifdef STRICT_DRAW_COMPLIANCE\n\t// Gathering real attribute data pointers',
+         '(void *)target_vbo->ptr + first * streams[0].stride',
+         '(uint8_t *)target_vbo->ptr + voq_packed_vbo_base + first * streams[0].stride'),
+        ('GLboolean _glDrawElements_CustomShadersIMPL(',
+         '\t// Detecting highest index value',
+         '(void *)target_vbo->ptr;',
+         '(uint8_t *)target_vbo->ptr + voq_packed_vbo_base;'),
+    )
+    for signature, marker, before, after in entries:
+        start, end = _legacy().function_span(text, signature)
+        body = text[start:end]
+        body = _legacy().replace_once(body, marker, PACKED_VBO_GUARD + '\n' + marker,
+                                      signature + ' packed layout validation')
+        body = _legacy().replace_once(body, before, after, signature + ' stream base')
+        text = text[:start] + body + text[end:]
+    path.write_text(text, encoding='utf-8')
+    print('Applied full-width VBO stream bases and bounded relative GXM attributes (3 draw paths)')
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         raise SystemExit('usage: patch_vitagl_vita3k.py <vitaGL-repo>')
     _legacy().main()
     patch_bc(pathlib.Path(sys.argv[1]))
+    patch_vertex_streams(pathlib.Path(sys.argv[1]))
     return 0
 
 
