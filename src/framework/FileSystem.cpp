@@ -1701,6 +1701,17 @@ static idCVar fs_vitaLooseImageOverrides(
 	CVAR_SYSTEM | CVAR_BOOL,
 	"search loose directories before PK4s for retail image sources on Vita; disabled by default to avoid Vita3K host filesystem churn" );
 
+static bool FS_VitaGeneratedImageCachePath( const char *relativePath ) {
+	if ( relativePath == NULL || relativePath[0] == '\0' ) {
+		return false;
+	}
+
+	idStr path = relativePath;
+	path.BackSlashesToSlashes();
+	path.ToLower();
+	return path.Icmpn( "generated/images/", 17 ) == 0;
+}
+
 static bool FS_VitaPackedImagePath( const char *relativePath ) {
 	if ( relativePath == NULL || relativePath[0] == '\0' ) {
 		return false;
@@ -6918,6 +6929,17 @@ idFile *idFileSystemLocal::OpenFileReadFlags( const char *relativePath, int sear
 			}
 
 			dir = search->dir;
+
+#if defined(VITA) || defined(__vita__)
+			// Generated image caches are runtime artifacts written below fs_savepath.
+			// Do not probe app0/basepath/cdpath for them: on Vita3K each miss crosses
+			// the host VFS, and a single rejected cache used to multiply into a long
+			// chain of stat/open calls before source decoding could continue.
+			if ( FS_VitaGeneratedImageCachePath( relativePath ) &&
+				 dir->path.Icmp( fs_savepath.GetString() ) != 0 ) {
+				continue;
+			}
+#endif
 
 			if(gamedir && strlen(gamedir)) {
 				if(dir->gamedir != gamedir) {

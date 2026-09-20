@@ -646,11 +646,18 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 	const char *loadSourceName = selectedLoadSourceName.c_str();
 
 	idBinaryImage im( generatedName );
+#if defined(VITA) || defined(__vita__)
+	bool primaryGeneratedFileFound = false;
+#endif
 	if ( bypassGeneratedFile ) {
 		binaryFileTime = FILE_NOT_FOUND_TIMESTAMP;
 	} else {
 		idScopedImageLoadPhase generatedPhase( imageLoadPhaseTimings.generatedMsec, imageLoadPhaseTimings.generatedCount );
+#if defined(VITA) || defined(__vita__)
+		binaryFileTime = im.LoadFromGeneratedFileUnchecked( &primaryGeneratedFileFound );
+#else
 		binaryFileTime = im.LoadFromGeneratedFileUnchecked();
+#endif
 	}
 
 	// BFHACK, do not want to tweak on buildgame so catch these images here
@@ -660,31 +667,51 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 			if ( generatedName.Find( "guis/assets/white#__0000", false ) >= 0 ) {
 				generatedName.Replace( "white#__0000", "white#__0200" );
 				im.SetName( generatedName );
+#if defined(VITA) || defined(__vita__)
+				binaryFileTime = im.LoadFromGeneratedFileUnchecked( &primaryGeneratedFileFound );
+#else
 				binaryFileTime = im.LoadFromGeneratedFileUnchecked();
+#endif
 				break;
 			}
 			if ( generatedName.Find( "guis/assets/white#__0100", false ) >= 0 ) {
 				generatedName.Replace( "white#__0100", "white#__0200" );
 				im.SetName( generatedName );
+#if defined(VITA) || defined(__vita__)
+				binaryFileTime = im.LoadFromGeneratedFileUnchecked( &primaryGeneratedFileFound );
+#else
 				binaryFileTime = im.LoadFromGeneratedFileUnchecked();
+#endif
 				break;
 			}
 			if ( generatedName.Find( "textures/black#__0100", false ) >= 0 ) {
 				generatedName.Replace( "black#__0100", "black#__0200" );
 				im.SetName( generatedName );
+#if defined(VITA) || defined(__vita__)
+				binaryFileTime = im.LoadFromGeneratedFileUnchecked( &primaryGeneratedFileFound );
+#else
 				binaryFileTime = im.LoadFromGeneratedFileUnchecked();
+#endif
 				break;
 			}
 			if ( generatedName.Find( "textures/decals/bulletglass1_d#__0100", false ) >= 0 ) {
 				generatedName.Replace( "bulletglass1_d#__0100", "bulletglass1_d#__0200" );
 				im.SetName( generatedName );
+#if defined(VITA) || defined(__vita__)
+				binaryFileTime = im.LoadFromGeneratedFileUnchecked( &primaryGeneratedFileFound );
+#else
 				binaryFileTime = im.LoadFromGeneratedFileUnchecked();
+#endif
 				break;
 			}
 			if ( generatedName.Find( "models/monsters/skeleton/skeleton01_d#__1000", false ) >= 0 ) {
 				generatedName.Replace( "skeleton01_d#__1000", "skeleton01_d#__0100" );
 				im.SetName( generatedName );
+#if defined(VITA) || defined(__vita__)
+				binaryFileTime = im.LoadFromGeneratedFileUnchecked( &primaryGeneratedFileFound );
+#else
 				binaryFileTime = im.LoadFromGeneratedFileUnchecked();
+#endif
 				break;
 			}
 		}
@@ -755,11 +782,22 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 
 	bool generatedImageAccepted = acceptGeneratedImage( binaryFileTime );
 	if ( !generatedImageAccepted && !bypassGeneratedFile ) {
+#if defined(VITA) || defined(__vita__)
+		// A cache that exists but fails to parse/validate is authoritative evidence
+		// that this identity must be regenerated. Do not immediately fan out into
+		// the compact fallback search: stale partial .bimage files from earlier
+		// Vita bring-up builds repeatedly drove Vita3K through a second expensive
+		// directory traversal here. Missing primary caches may still use the compact
+		// recovery identity.
+		if ( primaryGeneratedFileFound ) {
+			VitaLoadingHud_SetAssetPhase( GetName(), "CACHE invalid; decode source" );
+		} else
+#endif
 		{
 			idScopedImageLoadPhase generatedPhase( imageLoadPhaseTimings.generatedMsec, imageLoadPhaseTimings.generatedCount );
 			binaryFileTime = im.LoadFromCompactGeneratedFileUnchecked();
+			generatedImageAccepted = acceptGeneratedImage( binaryFileTime );
 		}
-		generatedImageAccepted = acceptGeneratedImage( binaryFileTime );
 	}
 	if ( generatedImageAccepted ) {
 		const bimageFile_t & header = im.GetFileHeader();

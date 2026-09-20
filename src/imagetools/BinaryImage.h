@@ -54,7 +54,7 @@ public:
 
 	void				Clear();
 	ID_TIME_T			LoadFromGeneratedFile( ID_TIME_T sourceFileTime );
-	ID_TIME_T			LoadFromGeneratedFileUnchecked();
+	ID_TIME_T			LoadFromGeneratedFileUnchecked( bool *fileFound = NULL );
 	ID_TIME_T			LoadFromCompactGeneratedFileUnchecked();
 	ID_TIME_T			WriteGeneratedFile( ID_TIME_T sourceFileTime );
 	bool				LoadFromFile( idFile *file, int dataBytes = -1 );

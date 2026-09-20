@@ -598,10 +598,13 @@ Loads an existing generated image before source timestamp validation. Callers
 must compare the header timestamp before using the data outside production mode.
 ==========================
 */
-ID_TIME_T idBinaryImage::LoadFromGeneratedFileUnchecked() {
+ID_TIME_T idBinaryImage::LoadFromGeneratedFileUnchecked( bool *fileFound ) {
 	idStr binaryFileName;
 	MakeGeneratedFileName( binaryFileName );
 	idFileLocal bFile = fileSystem->OpenFileRead( binaryFileName );
+	if ( fileFound != NULL ) {
+		*fileFound = bFile != NULL;
+	}
 	if ( bFile != NULL && LoadFromGeneratedFile( bFile, FILE_NOT_FOUND_TIMESTAMP, false ) ) {
 		return bFile->Timestamp();
 	}
