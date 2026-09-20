@@ -130,7 +130,28 @@ static void R_RGBA8Image( idImage *image ) {
 	data[0][0][2] = 48;
 	data[0][0][3] = 96;
 
+#if defined(VITA) || defined(__vita__)
+	// These images are runtime scratch/render placeholders (_cinematic,
+	// _scratch, _accum, reflection/refraction). They do not need a mip chain.
+	// On Vita3K the first one consistently kills the host while the legacy
+	// GenerateImage path grows vitaGL storage through repeated mspace reallocs.
+	// Allocate one explicit RGBA8 level, mirroring the already-stable RGBA16F
+	// runtime-target path and avoiding BinaryImage/mip construction entirely.
+	idImageOpts opts;
+	opts.textureType = TT_2D;
+	opts.format = FMT_RGBA8;
+	opts.width = DEFAULT_SIZE;
+	opts.height = DEFAULT_SIZE;
+	opts.numLevels = 1;
+
+	image->AllocImage( opts, TF_LINEAR, TR_REPEAT );
+	if ( !tr.IsOpenGLRunning() ) {
+		return;
+	}
+	image->SubImageUpload( 0, 0, 0, 0, DEFAULT_SIZE, DEFAULT_SIZE, data );
+#else
 	image->GenerateImage( (byte *)data, DEFAULT_SIZE, DEFAULT_SIZE, TF_DEFAULT, TR_REPEAT, TD_LOOKUP_TABLE_RGBA );
+#endif
 }
 
 static void R_RGBA16FImage( idImage *image ) {

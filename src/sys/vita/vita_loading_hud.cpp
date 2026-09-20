@@ -370,6 +370,11 @@ void VitaLoadingHud_Init( void ) {
 
 	sceIoMkdir( VITA_OPENQ4_WRITABLE_ROOT, 0777 );
 	sceIoMkdir( VITA_OPENQ4_WRITABLE_ROOT "/logs", 0777 );
+
+	// Vita3K currently leaves stale bytes behind when this file is reopened with
+	// SCE_O_TRUNC. Remove it explicitly so a crash log contains only this boot
+	// and APPEND checkpoints never jump into the tail of the previous run.
+	sceIoRemove( kLoadingLog );
 	hud.logFd = sceIoOpen( kLoadingLog, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0666 );
 
 	hud.nativeReady = VitaDiagScreen_Init();
