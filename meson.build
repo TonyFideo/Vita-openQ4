@@ -1033,6 +1033,7 @@ if build_engine
       cc.find_library('vitashark', required: true),
       cc.find_library('mathneon', required: true),
       cc.find_library('SceLibKernel_stub', required: true),
+      cc.find_library('SceSysmem_stub', required: true),
       cc.find_library('SceIofilemgr_stub', required: true),
       cc.find_library('ScePower_stub', required: true),
       cc.find_library('SceAppMgr_stub', required: true),

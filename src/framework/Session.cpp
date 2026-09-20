@@ -33,6 +33,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "ArenaCampaign.h"
 #include "BuildVersion.h"
 #include "../sys/NetworkEndpoint.h"
+#if defined(VITA) || defined(__vita__)
+#include "../sys/vita/vita_loading_hud.h"
+#endif
 #if defined( __has_include )
 #if __has_include( "openq4_savegame_compat_generated.h" )
 #include "openq4_savegame_compat_generated.h"
@@ -8247,35 +8250,63 @@ void idSessionLocal::Init() {
 	// the same idRenderWorld will be used for all games
 	// and demos, insuring that level specific models
 	// will be freed
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_LogInfo( "SESSION: creando mundos" );
+#endif
 	rw = renderSystem->AllocRenderWorld();
 	sw = soundSystem->AllocSoundWorld( rw );
 
 	menuSoundWorld = soundSystem->AllocSoundWorld( rw );
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_LogOk( "SESSION: mundos OK" );
+#endif
 
 	// we have a single instance of the main menu
 #ifdef ID_DEDICATED
 	common->Printf( "Dedicated server: skipping client GUI preload.\n" );
 #else
 	Session_DeclareMultiplayerMenuGameCVars();
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_LogInfo( "SESSION: cargando mainmenu" );
+#endif
 #ifndef ID_DEMO_BUILD
 	guiMainMenu = uiManager->FindGui( "guis/mainmenu.gui", true, false, true );
 #else
 	guiMainMenu = uiManager->FindGui( "guis/demo_mainmenu.gui", true, false, true );
 #endif
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_LogOk( "SESSION: mainmenu FindGui OK" );
+	VitaLoadingHud_LogInfo( "SESSION: precarga mainmenu" );
+#endif
 	// Resolve and retain menu media while the session is initialized. Doing
 	// this synchronously from StartMenu made the first ESC press wait on image,
 	// material, and sound lookup before the GUI could be activated.
 	PrimeMainMenuGuiResources();
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_LogOk( "SESSION: precarga mainmenu OK" );
+	VitaLoadingHud_LogInfo( "SESSION: listas menu" );
+#endif
 	guiMainMenu_MapList = uiManager->AllocListGUI();
 	guiMainMenu_MapList->Config( guiMainMenu, "mapList" );
 	idAsyncNetwork::client.serverList.GUIConfig( guiMainMenu, "serverList" );
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_LogOk( "SESSION: listas menu OK" );
+	VitaLoadingHud_LogInfo( "SESSION: GUIs auxiliares" );
+#endif
 	guiRestartMenu = uiManager->FindGui( "guis/restart.gui", true, false, true );
 	guiGameOver = uiManager->FindGui( "guis/gameover.gui", true, false, true );
 	guiMsg = uiManager->FindGui( "guis/msg.gui", true, false, true );
 	guiTakeNotes = uiManager->FindGui( "guis/takeNotes.gui", true, false, true );
 	guiIntro = uiManager->FindGui( "guis/intro.gui", true, false, true );
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_LogOk( "SESSION: GUIs auxiliares OK" );
+	VitaLoadingHud_LogInfo( "SESSION: demo y arena" );
+#endif
 	InitDemoSystem();
 	arenaCampaign.Init();
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_LogOk( "SESSION: demo y arena OK" );
+#endif
 #endif
 
 	whiteMaterial = declManager->FindMaterial( "_white" );
@@ -8288,6 +8319,9 @@ void idSessionLocal::Init() {
 
 	ReadCDKey();
 
+#if defined(VITA) || defined(__vita__)
+	VitaLoadingHud_LogOk( "SESSION: inicializada" );
+#endif
 	common->Printf( "session initialized\n" );
 	common->Printf( "--------------------------------------\n" );
 }

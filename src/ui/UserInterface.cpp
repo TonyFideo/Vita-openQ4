@@ -36,6 +36,10 @@ If you have questions concerning this license or the applicable additional terms
 #include "ChatWindow.h"
 #include "SimpleWindow.h"
 #include "../framework/Session.h"
+#if defined(VITA) || defined(__vita__)
+#include "../sys/vita/vita_loading_hud.h"
+#include <psp2/kernel/sysmem.h>
+#endif
 
 extern idCVar r_skipGuiShaders;		// 1 = don't render any gui elements on surfaces
 extern idCVar gui_debugScript;
@@ -46,6 +50,29 @@ idUserInterfaceManagerLocal	uiManagerLocal;
 idUserInterfaceManager *	uiManager = &uiManagerLocal;
 
 namespace {
+
+#if defined(VITA) || defined(__vita__)
+static bool UI_VitaIsMainMenu( const char *qpath ) {
+	return qpath != NULL && idStr::Icmp( qpath, "guis/mainmenu.gui" ) == 0;
+}
+
+static void UI_VitaLogFreeMemory( const char *stage ) {
+	SceKernelFreeMemorySizeInfo info;
+	memset( &info, 0, sizeof( info ) );
+	info.size = sizeof( info );
+	const int result = sceKernelGetFreeMemorySize( &info );
+	if ( result < 0 ) {
+		VitaLoadingHud_LogWarn( "MEM %s: error 0x%08x", stage != NULL ? stage : "?", result );
+		return;
+	}
+	VitaLoadingHud_LogInfo(
+		"MEM %s: user=%uK phy=%uK cdram=%uK",
+		stage != NULL ? stage : "?",
+		(unsigned int)( info.size_user / 1024 ),
+		(unsigned int)( info.size_phycont / 1024 ),
+		(unsigned int)( info.size_cdram / 1024 ) );
+}
+#endif
 
 static void SetStateRectangleComponents( idUserInterfaceLocal *gui, const char *prefix, const idRectangle &rect ) {
 	if ( gui == NULL || prefix == NULL ) {
@@ -379,19 +406,60 @@ bool idUserInterfaceLocal::InitFromFile( const char *qpath, bool rebuild, bool c
 
 	idParser src( LEXFL_NOFATALERRORS | LEXFL_NOSTRINGCONCAT | LEXFL_ALLOWMULTICHARLITERALS | LEXFL_ALLOWBACKSLASHSTRINGCONCAT );
 
-	//Load the timestamp so reload guis will work correctly
-	fileSystem->ReadFile(qpath, NULL, &timeStamp);
+	// Load the timestamp so reload guis will work correctly. With a null
+	// payload ReadFile only opens the source and reports metadata.
+#if defined(VITA) || defined(__vita__)
+	const bool vitaMainMenu = UI_VitaIsMainMenu( qpath );
+	if ( vitaMainMenu ) {
+		VitaLoadingHud_LogInfo( "MAINMENU: metadata" );
+		UI_VitaLogFreeMemory( "antes metadata" );
+	}
+#endif
+	const int sourceLength = fileSystem->ReadFile( qpath, NULL, &timeStamp );
+#if defined(VITA) || defined(__vita__)
+	if ( vitaMainMenu ) {
+		VitaLoadingHud_LogOk( "MAINMENU: metadata OK %d KB", sourceLength > 0 ? ( sourceLength + 1023 ) / 1024 : sourceLength );
+		UI_VitaLogFreeMemory( "antes lexer" );
+		VitaLoadingHud_LogInfo( "MAINMENU: lexer LoadFile" );
+	}
+#endif
 
-	src.LoadFile( qpath );
+	const bool parserLoaded = src.LoadFile( qpath ) != 0;
+#if defined(VITA) || defined(__vita__)
+	if ( vitaMainMenu ) {
+		VitaLoadingHud_LogInfo( "MAINMENU: lexer retorno=%d loaded=%d", parserLoaded ? 1 : 0, src.IsLoaded() ? 1 : 0 );
+		UI_VitaLogFreeMemory( "despues lexer" );
+	}
+#else
+	(void)parserLoaded;
+#endif
 
 	if ( src.IsLoaded() ) {
 		idToken token;
 		while( src.ReadToken( &token ) ) {
 			if ( idStr::Icmp( token, "windowDef" ) == 0 ) {
 				desktop->SetDC( &uiManagerLocal.dc );
+#if defined(VITA) || defined(__vita__)
+				if ( vitaMainMenu ) {
+					VitaLoadingHud_LogInfo( "MAINMENU: parse desktop" );
+					UI_VitaLogFreeMemory( "antes parse" );
+				}
+#endif
 				if ( desktop->Parse( &src, rebuild ) ) {
 					desktop->SetFlag( WIN_DESKTOP );
+#if defined(VITA) || defined(__vita__)
+					if ( vitaMainMenu ) {
+						VitaLoadingHud_LogOk( "MAINMENU: parse desktop OK" );
+						UI_VitaLogFreeMemory( "antes fixup" );
+					}
+#endif
 					desktop->FixupParms();
+#if defined(VITA) || defined(__vita__)
+					if ( vitaMainMenu ) {
+						VitaLoadingHud_LogOk( "MAINMENU: FixupParms OK" );
+						UI_VitaLogFreeMemory( "despues fixup" );
+					}
+#endif
 				}
 				continue;
 			}

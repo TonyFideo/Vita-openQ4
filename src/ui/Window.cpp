@@ -41,6 +41,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "RenderWindow.h"
 #include "MarkerWindow.h"
 #include "FieldWindow.h"
+#if defined(VITA) || defined(__vita__)
+#include "../sys/vita/vita_loading_hud.h"
+#endif
 
 #include "GameSSDWindow.h"
 #include "GameBearShootWindow.h"
@@ -3307,6 +3310,11 @@ idWindow::Parse
 bool idWindow::Parse( idParser *src, bool rebuild) {
 	idToken token, token2, token3, token4, token5, token6, token7;
 	idStr work;
+#if defined(VITA) || defined(__vita__)
+	static int vitaMainMenuWindowCount = 0;
+	const bool vitaMainMenu = gui != NULL && idStr::Icmp( gui->GetSourceFile(), "guis/mainmenu.gui" ) == 0;
+	bool vitaMainMenuRoot = false;
+#endif
 
 	if (rebuild) {
 		CleanUp();
@@ -3322,6 +3330,18 @@ bool idWindow::Parse( idParser *src, bool rebuild) {
 	src->ExpectTokenType( TT_NAME, 0, &token );
 
 	SetInitialState(token);
+#if defined(VITA) || defined(__vita__)
+	if ( vitaMainMenu ) {
+		vitaMainMenuRoot = token.Icmp( "Desktop" ) == 0;
+		if ( vitaMainMenuRoot ) {
+			vitaMainMenuWindowCount = 0;
+		}
+		vitaMainMenuWindowCount++;
+		if ( vitaMainMenuWindowCount == 1 || ( vitaMainMenuWindowCount % 128 ) == 0 ) {
+			VitaLoadingHud_LogInfo( "MAINMENU parse: %d ventanas (%s)", vitaMainMenuWindowCount, token.c_str() );
+		}
+	}
+#endif
 
 	src->ExpectTokenString( "{" );
 	src->ExpectAnyToken( &token );
@@ -3784,6 +3804,11 @@ bool idWindow::Parse( idParser *src, bool rebuild) {
 
 	SetupFromState();
 	PostParse();
+#if defined(VITA) || defined(__vita__)
+	if ( vitaMainMenuRoot ) {
+		VitaLoadingHud_LogOk( "MAINMENU parse completo: %d ventanas", vitaMainMenuWindowCount );
+	}
+#endif
 
 	// hook into the main window parsing for the gui editor
 	// If we are in the gui editor then add the internal var to the 

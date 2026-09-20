@@ -1701,6 +1701,29 @@ static idCVar fs_vitaLooseImageOverrides(
 	CVAR_SYSTEM | CVAR_BOOL,
 	"search loose directories before PK4s for retail image sources on Vita; disabled by default to avoid Vita3K host filesystem churn" );
 
+static idCVar fs_vitaLooseGuiOverrides(
+	"fs_vitaLooseGuiOverrides",
+	"0",
+	CVAR_SYSTEM | CVAR_BOOL,
+	"search loose directories before PK4s for GUI source files on Vita; disabled by default to avoid repeated Vita3K host filesystem probes" );
+
+static bool FS_VitaPackedGuiPath( const char *relativePath ) {
+	if ( relativePath == NULL || relativePath[0] == '\0' ) {
+		return false;
+	}
+
+	idStr path = relativePath;
+	path.BackSlashesToSlashes();
+	path.ToLower();
+	if ( path.Icmpn( "guis/", 5 ) != 0 ) {
+		return false;
+	}
+
+	idStr ext;
+	path.ExtractFileExtension( ext );
+	return !ext.Icmp( "gui" );
+}
+
 static bool FS_VitaGeneratedImageCachePath( const char *relativePath ) {
 	if ( relativePath == NULL || relativePath[0] == '\0' ) {
 		return false;
@@ -7158,6 +7181,27 @@ idFile *idFileSystemLocal::OpenFileRead( const char *relativePath, bool allowCop
 			VitaLoadingHud_SetAssetPhase( relativePath, packedFile != NULL ? "FS pak hit" : "FS pak miss" );
 		}
 		return packedFile;
+	}
+
+	// GUI source files are normally shipped in PK4s as well. Unlike images, a
+	// missing packed GUI falls back to the ordinary directory search so
+	// development/mod files still work. When the packed source exists, avoiding
+	// the loose pass matters on Vita3K: InitFromFile opens mainmenu.gui twice
+	// (metadata probe + lexer load), and build #230 ended host-side while the
+	// second loose traversal was beginning.
+	if ( !fs_vitaLooseGuiOverrides.GetBool() && FS_VitaPackedGuiPath( relativePath ) ) {
+		idFile *packedGui = OpenFileReadFlags(
+			relativePath,
+			FSFLAG_SEARCH_PAKS,
+			NULL,
+			allowCopyFiles,
+			gamedir );
+		if ( packedGui != NULL ) {
+			if ( idStr::FindText( relativePath, "mainmenu.gui", false ) >= 0 ) {
+				VitaLoadingHud_LogInfo( "FS GUI PK4 directo: %s", relativePath );
+			}
+			return packedGui;
+		}
 	}
 #endif
 	return OpenFileReadFlags( relativePath, FSFLAG_SEARCH_DIRS | FSFLAG_SEARCH_PAKS, NULL, allowCopyFiles, gamedir );
