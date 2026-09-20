@@ -67,6 +67,7 @@ private:
 	virtual bool		ParseInternalVar(const char *name, idParser *src);
 	void				CommonInit();
 	void				InitScroller( bool horizontal );
+	void				ResolveRowMaterials();
 	void				SetCurrentSel( int sel );
 	void				AddCurrentSel( int sel );
 	int					GetCurrentSel();
@@ -86,6 +87,19 @@ private:
 	idStr				tabIconVOffsetStr;
 	idHashTable<const idMaterial*> iconMaterials;						
 	bool				multipleSel;
+
+	// Row materials are authored properties of the listDef. Resolve them while
+	// parsing the GUI so opening a menu never triggers a texture/material upload
+	// from inside Draw(). Keep the authored names to support the rare runtime
+	// property change without paying FindMaterial every frame.
+	idStr				rowFocusMaterialName;
+	idStr				rowLineMaterialName;
+	idStr				rowHoverMaterialName;
+	idStr				rowGreyedMaterialName;
+	const idMaterial*	rowFocusMaterial;
+	const idMaterial*	rowLineMaterial;
+	const idMaterial*	rowHoverMaterial;
+	const idMaterial*	rowGreyedMaterial;
 
 	idStrList			listItems;
 	idSliderWindow*		scroller;

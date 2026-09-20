@@ -208,27 +208,58 @@ Script_ResetTime
 =========================
 */
 void Script_ResetTime(idWindow *window, idList<idGSWinVar> *src) {
-	idWinStr *parm = dynamic_cast<idWinStr*>((*src)[0].var);
-	drawWin_t *win = NULL;
-	if (parm && src->Num() > 1) {
-		win = window->GetGui()->GetDesktop()->FindChildByName(*parm);
-		parm = dynamic_cast<idWinStr*>((*src)[1].var);
+	if ( window == NULL || src == NULL || src->Num() <= 0 ) {
+		common->Warning( "GUI: resetTime called without a valid window/parameter" );
+		return;
 	}
-	if (win && win->win) {
-		win->win->ResetTime(atoi(*parm));
-		win->win->EvalRegs(-1, true);
-		if (gui_debugScript.GetInteger() > 0) {
-			common->Printf("GUI: resetTime window=%s time=%s (caller=%s gui=%s)\n",
-				win->win->GetName(), parm ? parm->c_str() : "<null>", window ? window->GetName() : "<null>",
-				window && window->GetGui() ? window->GetGui()->GetSourceFile() : "<null>");
+
+	idWinStr *firstParm = dynamic_cast<idWinStr*>( (*src)[0].var );
+	if ( firstParm == NULL ) {
+		common->Warning( "GUI: resetTime has a non-string first parameter (caller=%s)",
+			window->GetName() );
+		return;
+	}
+
+	// Two-argument resetTime names another animation window. Missing targets must
+	// never fall back to resetting the caller: doing so can replay the page-out
+	// animation and leave the menu with every page hidden.
+	if ( src->Num() > 1 ) {
+		idWinStr *timeParm = dynamic_cast<idWinStr*>( (*src)[1].var );
+		if ( timeParm == NULL || window->GetGui() == NULL || window->GetGui()->GetDesktop() == NULL ) {
+			common->Warning( "GUI: resetTime target '%s' has no valid time/gui (caller=%s)",
+				firstParm->c_str(), window->GetName() );
+			return;
 		}
-	} else {
-		window->ResetTime(atoi(*parm));
-		window->EvalRegs(-1, true);
-		if (gui_debugScript.GetInteger() > 0) {
-			common->Printf("GUI: resetTime window=%s time=%s (self)\n",
-				window ? window->GetName() : "<null>", parm ? parm->c_str() : "<null>");
+
+		drawWin_t *target = window->GetGui()->GetDesktop()->FindChildByName( firstParm->c_str() );
+		const int resetMsec = atoi( timeParm->c_str() );
+#if defined(VITA) || defined(__vita__)
+		if ( idStr::Icmp( window->GetGui()->GetSourceFile(), "guis/mainmenu.gui" ) == 0 ) {
+			common->Printf( "[VOQ4][gui] resetTime caller=%s target=%s found=%d time=%d\n",
+				window->GetName(), firstParm->c_str(), ( target != NULL && target->win != NULL ) ? 1 : 0, resetMsec );
 		}
+#endif
+		if ( target == NULL || target->win == NULL ) {
+			common->Warning( "GUI: resetTime target '%s' was not found as a full window in %s (caller=%s)",
+				firstParm->c_str(), window->GetGui()->GetSourceFile(), window->GetName() );
+			return;
+		}
+
+		target->win->ResetTime( resetMsec );
+		target->win->EvalRegs( -1, true );
+		if ( gui_debugScript.GetInteger() > 0 ) {
+			common->Printf( "GUI: resetTime window=%s time=%s (caller=%s gui=%s)\n",
+				target->win->GetName(), timeParm->c_str(), window->GetName(), window->GetGui()->GetSourceFile() );
+		}
+		return;
+	}
+
+	const int resetMsec = atoi( firstParm->c_str() );
+	window->ResetTime( resetMsec );
+	window->EvalRegs( -1, true );
+	if ( gui_debugScript.GetInteger() > 0 ) {
+		common->Printf( "GUI: resetTime window=%s time=%s (self)\n",
+			window->GetName(), firstParm->c_str() );
 	}
 }
 

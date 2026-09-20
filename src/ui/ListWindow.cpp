@@ -123,6 +123,34 @@ void idListWindow::CommonInit() {
 	horizontal = false;
 	scroller = new idSliderWindow(dc, gui);
 	multipleSel = false;
+	rowFocusMaterial = NULL;
+	rowLineMaterial = NULL;
+	rowHoverMaterial = NULL;
+	rowGreyedMaterial = NULL;
+}
+
+void idListWindow::ResolveRowMaterials() {
+	const char *focusName = backgroundFocus.c_str();
+	const char *lineName = backgroundLine.c_str();
+	const char *hoverName = backgroundHover.c_str();
+	const char *greyedName = backgroundGreyed.c_str();
+
+	if ( rowFocusMaterialName.Icmp( focusName ) != 0 ) {
+		rowFocusMaterialName = focusName;
+		rowFocusMaterial = openQ4_ListMaterial( focusName );
+	}
+	if ( rowLineMaterialName.Icmp( lineName ) != 0 ) {
+		rowLineMaterialName = lineName;
+		rowLineMaterial = openQ4_ListMaterial( lineName );
+	}
+	if ( rowHoverMaterialName.Icmp( hoverName ) != 0 ) {
+		rowHoverMaterialName = hoverName;
+		rowHoverMaterial = openQ4_ListMaterial( hoverName );
+	}
+	if ( rowGreyedMaterialName.Icmp( greyedName ) != 0 ) {
+		rowGreyedMaterialName = greyedName;
+		rowGreyedMaterial = openQ4_ListMaterial( greyedName );
+	}
 }
 
 idListWindow::idListWindow(idDeviceContext *d, idUserInterfaceLocal *g) : idWindow(d, g) {
@@ -430,6 +458,11 @@ idWinVar *idListWindow::GetWinVarByName(const char *_name, bool fixup, drawWin_t
 void idListWindow::PostParse() {
 	idWindow::PostParse();
 
+	// listDef row shaders used to be discovered lazily by Draw(). On Vita that
+	// can allocate/upload a texture in the middle of GUI submission and disturb
+	// an otherwise stable menu frame. Resolve authored row materials here with
+	// the rest of the GUI assets instead.
+	ResolveRowMaterials();
 	InitScroller(horizontal);
 
 	idList<int> tabStops;
@@ -622,10 +655,15 @@ void idListWindow::Draw(int time, float x, float y) {
 		}
 	}
 
-	const idMaterial *matFocus = openQ4_ListMaterial( backgroundFocus.c_str() );
-	const idMaterial *matLine = openQ4_ListMaterial( backgroundLine.c_str() );
-	const idMaterial *matHover = openQ4_ListMaterial( backgroundHover.c_str() );
-	const idMaterial *matGreyed = openQ4_ListMaterial( backgroundGreyed.c_str() );
+	// Usually this is a four-string comparison only: PostParse already resolved
+	// the materials. If a GUI script changes one of the authored names later,
+	// refresh that one material deliberately instead of calling FindMaterial for
+	// every list on every frame.
+	ResolveRowMaterials();
+	const idMaterial *matFocus = rowFocusMaterial;
+	const idMaterial *matLine = rowLineMaterial;
+	const idMaterial *matHover = rowHoverMaterial;
+	const idMaterial *matGreyed = rowGreyedMaterial;
 	gui->SetStateInt( va( "%s_hover", listName.c_str() ), -1 );
 	const bool listContainsCursor = !noEvents && Contains( gui->CursorX(), gui->CursorY() );
 	hover = listContainsCursor;

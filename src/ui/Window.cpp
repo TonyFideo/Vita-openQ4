@@ -1584,6 +1584,21 @@ void idWindow::Time() {
 		for (int i = 0; i < c; i++) {
 			if ( timeLineEvents[i]->pending && gui->GetTime() - timeLine >= timeLineEvents[i]->time ) {
 				timeLineEvents[i]->pending = false;
+#if defined(VITA) || defined(__vita__)
+				if ( idStr::Icmp( gui->GetSourceFile(), "guis/mainmenu.gui" ) == 0 &&
+					( idStr::Icmp( GetName(), "anim_mainOut" ) == 0 || idStr::Icmp( GetName(), "anim_settingsIn" ) == 0 ) ) {
+					float destValue = -999.0f;
+					idWindow *desktop = gui->GetDesktop();
+					if ( desktop != NULL ) {
+						idWinVar *destVar = desktop->GetWinVarByName( "dest", false );
+						if ( destVar != NULL ) {
+							destValue = destVar->x();
+						}
+					}
+					common->Printf( "[VOQ4][gui] onTime window=%s event=%d guiTime=%d timeline=%d dest=%.0f\n",
+						GetName(), timeLineEvents[i]->time, gui->GetTime(), timeLine, destValue );
+				}
+#endif
 				if ( gui_debugScript.GetInteger() > 1 ) {
 					common->Printf("GUI: onTime window=%s time=%d gui=%s\n",
 						GetName(), timeLineEvents[i]->time, gui->GetSourceFile());
@@ -1878,6 +1893,19 @@ void idWindow::Redraw(float x, float y) {
 	}
 	
 	int time = gui->GetTime();
+
+#if defined(VITA) || defined(__vita__)
+	if ( idStr::Icmp( gui->GetSourceFile(), "guis/mainmenu.gui" ) == 0 &&
+		 idStr::Icmp( GetName(), "p_settings" ) == 0 ) {
+		static bool vitaSettingsWasVisible = false;
+		const bool vitaSettingsVisible = visible;
+		if ( vitaSettingsVisible != vitaSettingsWasVisible ) {
+			common->Printf( "[VOQ4][gui] p_settings visible=%d rect=%.1f,%.1f,%.1f,%.1f children=%d\n",
+				vitaSettingsVisible ? 1 : 0, rect.x(), rect.y(), rect.w(), rect.h(), drawWindows.Num() );
+			vitaSettingsWasVisible = vitaSettingsVisible;
+		}
+	}
+#endif
 
 	if ( flags & WIN_DESKTOP && r_skipGuiShaders.GetInteger() != 3 ) {
 		RunTimeEvents( time );
