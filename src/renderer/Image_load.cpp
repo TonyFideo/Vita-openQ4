@@ -614,7 +614,19 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 		common->Printf( "Using DDS replacement %s for %s\n", preferredDDSName.c_str(), GetName() );
 	}
 	const bool selectedDDSImage = explicitDDSImage || preferredDDSImage;
-	const bool bypassGeneratedFile = explicitDDSImage || preferredDDSPrecompressed;
+	bool bypassGeneratedFile = explicitDDSImage || preferredDDSPrecompressed;
+#if defined(VITA) || defined(__vita__)
+	// Runtime-generated .bimage files from earlier Vita bring-up builds may be
+	// truncated or otherwise incompatible. Vita3K has repeatedly terminated
+	// while opening those caches before source decoding even begins. Until the
+	// cache format/path is rebuilt deliberately, normal Vita runs decode the
+	// authoritative DDS/TGA source from PK4 and never read generated image
+	// caches. com_makingBuild keeps cache access enabled for offline generation.
+	if ( !cvarSystem->GetCVarBool( "com_makingBuild" ) ) {
+		bypassGeneratedFile = true;
+		VitaLoadingHud_SetAssetPhase( GetName(), "CACHE bypass runtime" );
+	}
+#endif
 	idStr selectedSourceName = GetName();
 	if ( preferredDDSImage ) {
 		selectedSourceName = preferredDDSName;
