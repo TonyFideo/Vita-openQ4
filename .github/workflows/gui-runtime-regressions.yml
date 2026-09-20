@@ -9,6 +9,7 @@ on:
       - src/idlib/**
       - src/renderer/**
       - src/render_geo/**
+      - src/imagetools/**
       - src/framework/Session.cpp
       - src/sys/vita/vita_main.cpp
       - tools/vita/patch_vitagl*.py
@@ -41,6 +42,7 @@ jobs:
           /src/framework/
           /src/renderer/
           /src/render_geo/
+          /src/imagetools/
           /src/sys/vita/
           /tools/vita/
           /content/baseoq4/pak0/guis/
@@ -90,7 +92,7 @@ jobs:
           set -euo pipefail
           mkdir -p gui-diagnostics
           git rev-parse HEAD > gui-diagnostics/commit.txt
-          git archive HEAD AGENTS.md meson.build src/ui src/idlib src/framework src/renderer src/render_geo src/sys/vita tools/vita content/baseoq4/pak0/guis .github/workflows | gzip > gui-diagnostics/gui-source.tar.gz
+          git archive HEAD AGENTS.md meson.build src/ui src/idlib src/framework src/renderer src/render_geo src/imagetools src/sys/vita tools/vita content/baseoq4/pak0/guis .github/workflows | gzip > gui-diagnostics/gui-source.tar.gz
 
       - name: Upload GUI test evidence
         if: always()
