@@ -27,6 +27,18 @@ static void VitaGLimp_Log( const char *message ) {
 	}
 }
 
+static void VitaGLimp_PrimeImagePolicy( void ) {
+	// ImageManager::Init runs before the user's configs are applied. The first
+	// upload after this context initialization already uses those config values;
+	// leaving their modified bits set makes the first BeginFrame reload all
+	// images again. Prime only at context initialization/restart, never per frame,
+	// so later console/config changes continue to trigger CheckCvars normally.
+	if ( globalImages != NULL ) {
+		globalImages->PrimeCvars();
+		VitaLoadingHud_SetCheckpoint( "IMAGE policy primed before upload" );
+	}
+}
+
 static int VitaGLimp_FreeCdramBytes( void ) {
 	SceKernelFreeMemorySizeInfo freeMemory = {};
 	freeMemory.size = sizeof( freeMemory );
@@ -57,6 +69,7 @@ bool GLimp_Init( glimpParms_t parms ) {
 		engineWindowState.vidWidth = 960;
 		engineWindowState.vidHeight = 544;
 		VitaGLimp_Log( "reusing existing VitaGL context" );
+		VitaGLimp_PrimeImagePolicy();
 		return true;
 	}
 
@@ -106,6 +119,7 @@ bool GLimp_Init( glimpParms_t parms ) {
 
 	const bool rendererValid = glGetString( GL_VERSION ) != NULL;
 	if ( rendererValid ) {
+		VitaGLimp_PrimeImagePolicy();
 		VitaLoadingHud_RendererInitialized();
 	} else {
 		VitaLoadingHud_LogError( "VitaGL no devolvio GL_VERSION" );
