@@ -5006,10 +5006,12 @@ bool rvRenderModelMD5R::BuildDynamicMeshTemplate( rvMD5RMesh &mesh ) {
 	}
 	mesh.baseDrawVerts.Clear();
 
+	// CPU-only construction scratch: no draw command or model owns baseTri.
+	// All persistent data is copied/derived before the immediate release.
 	srfTriangles_t *baseTri = GenerateStaticTriSurface( mesh );
 	if ( baseTri == NULL || baseTri->verts == NULL || baseTri->indexes == NULL || baseTri->numVerts <= 0 || baseTri->numIndexes <= 0 ) {
 		if ( baseTri != NULL ) {
-			R_FreeStaticTriSurf( baseTri );
+			R_ReallyFreeStaticTriSurf( baseTri );
 		}
 		return false;
 	}
@@ -5030,7 +5032,7 @@ bool rvRenderModelMD5R::BuildDynamicMeshTemplate( rvMD5RMesh &mesh ) {
 		deformIndexes.Ptr(),
 		false );
 
-	R_FreeStaticTriSurf( baseTri );
+	R_ReallyFreeStaticTriSurf( baseTri );
 
 	if ( mesh.deformInfo == NULL ) {
 		mesh.baseDrawVerts.Clear();
@@ -5114,6 +5116,10 @@ void rvRenderModelMD5R::BuildGpuSkinningSidecar( rvMD5RMesh &mesh ) const {
 	mesh.gpuSkinningVerts.Clear();
 	mesh.gpuSkinningSourceVerts = 0;
 	mesh.gpuSkinningFallback = GPU_SKINNING_FALLBACK_NONE;
+	if ( !R_GpuSkinning_UsesSourceSidecars() ) {
+		mesh.gpuSkinningFallback = GPU_SKINNING_FALLBACK_BACKEND_UNAVAILABLE;
+		return;
+	}
 
 	const idList<rvMD5RVertexBufferDesc> &vertexBuffers = GetVertexBuffers();
 	if ( mesh.deformInfo == NULL || mesh.baseDrawVerts.Num() != mesh.deformInfo->numSourceVerts
@@ -5217,7 +5223,8 @@ bool rvRenderModelMD5R::UpdateDynamicSurface( const rvMD5RMesh &mesh, const idJo
 	const uint64 cpuSkinStart = R_GpuSkinning_ReadMicroseconds();
 
 #if defined( _MD5R_SUPPORT ) || defined( Q4SDK_MD5R )
-	const bool skipPackedCpuTangents = allowGpuSkinning && r_gpuSkinning.GetBool()
+	const bool skipPackedCpuTangents = R_GpuSkinning_UsesSourceSidecars()
+		&& allowGpuSkinning && r_gpuSkinning.GetBool()
 		&& mesh.gpuSkinningFallback == GPU_SKINNING_FALLBACK_NONE
 		&& mesh.gpuBindPoseVerts.Num() == mesh.numDrawVertices
 		&& mesh.gpuSkinningVerts.Num() == mesh.numDrawVertices;

@@ -31,11 +31,12 @@ void VitaRuntimeAudit_Memory(const char *reason, size_t count, size_t size,
                             const void *caller, bool failed) {
     const int savedErrno = errno;
     if (__sync_lock_test_and_set(&vitaAuditReporting, 1)) return;
-    if (!failed && vitaAuditSnapshots >= 96) {
+    const bool trafficSnapshot = reason != NULL && strcmp(reason, "allocation-traffic") == 0;
+    if (!failed && trafficSnapshot && vitaAuditSnapshots >= 96) {
         __sync_lock_release(&vitaAuditReporting);
         return;
     }
-    ++vitaAuditSnapshots;
+    if (!failed && trafficSnapshot) ++vitaAuditSnapshots;
     const struct mallinfo heap = mallinfo();
     SceKernelFreeMemorySizeInfo kernel = {};
     kernel.size = sizeof(kernel);

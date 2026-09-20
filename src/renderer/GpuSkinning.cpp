@@ -45,6 +45,19 @@ const char *R_GpuSkinning_FallbackName( gpuSkinningFallbackReason_t reason ) {
 		? names[ reason ] : "invalid";
 }
 
+bool R_GpuSkinning_UsesSourceSidecars( void ) {
+#if defined(VITA) || defined(__vita__)
+	// The linked Vita GLES_D3 backend is CPU-only for skeletal deformation;
+	// it has no GPU skinning program/compute consumer. Keep its CPU weights,
+	// bind basis and silhouette data, not duplicate GPU-only streams. Enable
+	// this capability when a real deformation consumer is implemented there.
+	return false;
+#else
+	// Preserve load-time sidecars and runtime cvar toggling on other backends.
+	return true;
+#endif
+}
+
 uint32 R_GpuSkinning_ContractGeneration( void ) {
 	return rg_gpuSkinningGeneration;
 }
@@ -188,6 +201,10 @@ bool R_GpuSkinning_AttachSurfaceContract( srfTriangles_s *tri,
 		return false;
 	}
 	R_ClearStaticGpuSkinningJointPalette( tri );
+	if ( !R_GpuSkinning_UsesSourceSidecars() ) {
+		R_GpuSkinning_ClearSurfaceContract( tri, GPU_SKINNING_FALLBACK_BACKEND_UNAVAILABLE );
+		return false;
+	}
 	if ( sourceFallback != GPU_SKINNING_FALLBACK_NONE ) {
 		R_GpuSkinning_ClearSurfaceContract( tri, sourceFallback );
 		return false;

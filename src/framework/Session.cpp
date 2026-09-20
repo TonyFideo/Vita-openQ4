@@ -35,6 +35,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "../sys/NetworkEndpoint.h"
 #if defined(VITA) || defined(__vita__)
 #include "../sys/vita/vita_loading_hud.h"
+#include "../sys/vita/vita_runtime_audit.h"
 #endif
 #if defined( __has_include )
 #if __has_include( "openq4_savegame_compat_generated.h" )
@@ -6011,10 +6012,16 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 	common->Printf( "--------- Map Initialization ---------\n" );
 	common->Printf( "Map: %s\n", mapString.c_str() );
 
+#if defined(VITA) || defined(__vita__)
+	VitaRuntimeAudit_Memory( "load:world:begin", 0, 0, NULL, false );
+#endif
 	// let the renderSystem load all the geometry
 	if ( !rw->InitFromMap( fullMapName ) ) {
 		common->Error( "couldn't load %s", fullMapName.c_str() );
 	}
+#if defined(VITA) || defined(__vita__)
+	VitaRuntimeAudit_Memory( "load:world:done", 0, 0, NULL, false );
+#endif
 	renderWorldMsec = Sys_Milliseconds() - phaseStart;
 	phaseStart = Sys_Milliseconds();
 
@@ -6044,17 +6051,29 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 		game->SetServerInfo( mapSpawnData.serverInfo );
 		game->InitFromNewMap( fullMapName, rw, idAsyncNetwork::server.IsActive(), idAsyncNetwork::client.IsActive(), Sys_Milliseconds() );
 	}
+#if defined(VITA) || defined(__vita__)
+	VitaRuntimeAudit_Memory( "load:game-init:done", 0, 0, NULL, false );
+#endif
 	gameInitMsec = Sys_Milliseconds() - phaseStart;
 	phaseStart = Sys_Milliseconds();
 
 	if ( !idAsyncNetwork::IsActive() && !loadingSaveGame ) {
 		// spawn players
 		for ( i = 0; i < numClients; i++ ) {
+#if defined(VITA) || defined(__vita__)
+	VitaRuntimeAudit_Memory( "load:player:begin", 0, 0, NULL, false );
+#endif
 			game->SpawnPlayer( i, false, NULL );
 		}
 	}
+#if defined(VITA) || defined(__vita__)
+	VitaRuntimeAudit_Memory( "load:player:done", 0, 0, NULL, false );
+#endif
 	playerSpawnMsec = Sys_Milliseconds() - phaseStart;
 	phaseStart = Sys_Milliseconds();
+#if defined(VITA) || defined(__vita__)
+	VitaRuntimeAudit_Memory( "load:cache-join:begin", 0, 0, NULL, false );
+#endif
 	fileSystem->FinishLevelLoadCache( true );
 	cacheJoinMsec = Sys_Milliseconds() - phaseStart;
 	phaseStart = Sys_Milliseconds();
@@ -6062,7 +6081,13 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 	// actually purge/load the media
 	int mediaPhaseStart = phaseStart;
 	if ( !reloadingSameMap ) {
+#if defined(VITA) || defined(__vita__)
+	VitaRuntimeAudit_Memory( "load:renderer-finalize:begin", 0, 0, NULL, false );
+#endif
 		renderSystem->EndLevelLoad();
+#if defined(VITA) || defined(__vita__)
+	VitaRuntimeAudit_Memory( "load:renderer-finalize:done", 0, 0, NULL, false );
+#endif
 		mediaRenderMsec = Sys_Milliseconds() - mediaPhaseStart;
 		mediaPhaseStart = Sys_Milliseconds();
 		soundSystem->EndLevelLoad();
@@ -6082,7 +6107,13 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 	}
 	uiManager->EndLevelLoad();
 	mediaUiMsec = Sys_Milliseconds() - mediaPhaseStart;
+#if defined(VITA) || defined(__vita__)
+	VitaRuntimeAudit_Memory( "load:cache-release:begin", 0, 0, NULL, false );
+#endif
 	FS_ReleaseLevelLoadCache();
+#if defined(VITA) || defined(__vita__)
+	VitaRuntimeAudit_Memory( "load:media:done", 0, 0, NULL, false );
+#endif
 	mediaFinishMsec = Sys_Milliseconds() - phaseStart;
 	phaseStart = Sys_Milliseconds();
 
@@ -6094,6 +6125,9 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 			settleFrameMsec[i] = Sys_Milliseconds() - settleFrameStart;
 		}
 	}
+#if defined(VITA) || defined(__vita__)
+	VitaRuntimeAudit_Memory( "load:settle:done", 0, 0, NULL, false );
+#endif
 	settleMsec = Sys_Milliseconds() - phaseStart;
 
 	common->Printf ("-----------------------------------\n");
@@ -6289,6 +6323,9 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 
 	// we are valid for game draws now
 	mapSpawned = true;
+#if defined(VITA) || defined(__vita__)
+	VitaRuntimeAudit_Memory( "load:ready", 0, 0, NULL, false );
+#endif
 #ifdef ID_DEDICATED
 	common->Printf( "Dedicated map ready: %s\n", mapString.c_str() );
 #endif

@@ -106,6 +106,11 @@ int main() {
     vitaAuditSnapshots=96;old=reports;
     __wrap_malloc(1u<<25);assert(reports==old);
     fail=true;__wrap_malloc(42);assert(reports==old+1);
+    old=reports;
+    VitaRuntimeAudit_Memory("load:player:begin",0,0,nullptr,false);
+    assert(reports==old+1 && vitaAuditSnapshots==96);
+    fail=false;old=reports;__wrap_malloc(1u<<25);assert(reports==old);
+
     puts("PASS allocation forwarding, sizes, overflow, zero-size, errno, recursion, bounded checkpoints");
 }
 '''

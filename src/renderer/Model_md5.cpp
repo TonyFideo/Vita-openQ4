@@ -1059,7 +1059,12 @@ void idMD5Mesh::ParseMesh( idLexer &parser, int numJoints, const idJointMat *joi
 		baseVectors[i * 4 + 3].Set( tempVert.tangents[1].x, tempVert.tangents[1].y, tempVert.tangents[1].z, 0.0f );
 	}
 
-	R_FreeStaticTriSurf( tempSurf.geometry );
+	// This private CPU bind-pose surface was never submitted to the renderer.
+	// Its basis has been copied above; deferring it until the next frame keeps
+	// every mesh's scratch vertices alive through a blocking map load.
+	// The deformed-surface destructor retains the borrowed deformInfo arrays.
+	R_ReallyFreeStaticTriSurf( tempSurf.geometry );
+	tempSurf.geometry = NULL;
 	BuildGpuSkinningSidecar( numJoints );
 }
 
@@ -1076,6 +1081,10 @@ void idMD5Mesh::BuildGpuSkinningSidecar( int numJoints ) {
 	gpuSkinningVerts.Clear();
 	gpuSkinningNumJoints = numJoints;
 	gpuSkinningFallback = GPU_SKINNING_FALLBACK_NONE;
+	if ( !R_GpuSkinning_UsesSourceSidecars() ) {
+		gpuSkinningFallback = GPU_SKINNING_FALLBACK_BACKEND_UNAVAILABLE;
+		return;
+	}
 	if ( deformInfo == NULL || baseVectors == NULL || weights == NULL
 		|| deformInfo->numOutputVerts <= 0 ) {
 		gpuSkinningFallback = GPU_SKINNING_FALLBACK_MISSING_BIND_POSE;

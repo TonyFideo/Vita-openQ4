@@ -1,5 +1,9 @@
 <a id="top"></a>
 
+> **Vita development:** the current candidate reduces avoidable model-loading
+> memory and adds gameplay-load milestones. Gameplay acceptance and the separate
+> menu brightness issue remain pending. [Details](tools/vita/GAMEPLAY_MEMORY.md).
+
 <div align="center">
 
 <img src="assets/docs/img/banner.png" alt="openQ4 banner">

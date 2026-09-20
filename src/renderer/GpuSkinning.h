@@ -98,6 +98,11 @@ typedef struct gpuSkinningStats_s {
 
 extern idCVar r_gpuSkinning;
 
+// Whether this compiled renderer consumes immutable GPU deformation streams.
+// Independent of the user's enable cvar: an unsupported backend must keep the
+// complete CPU deformation path even when a desktop config enables skinning.
+bool R_GpuSkinning_UsesSourceSidecars( void );
+
 const char *R_GpuSkinning_FallbackName( gpuSkinningFallbackReason_t reason );
 uint32 R_GpuSkinning_ContractGeneration( void );
 uint64 R_GpuSkinning_ReadMicroseconds( void );
