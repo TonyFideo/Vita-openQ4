@@ -55,9 +55,11 @@ class VitaGuiMenuRuntimeTests(unittest.TestCase):
         end = MAINMENU.index("windowDef anim_settingsOut", start)
         settings_in = MAINMENU[start:end]
         visible = 'set "p_settings::visible" "1" ;'
-        first_tab = 'if ( "desktop::dest" == 4 )'
+        page_rect = 'transition "p_settings::rect" "$d_main_l::rect" "$d_main::rect" "0" ;'
+        page_select = settings_in.index('if ( "desktop::dest" == 4 )', settings_in.index(page_rect))
         self.assertEqual(settings_in.count(visible), 1)
-        self.assertLess(settings_in.index(visible), settings_in.index(first_tab))
+        self.assertGreater(settings_in.index(visible), settings_in.index(page_rect))
+        self.assertLess(settings_in.index(visible), page_select)
 
     def test_vita_settings_transition_has_runtime_markers(self):
         reset_time = function(GUI_SCRIPT, "void Script_ResetTime(")
