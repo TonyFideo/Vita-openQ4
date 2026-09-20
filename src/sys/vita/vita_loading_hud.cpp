@@ -522,7 +522,8 @@ void VitaLoadingHud_SetAssetPhase( const char *relativePath, const char *phase )
 	}
 
 	const bool diagnosticAsset = HudAssetStage( relativePath ) == VITA_LOAD_GUI ||
-		HudContainsIgnoreCase( relativePath, "mainmenu" );
+		HudContainsIgnoreCase( relativePath, "mainmenu" ) ||
+		HudContainsIgnoreCase( relativePath, "gfx/lights/squarelight" );
 	const bool phaseChanged =
 		!HudEqualsIgnoreCase( hud.lastPhaseAsset, relativePath != NULL ? relativePath : "" ) ||
 		!HudEqualsIgnoreCase( hud.lastPhaseName, phase != NULL ? phase : "" );
