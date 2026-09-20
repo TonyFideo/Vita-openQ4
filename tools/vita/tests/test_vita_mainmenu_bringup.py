@@ -38,7 +38,7 @@ class VitaMainMenuBringupTests(unittest.TestCase):
         self.assertIn("SESSION: cargando mainmenu", SESSION)
         self.assertIn("SESSION: precarga mainmenu OK", SESSION)
         self.assertIn("MAINMENU parse: %d ventanas", WINDOW)
-        self.assertRegex(WINDOW, r"vitaMainMenuWindowCount\s*%\s*128")
+        self.assertRegex(WINDOW, r"vitaMainMenuWindowCount\s*%\s*32")
         self.assertIn("MAINMENU parse completo", WINDOW)
 
 

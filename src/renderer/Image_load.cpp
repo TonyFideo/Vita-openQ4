@@ -997,11 +997,31 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 		const int imageCount = im.NumImages();
 #if defined(VITA) || defined(__vita__)
 		VitaLoadingHud_SetAssetPhase( GetName(), "GPU upload" );
+		const bool vitaGuiUpload = idStr::Icmpn( GetName(), "gfx/guis/", 9 ) == 0;
+		if ( vitaGuiUpload ) {
+			VitaLoadingHud_LogInfo(
+				"GPU plan: %s %dx%d niveles=%d imagenes=%d fmt=%d comprimido=%d",
+				GetName(), opts.width, opts.height, opts.numLevels, imageCount,
+				(int)opts.format, IsCompressed() ? 1 : 0 );
+		}
 #endif
 		for ( int i = 0; i < imageCount; i++ ) {
 			const bimageImage_t & img = im.GetImageHeader( i );
 			const byte * data = im.GetImageData( i );
+#if defined(VITA) || defined(__vita__)
+			const bool logGuiMip = vitaGuiUpload && ( imageCount <= 16 || i < 4 || i == imageCount - 1 );
+			if ( logGuiMip ) {
+				VitaLoadingHud_LogInfo(
+					"GPU mip %d/%d: %s nivel=%d %dx%d z=%d",
+					i + 1, imageCount, GetName(), img.level, img.width, img.height, img.destZ );
+			}
+#endif
 			SubImageUpload( img.level, 0, 0, img.destZ, img.width, img.height, data );
+#if defined(VITA) || defined(__vita__)
+			if ( logGuiMip ) {
+				VitaLoadingHud_LogOk( "GPU mip OK %d/%d: %s", i + 1, imageCount, GetName() );
+			}
+#endif
 		}
 #if defined(VITA) || defined(__vita__)
 		VitaLoadingHud_SetAssetPhase( GetName(), "GPU ready" );

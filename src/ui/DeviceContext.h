@@ -49,7 +49,7 @@ public:
 	void				Shutdown();
 	bool				Initialized() { return initialized; }
 	void				EnableLocalization();
-	void				RegisterIcon( const char *code, const char *shader, int x = -1, int y = -1, int w = -1, int h = -1 );
+	void				RegisterIcon( const char *code, const char *shader, int x = -1, int y = -1, int w = -1, int h = -1, bool preload = true );
 	void				SizeIcons();
 
 	void				GetTransformInfo(idVec3& origin, idMat3& mat );
