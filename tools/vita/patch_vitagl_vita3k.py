@@ -302,13 +302,32 @@ def patch_read_buffer_query(root: pathlib.Path) -> None:
         '#define GL_FRAMEBUFFER_BINDING                          0x8CA6',
         'GL_READ_BUFFER query enum')
     header.write_text(text, encoding='utf-8')
+    # Read-buffer selection is private to framebuffers.c. Keep it private and
+    # query through a declared accessor rather than referencing a static symbol
+    # from another translation unit.
+    shared = root / 'source/shared.h'
+    text = shared.read_text(encoding='utf-8')
+    text = _legacy().replace_once(text,
+        '// Framebuffers\n',
+        '// Framebuffers\nGLenum vgl_get_read_buffer(void);\n',
+        'internal read-buffer query declaration')
+    shared.write_text(text, encoding='utf-8')
+    framebuffer = root / 'source/framebuffers.c'
+    text = framebuffer.read_text(encoding='utf-8')
+    text = _legacy().replace_once(text,
+        'void glReadBuffer(GLenum mode) {',
+        'GLenum vgl_get_read_buffer(void) {\n'
+        '\treturn active_read_fb ? GL_COLOR_ATTACHMENT0 : display_read_mode;\n'
+        '}\n\nvoid glReadBuffer(GLenum mode) {',
+        'private read-buffer state accessor')
+    framebuffer.write_text(text, encoding='utf-8')
     path = root / 'source/get_info.c'
     text = path.read_text(encoding='utf-8')
     text = _legacy().replace_once(text,
         '\tcase GL_READ_FRAMEBUFFER_BINDING:\n\t\t*data = (GLint)active_read_fb;\n\t\tbreak;',
         '\tcase GL_READ_FRAMEBUFFER_BINDING:\n\t\t*data = (GLint)active_read_fb;\n\t\tbreak;\n'
         '\tcase GL_READ_BUFFER:\n'
-        '\t\t*data = active_read_fb ? GL_COLOR_ATTACHMENT0 : display_read_mode;\n'
+        '\t\t*data = (GLint)vgl_get_read_buffer();\n'
         '\t\tbreak;', 'read buffer selection query')
     path.write_text(text, encoding='utf-8')
     print('Applied GL_READ_BUFFER query for state-preserving readbacks')

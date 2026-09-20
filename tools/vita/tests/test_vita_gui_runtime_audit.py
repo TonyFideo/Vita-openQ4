@@ -181,23 +181,55 @@ int main() {
         print(execute(prelude+code+checks).strip())
 
     def test_dependency_read_buffer_query(self):
-        source=os.environ.get('VOQ_VITAGL_SOURCE')
+        source = os.environ.get('VOQ_VITAGL_SOURCE')
         if not source:
             self.skipTest('patched pinned VitaGL required')
-        text=(Path(source)/'source/get_info.c').read_text()
-        branch=re.search(r'case GL_READ_BUFFER:\s*(.*?)\s*break;',text,re.S)
-        self.assertIsNotNone(branch)
-        print(execute('''#include <cassert>
-#include <cstdio>
-int main(){int value=0,*data=&value;int GL_COLOR_ATTACHMENT0=7,display_read_mode=1;
-bool active_read_fb=false;
-'''+branch[1]+'''
-assert(value==1);display_read_mode=2;
-'''+branch[1]+'''
-assert(value==2);active_read_fb=true;
-'''+branch[1]+'''
-assert(value==7);puts("PASS read-buffer query: default FRONT/BACK and FBO attachment");}
-''').strip())
+        root = Path(source) / 'source'
+        query = re.search(r'case GL_READ_BUFFER:\s*(.*?)\s*break;',
+                          (root / 'get_info.c').read_text(), re.S)
+        accessor = re.search(r'GLenum vgl_get_read_buffer\(void\) \{.*?\n\}',
+                             (root / 'framebuffers.c').read_text(), re.S)
+        declaration = re.search(r'GLenum vgl_get_read_buffer\(void\);',
+                                (root / 'shared.h').read_text())
+        self.assertIsNotNone(query)
+        self.assertIsNotNone(accessor)
+        self.assertIsNotNone(declaration)
+        # A single translation unit hid build 247's illegal reference to the
+        # static display_read_mode. Compile/link the real accessor and query
+        # in separate C translation units with only the production prototype.
+        cc = shutil.which('cc')
+        if not cc:
+            raise RuntimeError('a native C compiler is required')
+        with tempfile.TemporaryDirectory(prefix='voq-read-query-') as directory:
+            out = Path(directory)
+            (out / 'shared.h').write_text(
+                'typedef unsigned GLenum; typedef int GLint;\n'
+                '#define GL_COLOR_ATTACHMENT0 7\n' + declaration[0] + '\n')
+            (out / 'framebuffers.c').write_text(
+                '#include "shared.h"\n'
+                'static GLenum display_read_mode = 1;\n'
+                'static void *active_read_fb = 0;\n' + accessor[0] + '\n'
+                'void set_test_read_state(unsigned mode, int fbo) {\n'
+                ' display_read_mode = mode; active_read_fb = fbo ? &display_read_mode : 0; }\n')
+            (out / 'get_info.c').write_text(
+                '#include "shared.h"\nvoid query_read(GLint *data) {\n' + query[1] + '\n}\n')
+            (out / 'test.c').write_text(
+                '#include <assert.h>\n#include <stdio.h>\n#include "shared.h"\n'
+                'void set_test_read_state(unsigned, int); void query_read(GLint *);\n'
+                'int main(void) { GLint value = 0;\n'
+                'set_test_read_state(1,0); query_read(&value); assert(value==1);\n'
+                'set_test_read_state(2,0); query_read(&value); assert(value==2);\n'
+                'set_test_read_state(1,1); query_read(&value); assert(value==7);\n'
+                'puts("PASS read-buffer query: private state, separate translation units, FRONT/BACK/FBO"); }\n')
+            result = subprocess.run(
+                [cc, '-std=c11', '-Wall', '-Wextra', '-Werror',
+                 str(out / 'framebuffers.c'), str(out / 'get_info.c'),
+                 str(out / 'test.c'), '-o', str(out / 'test')],
+                text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            result = subprocess.run([str(out / 'test')], text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            print(result.stdout.strip())
 
     def test_link_contract(self):
         cross=(ROOT/'tools/vita/meson-vita.ini').read_text()
