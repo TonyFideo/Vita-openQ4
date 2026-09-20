@@ -171,6 +171,54 @@ inline float4 vglUnpack(float4 v) { return v; }""",
     textures = textures_prefix + textures_subimage
     textures_path.write_text(textures, encoding="utf-8")
 
+    gpu_utils_path = root / "source" / "utils" / "gpu_utils.c"
+    gpu_utils = gpu_utils_path.read_text(encoding="utf-8")
+    gpu_utils = replace_once(
+        gpu_utils,
+        """			if (curWidth <= 1024 && curHeight <= 1024) {
+				sceGxmTransferDownscale(
+					fmt, curPtr, 0, 0,
+					curWidth, curHeight,
+					curSrcStride * bpp,
+					fmt, dstPtr, 0, 0,
+					curDstStride * bpp,
+					NULL, 0, NULL);
+			} else { // sceGxmTransferDownscale doesn't support higher sizes, so we go for CPU downscaling
+				for (int y = 0, y2 = 0; y < curHeight; y += 2, y2++) {
+					uint8_t *srcLine = curPtr + curSrcStride * bpp * y;
+					uint8_t *dstLine = dstPtr + curDstStride * bpp * y2;
+					for (int x = 0, x2 = 0; x < curWidth; x += 2, x2++) {
+						sceClibMemcpy(dstLine + x2 * bpp, srcLine + x * bpp, bpp);
+					}
+				}
+			}""",
+        """#ifndef HAVE_VITA3K_SUPPORT
+			if (curWidth <= 1024 && curHeight <= 1024) {
+				sceGxmTransferDownscale(
+					fmt, curPtr, 0, 0,
+					curWidth, curHeight,
+					curSrcStride * bpp,
+					fmt, dstPtr, 0, 0,
+					curDstStride * bpp,
+					NULL, 0, NULL);
+			} else
+#endif
+			{
+				// Vita3K's transfer-downscale HLE path has crashed while vitaGL was
+				// building tiny OpenQ4 intrinsic mip chains. Keep the same nearest
+				// downscale semantics entirely in guest memory on the emulator.
+				for (int y = 0, y2 = 0; y < curHeight; y += 2, y2++) {
+					uint8_t *srcLine = curPtr + curSrcStride * bpp * y;
+					uint8_t *dstLine = dstPtr + curDstStride * bpp * y2;
+					for (int x = 0, x2 = 0; x < curWidth; x += 2, x2++) {
+						sceClibMemcpy(dstLine + x2 * bpp, srcLine + x * bpp, bpp);
+					}
+				}
+			}""",
+        "Vita3K guest-CPU mip downscale",
+    )
+    gpu_utils_path.write_text(gpu_utils, encoding="utf-8")
+
     checks = (
         "shark_init_simple(NULL)",
         "SCE_GXM_INITIALIZE_FLAG_DEFAULT",
@@ -184,6 +232,7 @@ inline float4 vglUnpack(float4 v) { return v; }""",
     print("Applied Vita3K shader-compiler compatibility patch to", shader_header_path)
     print("Applied Vita3K GLSL link-failure guard to", custom_shaders_path)
     print("Applied Vita3K half-float subimage support to", textures_path)
+    print("Applied Vita3K guest-CPU mip downscale patch to", gpu_utils_path)
     return 0
 
 

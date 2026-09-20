@@ -95,6 +95,7 @@ jobs:
           git -C "${VITAGL_REPO}" fetch --depth 1 origin "${VITAGL_SHA}"
           git -C "${VITAGL_REPO}" checkout --detach FETCH_HEAD
           python3 tools/vita/patch_vitagl_vita3k.py "${VITAGL_REPO}"
+          grep -q "Vita3K's transfer-downscale HLE path" "${VITAGL_REPO}/source/utils/gpu_utils.c"
           cp "${VITAGL_REPO}/source/vitaGL.h" "$VITASDK/arm-vita-eabi/include/vitaGL.h"
 
       - name: Configure renderer gate targets
@@ -213,6 +214,7 @@ jobs:
           python3 tools/vita/patch_vitagl_vita3k.py "${VITAGL_REPO}"
           grep -q "shark_init_simple" "${VITAGL_REPO}/source/gxm.c"
           grep -q "sceGxmInitialize(&gxm_init_params)" "${VITAGL_REPO}/source/gxm.c"
+          grep -q "Vita3K's transfer-downscale HLE path" "${VITAGL_REPO}/source/utils/gpu_utils.c"
           cp "${VITAGL_REPO}/source/vitaGL.h" "$VITASDK/arm-vita-eabi/include/vitaGL.h"
 
       - name: Install Meson, Ninja and ccache

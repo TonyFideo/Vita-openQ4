@@ -35,19 +35,20 @@ If you have questions concerning this license or the applicable additional terms
 #include "../sys/vita/vita_loading_hud.h"
 #endif
 
-static void R_VitaImageReloadCheckpoint( int index, int total, const idImage *image ) {
+static void R_VitaImageReloadCheckpoint( int index, int total, const idImage *image, bool completed ) {
 #if defined(VITA) || defined(__vita__)
 	if ( image == NULL || index >= 64 ) {
 		return;
 	}
 	char checkpoint[160];
-	idStr::snPrintf( checkpoint, sizeof( checkpoint ), "IMG %d/%d: %s",
+	idStr::snPrintf( checkpoint, sizeof( checkpoint ), completed ? "IMG OK %d/%d: %s" : "IMG %d/%d: %s",
 		index + 1, total, image->GetName() != NULL ? image->GetName() : "?" );
 	VitaLoadingHud_SetCheckpoint( checkpoint );
 #else
 	(void)index;
 	(void)total;
 	(void)image;
+	(void)completed;
 #endif
 }
 
@@ -1018,8 +1019,9 @@ void idImageManager::ReloadImages( bool all ) {
 	const int totalImages = globalImages->images.Num();
 	for ( int i = 0 ; i < totalImages ; i++ ) {
 		idImage *image = globalImages->images[ i ];
-		R_VitaImageReloadCheckpoint( i, totalImages, image );
+		R_VitaImageReloadCheckpoint( i, totalImages, image, false );
 		image->Reload( all );
+		R_VitaImageReloadCheckpoint( i, totalImages, image, true );
 	}
 }
 
