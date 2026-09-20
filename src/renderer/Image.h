@@ -518,7 +518,7 @@ bool R_ResolvePreferredDDSImageSource(const char* name, idStr& ddsName, ID_TIME_
 // enables per-candidate DDS probe memoization for the duration of a level
 // load; disabling also clears all memoized probe results
 void R_SetDDSProbeCacheActive(bool active);
-bool R_LoadPrecompressedDDS(const char* name, idBinaryImage& image, ID_TIME_T* timestamp, textureUsage_t usage, const imageDownsizePolicy_t& downsizePolicy, bool useMipmaps);
+bool R_LoadPrecompressedDDS(const char* name, idBinaryImage& image, ID_TIME_T* timestamp, textureUsage_t usage, const imageDownsizePolicy_t& downsizePolicy, bool useMipmaps, bool streamData = false);
 bool R_ImageDDS_RunSelfTest();
 // pic is in top to bottom raster format
 bool R_LoadCubeImages(const char* cname, cubeFiles_t extensions, byte* pic[6], int* size, ID_TIME_T* timestamp);

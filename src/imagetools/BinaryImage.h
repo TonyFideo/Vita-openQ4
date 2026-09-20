@@ -42,7 +42,7 @@ generation.
 */
 class idBinaryImage {
 public:
-	idBinaryImage( const char * name ) : imgName( name ), loadedFileData( NULL ) { }
+	idBinaryImage( const char * name ) : imgName( name ), loadedFileData( NULL ), sourceStream( NULL ) { }
 	~idBinaryImage() { Clear(); }
 
 	const char *		GetName() const { return imgName.c_str(); }
@@ -52,6 +52,13 @@ public:
 	void				Load2DFromOwnedCompressedData( int width, int height, int numLevels, textureFormat_t textureFormat, textureColor_t colorFormat, byte *fileBuffer, const int *levelOffsets, const int *levelSizes );
 	void				LoadCubeFromMemory( int width, const byte * pics[6], int numLevels, textureFormat_t & textureFormat, bool gammaMips );
 
+	// File-backed compressed staging is consumed one mip at a time. The file
+	// is adopted only on success and closed by Clear; the caller must call
+	// ReadImageData before GetImageData and ReleaseImageData after the upload.
+	bool                Load2DFromCompressedFile( int width, int height, int numLevels, textureFormat_t format, textureColor_t color, idFile *file, const int *offsets, const int *sizes );
+	bool                ReadImageData( int i );
+	void                ReleaseImageData( int i );
+	bool                IsFileBacked() const { return sourceStream != NULL; }
 	void				Clear();
 	ID_TIME_T			LoadFromGeneratedFile( ID_TIME_T sourceFileTime );
 	ID_TIME_T			LoadFromGeneratedFileUnchecked( bool *fileFound = NULL );
@@ -121,6 +128,8 @@ private:
 
 	idList< idBinaryImageData> images;
 	byte *				loadedFileData;
+	idFile *            sourceStream;
+	idList<int>         sourceOffsets;
 
 private:
 	void				MakeGeneratedFileName( idStr & gfn );

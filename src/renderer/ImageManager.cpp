@@ -33,6 +33,8 @@ If you have questions concerning this license or the applicable additional terms
 #include "tr_local.h"
 #if defined(VITA) || defined(__vita__)
 #include "../sys/vita/vita_loading_hud.h"
+#include "../sys/vita/vita_runtime_audit.h"
+#include <psp2/kernel/clib.h>
 #endif
 
 static void R_VitaImageReloadCheckpoint( int index, int total, const idImage *image, bool completed ) {
@@ -1305,7 +1307,16 @@ int idImageManager::LoadLevelImages( bool pacifier ) {
 		if ( profileLevelLoad ) {
 			loadTimer.Start();
 		}
+#if defined(VITA) || defined(__vita__)
+		sceClibPrintf( "[VOQ4][image-load] begin=%d total=%d name=%s\n",
+			i + 1, pendingImages.Num(), pendingImages[i].image->GetName() );
+		if ( ( i & 63 ) == 0 ) VitaRuntimeAudit_Memory( "load:images:progress", 0, 0, NULL, false );
+#endif
 		pendingImages[ i ].image->ActuallyLoadImage( false );
+#if defined(VITA) || defined(__vita__)
+		sceClibPrintf( "[VOQ4][image-load] done=%d total=%d storage=%d\n",
+			i + 1, pendingImages.Num(), pendingImages[i].image->StorageSize() );
+#endif
 		if ( profileLevelLoad ) {
 			loadTimer.Stop();
 			const double imageLoadMsec = loadTimer.Milliseconds();
@@ -1379,7 +1390,13 @@ void idImageManager::EndLevelLoad() {
 
 	common->Printf( "----- idImageManager::EndLevelLoad -----\n" );
 	int start = Sys_Milliseconds();
+#if defined(VITA) || defined(__vita__)
+	VitaRuntimeAudit_Memory( "load:images:begin", 0, 0, NULL, false );
+#endif
 	int	loadCount = LoadLevelImages( true );
+#if defined(VITA) || defined(__vita__)
+	VitaRuntimeAudit_Memory( "load:images:done", 0, 0, NULL, false );
+#endif
 
 	int	end = Sys_Milliseconds();
 	common->Printf( "%5i images loaded in %5.1f seconds\n", loadCount, (end-start) * 0.001 );

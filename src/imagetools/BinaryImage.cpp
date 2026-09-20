@@ -149,6 +149,11 @@ idBinaryImage::Clear
 ========================
 */
 void idBinaryImage::Clear() {
+	if ( sourceStream != NULL ) {
+		fileSystem->CloseFile( sourceStream );
+		sourceStream = NULL;
+	}
+	sourceOffsets.Clear();
 	images.Clear();
 	if ( loadedFileData != NULL ) {
 		Mem_Free( loadedFileData );
@@ -412,6 +417,95 @@ void idBinaryImage::Load2DFromOwnedCompressedData( int width, int height, int nu
 
 /*
 ========================
+idBinaryImage::Load2DFromCompressedFile
+
+Keep source metadata and a bounded-lifetime file, not a copy of the whole DDS.
+Only the mip being submitted is materialized. All authored selected levels and
+compressed bytes are retained; this is transport, not a texture quality policy.
+========================
+*/
+bool idBinaryImage::Load2DFromCompressedFile( int width, int height, int numLevels, textureFormat_t format, textureColor_t color, idFile *file, const int *offsets, const int *sizes ) {
+	if ( file == NULL || file == sourceStream || offsets == NULL || sizes == NULL ||
+		width <= 0 || height <= 0 || width > MAX_BINARY_IMAGE_DIMENSION || height > MAX_BINARY_IMAGE_DIMENSION ||
+		numLevels <= 0 || numLevels > MAX_BINARY_IMAGE_LEVELS || color < CFM_DEFAULT || color > CFM_GREEN_ALPHA ||
+		!R_BinaryImageFormatIsBlockCompressed( format ) ) {
+		return false;
+	}
+	const int length = file->Length();
+	int w = width, h = height, previousEnd = 0;
+	for ( int i = 0; i < numLevels; ++i ) {
+		const int required = R_BinaryImageMinimumDataSize( format, w, h );
+		if ( required <= 0 || sizes[i] != required || offsets[i] < previousEnd ||
+			offsets[i] > length || required > length - offsets[i] ) {
+			return false;
+		}
+		previousEnd = offsets[i] + required;
+		if ( w == 1 && h == 1 && i + 1 < numLevels ) return false;
+		w = Max( 1, w >> 1 );
+		h = Max( 1, h >> 1 );
+	}
+	Clear();
+	fileData.textureType = TT_2D;
+	fileData.format = format;
+	fileData.colorFormat = color;
+	fileData.width = width;
+	fileData.height = height;
+	fileData.numLevels = numLevels;
+	images.SetNum( numLevels );
+	sourceOffsets.SetNum( numLevels );
+	w = width; h = height;
+	for ( int i = 0; i < numLevels; ++i ) {
+		idBinaryImageData &img = images[i];
+		img.level = i;
+		img.destZ = 0;
+		img.width = w;
+		img.height = h;
+		img.dataSize = sizes[i];
+		sourceOffsets[i] = offsets[i];
+		w = Max( 1, w >> 1 );
+		h = Max( 1, h >> 1 );
+	}
+	sourceStream = file;
+	return true;
+}
+
+bool idBinaryImage::ReadImageData( int i ) {
+	if ( i < 0 || i >= images.Num() ) return false;
+	idBinaryImageData &img = images[i];
+	if ( img.data != NULL ) return true;
+	if ( sourceStream == NULL || img.dataSize <= 0 ) return false;
+	const int current = sourceStream->Tell();
+	const int offset = sourceOffsets[i];
+	if ( current < 0 ) return false;
+	if ( current != offset ) {
+		// Forward seeks preserve the PK4 inflater. A SET seek in idFile_InZip
+		// reopens the member and reinflates its prefix, so avoid it in the
+		// normal sequential upload. Re-reading a released mip still works.
+		const int seek = current < offset
+			? sourceStream->Seek( offset - current, FS_SEEK_CUR )
+			: sourceStream->Seek( offset, FS_SEEK_SET );
+		if ( seek != 0 ) return false;
+	}
+	const int bytes = img.dataSize;
+	img.Alloc( bytes );
+	if ( img.data == NULL || sourceStream->Read( img.data, bytes ) != bytes ) {
+		ReleaseImageData( i );
+		return false;
+	}
+	return true;
+}
+
+void idBinaryImage::ReleaseImageData( int i ) {
+	if ( sourceStream == NULL || i < 0 || i >= images.Num() ) return;
+	idBinaryImageData &img = images[i];
+	const int bytes = img.dataSize;
+	img.Free();
+	// Keep the validated descriptor available for upload/re-read/serialization.
+	img.dataSize = bytes;
+}
+
+/*
+========================
 idBinaryImage::LoadCubeFromMemory
 ========================
 */
@@ -496,7 +590,7 @@ idBinaryImage::WriteToFile
 ========================
 */
 bool idBinaryImage::WriteToFile( idFile *file, ID_TIME_T sourceFileTime ) {
-	if ( file == NULL ) {
+	if ( file == NULL || file == sourceStream ) {
 		return false;
 	}
 
@@ -523,9 +617,10 @@ bool idBinaryImage::WriteToFile( idFile *file, ID_TIME_T sourceFileTime ) {
 			 file->WriteBig( img.dataSize ) != sizeof( img.dataSize ) ) {
 			return false;
 		}
-		if ( file->Write( img.data, img.dataSize ) != img.dataSize ) {
-			return false;
-		}
+		if ( !ReadImageData( i ) ) return false;
+		const bool written = file->Write( img.data, img.dataSize ) == img.dataSize;
+		ReleaseImageData( i );
+		if ( !written ) return false;
 	}
 	return true;
 }

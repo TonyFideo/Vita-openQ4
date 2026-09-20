@@ -882,7 +882,7 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 #endif
 				directDDSLoaded = R_LoadPrecompressedDDS(
 					loadSourceName, im, &sourceFileTime, usage,
-					precompressedDownsizePolicy, usePrecompressedMipmaps );
+					precompressedDownsizePolicy, usePrecompressedMipmaps, true );
 #if defined(VITA) || defined(__vita__)
 				VitaLoadingHud_SetAssetPhase( loadSourceName, directDDSLoaded ? "DDS ready" : "DDS fallback" );
 #endif
@@ -1007,6 +1007,13 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 #endif
 		for ( int i = 0; i < imageCount; i++ ) {
 			const bimageImage_t & img = im.GetImageHeader( i );
+			if ( !im.ReadImageData( i ) ) {
+				// Do not expose a partially uploaded image or claim that the map
+				// loaded successfully after a source I/O failure.
+				PurgeImage();
+				common->Error( "Cannot read image %s mip %d from %s", GetName(), img.level, loadSourceName );
+				return;
+			}
 			const byte * data = im.GetImageData( i );
 #if defined(VITA) || defined(__vita__)
 			const bool logGuiMip = vitaGuiUpload && ( imageCount <= 16 || i < 4 || i == imageCount - 1 );
@@ -1017,6 +1024,9 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 			}
 #endif
 			SubImageUpload( img.level, 0, 0, img.destZ, img.width, img.height, data );
+			// Upload consumes client bytes before return. The native Vita BC
+			// path performs synchronous CPU block reordering into GPU storage.
+			im.ReleaseImageData( i );
 #if defined(VITA) || defined(__vita__)
 			if ( logGuiMip ) {
 				VitaLoadingHud_LogOk( "GPU mip OK %d/%d: %s", i + 1, imageCount, GetName() );

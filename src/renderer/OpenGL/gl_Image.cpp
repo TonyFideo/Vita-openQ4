@@ -682,9 +682,11 @@ void idImage::AllocImage() {
 				void * data = NULL;
 #if defined(_WIN32)
 				data = HeapAlloc( GetProcessHeap(), 0, compressedSize );
-#else
+#elif !defined(VITA) && !defined(__vita__)
 				data = malloc( compressedSize );
 #endif
+				// VitaGL explicitly allocates native BC storage for NULL input;
+				// the desktop driver workaround must not duplicate it in newlib.
 				glCompressedTexImage2DARB( uploadTarget+side, level, internalFormat, w, h, 0, compressedSize, data );
 				if ( data != NULL ) {
 #if defined(_WIN32)

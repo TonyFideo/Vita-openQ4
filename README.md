@@ -1,5 +1,9 @@
 <a id="top"></a>
 
+> Vita development: the latest DDS loader reduces temporary CPU staging without
+> changing authored texture levels. Gameplay validation remains pending; see
+> [DDS loading investigation](tools/vita/GAMEPLAY_DDS_STREAMING.md).
+
 > **Vita development:** the current candidate reduces avoidable model-loading
 > memory and adds gameplay-load milestones. Gameplay acceptance and the separate
 > menu brightness issue remain pending. [Details](tools/vita/GAMEPLAY_MEMORY.md).

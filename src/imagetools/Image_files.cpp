@@ -1277,7 +1277,7 @@ bool R_ResolvePreferredDDSImageSource( const char *cname, idStr &ddsName, ID_TIM
 R_LoadPrecompressedDDS
 =============
 */
-bool R_LoadPrecompressedDDS( const char *cname, idBinaryImage &image, ID_TIME_T *timestamp, textureUsage_t usage, const imageDownsizePolicy_t &downsizePolicy, bool useMipmaps ) {
+bool R_LoadPrecompressedDDS( const char *cname, idBinaryImage &image, ID_TIME_T *timestamp, textureUsage_t usage, const imageDownsizePolicy_t &downsizePolicy, bool useMipmaps, bool streamData ) {
 	if ( cname == NULL || cname[0] == '\0' ) {
 		return false;
 	}
@@ -1291,35 +1291,33 @@ bool R_LoadPrecompressedDDS( const char *cname, idBinaryImage &image, ID_TIME_T 
 		return false;
 	}
 
-	// Read into a buffer this library owns rather than fileSystem->ReadFile: the
-	// mip payloads stay behind as views into it inside the idBinaryImage, and its
-	// eventual Mem_Free in idBinaryImage::Clear must pair with this binary's
-	// allocator (the renderer modules carry their own idlib heap).
+	// Validate the small header and complete declared layout before allocating
+	// payload storage. A file-backed binary image adopts this stream only after
+	// validation; buffered callers retain memory owned by this binary's heap.
 	idFile *ddsFile = fileSystem->OpenFileRead( name.c_str() );
 	if ( ddsFile == NULL ) {
-		if ( timestamp != NULL ) {
-			*timestamp = FILE_NOT_FOUND_TIMESTAMP;
-		}
+		if ( timestamp != NULL ) *timestamp = FILE_NOT_FOUND_TIMESTAMP;
 		return false;
 	}
-	if ( timestamp != NULL ) {
-		*timestamp = ddsFile->Timestamp();
-	}
+	if ( timestamp != NULL ) *timestamp = ddsFile->Timestamp();
 	const int fileSize = ddsFile->Length();
-	byte *buffer = fileSize >= DDS_HEADER_BYTES ? (byte *)Mem_Alloc( fileSize ) : NULL;
-	const bool readOk = buffer != NULL && ddsFile->Read( buffer, fileSize ) == fileSize;
-	fileSystem->CloseFile( ddsFile );
+	byte header[ DDS_HEADER_BYTES + DDS_DXT10_HEADER_BYTES ];
+	int headerBytes = DDS_HEADER_BYTES;
+	bool readOk = fileSize >= headerBytes && ddsFile->Read( header, headerBytes ) == headerBytes;
+	if ( readOk && R_ReadLittleUInt32( header + 84 ) == R_MakeFourCC( 'D', 'X', '1', '0' ) ) {
+		readOk = fileSize >= (int)sizeof( header ) &&
+			ddsFile->Read( header + headerBytes, DDS_DXT10_HEADER_BYTES ) == DDS_DXT10_HEADER_BYTES;
+		headerBytes += DDS_DXT10_HEADER_BYTES;
+	}
 	if ( !readOk ) {
-		if ( buffer != NULL ) {
-			Mem_Free( buffer );
-		}
+		fileSystem->CloseFile( ddsFile );
 		return false;
 	}
-
+	byte *buffer = NULL;
 	bool loaded = false;
 	do {
 		ddsFileInfo_t info;
-		if ( !R_ParseDDSFileInfo( buffer, fileSize, fileSize, info ) ) {
+		if ( !R_ParseDDSFileInfo( header, headerBytes, fileSize, info ) ) {
 			idLib::Warning( "Image file '%s' has an invalid or incomplete supported DDS layout", name.c_str() );
 			break;
 		}
@@ -1385,12 +1383,29 @@ bool R_LoadPrecompressedDDS( const char *cname, idBinaryImage &image, ID_TIME_T 
 			info.format == DDS_STORED_FORMAT_RXGB ||
 			( usage == TD_BUMP && textureFormat == FMT_DXT5 );
 		const textureColor_t colorFormat = rxgbNormal ? CFM_NORMAL_DXT5 : CFM_DEFAULT;
-		image.Load2DFromOwnedCompressedData( selectedWidth, selectedHeight, selectedLevels, textureFormat, colorFormat,
-			buffer, levelOffsets.Ptr() + firstLevel, levelSizes.Ptr() + firstLevel );
-		buffer = NULL;	// the binary image now owns the file buffer
-		loaded = true;
+		if ( streamData ) {
+			loaded = image.Load2DFromCompressedFile( selectedWidth, selectedHeight, selectedLevels,
+				textureFormat, colorFormat, ddsFile, levelOffsets.Ptr() + firstLevel, levelSizes.Ptr() + firstLevel );
+			if ( loaded ) ddsFile = NULL; // binary image now owns the source stream
+		} else {
+			// Preserve the buffered API, but do not retain unused top mips, the
+			// DDS header, or unrelated trailing bytes. Offset arithmetic was
+			// bounded by R_DDSComputeLevelLayout before this allocation.
+			const int firstByte = levelOffsets[firstLevel];
+			const int lastLevel = firstLevel + selectedLevels - 1;
+			const int bytes = levelOffsets[lastLevel] + levelSizes[lastLevel] - firstByte;
+			if ( ddsFile->Tell() != firstByte && ddsFile->Seek( firstByte - ddsFile->Tell(), FS_SEEK_CUR ) != 0 ) break;
+			buffer = (byte *)Mem_Alloc( bytes );
+			if ( buffer == NULL || ddsFile->Read( buffer, bytes ) != bytes ) break;
+			for ( int i = firstLevel; i <= lastLevel; ++i ) levelOffsets[i] -= firstByte;
+			image.Load2DFromOwnedCompressedData( selectedWidth, selectedHeight, selectedLevels, textureFormat, colorFormat,
+				buffer, levelOffsets.Ptr() + firstLevel, levelSizes.Ptr() + firstLevel );
+			buffer = NULL;
+			loaded = true;
+		}
 	} while ( false );
 
+	if ( ddsFile != NULL ) fileSystem->CloseFile( ddsFile );
 	if ( buffer != NULL ) {
 		Mem_Free( buffer );
 	}
