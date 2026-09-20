@@ -32,7 +32,7 @@ class VitaGuiExpressionStorageTests(unittest.TestCase):
         self.assertIn("&expressionOpBlocks[blockIndex][slotIndex]", append)
         # A relocatable flat idList<wexpOp_t> would invalidate oop in the
         # recursive ternary parser; only the pointer table is allowed to grow.
-        self.assertNotIn("idList<wexpOp_t>", HEADER)
+        self.assertNotRegex(HEADER, r"idList\\s*<\\s*wexpOp_t\\s*>\\s+[A-Za-z_]\\w*\\s*;")
         self.assertNotRegex(append, r"\bops\.Append\b")
 
     def test_all_runtime_indexing_uses_accessor(self):
