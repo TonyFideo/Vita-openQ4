@@ -1459,7 +1459,19 @@ bool idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight,
 	}
 #endif
 
-	if ( readingFromRenderTexture && ( GLEW_EXT_framebuffer_blit || GLEW_ARB_framebuffer_object || GLEW_VERSION_3_0 ) ) {
+	const bool framebufferBlitAvailable =
+		( GLEW_EXT_framebuffer_blit || GLEW_ARB_framebuffer_object || GLEW_VERSION_3_0 );
+#if defined(VITA) || defined(__vita__)
+	// VitaGL implements glBlitFramebuffer for both FBOs and its default display
+	// buffers. Keep screen captures on the GPU instead of round-tripping the
+	// default framebuffer through CPU pixels before uploading RGBA16F storage.
+	const bool useFramebufferBlit = framebufferBlitAvailable;
+#else
+	// Preserve the established desktop policy for default-framebuffer copies.
+	const bool useFramebufferBlit = readingFromRenderTexture && framebufferBlitAvailable;
+#endif
+
+	if ( useFramebufferBlit ) {
 		GLint previousReadFbo = 0;
 		GLint previousDrawFbo = 0;
 		GLint previousReadBuffer = GL_BACK;
@@ -1488,8 +1500,13 @@ bool idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight,
 			glTexParameterf( textureTarget, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
 		}
 
-		glBindFramebuffer( GL_READ_FRAMEBUFFER, backEnd.renderTexture->GetDeviceHandle() );
-		glReadBuffer( readAttachment );
+		if ( readingFromRenderTexture ) {
+			glBindFramebuffer( GL_READ_FRAMEBUFFER, backEnd.renderTexture->GetDeviceHandle() );
+			glReadBuffer( readAttachment );
+		} else {
+			glBindFramebuffer( GL_READ_FRAMEBUFFER, 0 );
+			glReadBuffer( GL_BACK );
+		}
 
 		glBindFramebuffer( GL_DRAW_FRAMEBUFFER, copyFbo );
 		glFramebufferTexture2D( GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, copyTarget, texnum, 0 );

@@ -157,3 +157,28 @@ server image unit after walking the units instead of changing only its shadow
 integer. This prevents a later bind from silently targeting the last unit.
 The Doom 3 Vita reference likewise unbinds a texture object rather than relying
 on fixed-function target enables.
+
+
+### GPU-native default-framebuffer capture on Vita
+
+VitaGL's pinned `glBlitNamedFramebuffer` explicitly accepts a null/default read
+framebuffer and samples the selected front/back display surface as a GXM
+texture. OpenQ4 previously entered its blit path only when
+`backEnd.renderTexture` was non-null, so a normal Vita screen capture fell
+back to CPU readback followed by a texture upload. For a 960x544 RGBA16F
+`_currentRender` that is both expensive and unnecessarily exercises host
+surface readback in Vita3K.
+
+On Vita, `idImage::CopyFramebuffer` now uses the advertised framebuffer-blit
+path for either an internal render FBO or the default framebuffer. The default
+case binds read FBO zero and GL_BACK, attaches the destination image to the
+existing scratch draw FBO, performs the GPU blit, detaches it, then restores
+the caller's read/draw FBO and read selection. Desktop policy remains unchanged.
+The typed CPU conversion path remains the standards-compatible fallback when a
+blit is unavailable; it is not removed.
+
+The native owner regression now exercises both the default-framebuffer and
+render-texture blit branches and verifies that the former does not call the
+CopyTex fallback. This should also avoid the repeated emulator surface
+readbacks observed after build 258, but only the next Vita3K run can establish
+the runtime effect.

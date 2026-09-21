@@ -37,7 +37,12 @@ static int sceClibPrintf(const char*,...){return 0;}
 #include "owner.inc"
 int main(){idImage image;fail=true;assert(!image.CopyFramebuffer(0,0,960,544));assert(image.opts.width==64&&image.opts.height==64);assert(readFbo==0&&readBuffer==GL_FRONT&&scissor);
 fail=false;assert(image.CopyFramebuffer(0,0,960,544));assert(image.opts.width==960&&readBuffer==GL_FRONT&&scissor);assert(image.CopyFramebuffer(0,0,960,544)&&copies==3);
-RenderTexture render;backEnd.renderTexture=&render;readFbo=13;readBuffer=GL_COLOR_ATTACHMENT0;GLEW_EXT_framebuffer_blit=true;drawFbo=42;
-assert(image.CopyFramebuffer(0,0,128,64));assert(blits==1&&readFbo==13&&drawFbo==42&&readBuffer==GL_COLOR_ATTACHMENT0&&scissor);
+// VitaGL can blit from its default display surface. With framebuffer blit
+// enabled, a screen-to-RGBA16F capture must stay on the GPU and preserve the
+// caller's FRONT read selection after the operation.
+GLEW_EXT_framebuffer_blit=true;readFbo=0;drawFbo=0;readBuffer=GL_FRONT;
+assert(image.CopyFramebuffer(0,0,320,180));assert(blits==1&&copies==3&&readFbo==0&&drawFbo==0&&readBuffer==GL_FRONT&&scissor);
+RenderTexture render;backEnd.renderTexture=&render;readFbo=13;readBuffer=GL_COLOR_ATTACHMENT0;drawFbo=42;
+assert(image.CopyFramebuffer(0,0,128,64));assert(blits==2&&readFbo==13&&drawFbo==42&&readBuffer==GL_COLOR_ATTACHMENT0&&scissor);
 fail=true;assert(!image.CopyFramebuffer(0,0,256,128));assert(image.opts.width==128&&image.opts.height==64&&readFbo==13&&drawFbo==42&&scissor);
-puts("PASS production CopyFramebuffer: no false success/dimensions, copy+blit state restored including FRONT, no format downgrade");}
+puts("PASS production CopyFramebuffer: Vita default/FBO GPU blits, fallback error propagation, state restore, no format downgrade");}
