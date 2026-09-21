@@ -1462,10 +1462,13 @@ bool idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight,
 	const bool framebufferBlitAvailable =
 		( GLEW_EXT_framebuffer_blit || GLEW_ARB_framebuffer_object || GLEW_VERSION_3_0 );
 #if defined(VITA) || defined(__vita__)
-	// VitaGL implements glBlitFramebuffer for both FBOs and its default display
-	// buffers. Keep screen captures on the GPU instead of round-tripping the
-	// default framebuffer through CPU pixels before uploading RGBA16F storage.
-	const bool useFramebufferBlit = framebufferBlitAvailable;
+	// VitaGL can blit the default display, but a blit requires making the
+	// destination texture a GXM color surface. Keep half-float screen images as
+	// textures and use the fully typed CopyTex conversion path instead. This
+	// preserves RGBA16F storage/precision while avoiding an unnecessary F16
+	// render-target attachment. Non-floating captures still use the GPU blitter.
+	const bool vitaTypedTextureCopy = ( internalFormat == GL_RGBA16F );
+	const bool useFramebufferBlit = framebufferBlitAvailable && !vitaTypedTextureCopy;
 #else
 	// Preserve the established desktop policy for default-framebuffer copies.
 	const bool useFramebufferBlit = readingFromRenderTexture && framebufferBlitAvailable;
@@ -1599,7 +1602,9 @@ bool idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight,
 	static unsigned captureReports = 0;
 	if ( captureReports < 4 ) {
 		++captureReports;
-		sceClibPrintf( "[VOQ4][frame-copy] image=%s size=%ix%i format=0x%x ok=1\n", GetName(), imageWidth, imageHeight, internalFormat );
+		sceClibPrintf( "[VOQ4][frame-copy] image=%s size=%ix%i format=0x%x path=%s ok=1\n",
+			GetName(), imageWidth, imageHeight, internalFormat,
+			useFramebufferBlit ? "blit" : "typed-copy" );
 	}
 #endif
 	// Do not publish dimensions for a failed allocation/copy.

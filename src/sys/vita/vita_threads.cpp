@@ -8,6 +8,7 @@
 
 #include <stdint.h>
 #include <string.h>
+#include <atomic>
 
 namespace {
 
@@ -21,6 +22,65 @@ bool vitaConditionReady[MAX_TRIGGER_EVENTS] = {};
 bool vitaSignaled[MAX_TRIGGER_EVENTS] = {};
 bool vitaWaiting[MAX_TRIGGER_EVENTS] = {};
 bool vitaThreadsReady = false;
+SceUID vitaAsyncThread = 0;
+std::atomic<bool> vitaAsyncStop( false );
+
+static uint32_t Vita_NextAsyncIntervalUsec( uint32_t &remainder ) {
+	const uint32_t wholeUsec = 1000000u / USERCMD_HZ;
+	const uint32_t fractionalUsec = 1000000u % USERCMD_HZ;
+	uint32_t intervalUsec = wholeUsec;
+
+	remainder += fractionalUsec;
+	if ( remainder >= USERCMD_HZ ) {
+		remainder -= USERCMD_HZ;
+		++intervalUsec;
+	}
+	return intervalUsec;
+}
+
+static int Vita_AsyncTimerThread( SceSize argsSize, void *argsData ) {
+	(void)argsSize;
+	(void)argsData;
+
+	uint32_t fractionalRemainder = 0;
+	uint64_t nextWakeUsec = static_cast<uint64_t>( sceKernelGetSystemTimeWide() );
+	unsigned int callbackCount = 0;
+
+	while ( !vitaAsyncStop.load( std::memory_order_acquire ) ) {
+		// idCommonLocal::Async owns the precise/catch-up policy and advances
+		// com_ticNumber. The platform timer only supplies the periodic wakeup,
+		// matching idTech's desktop/SDL async timer contract.
+		common->Async();
+		Sys_TriggerEvent( TRIGGER_EVENT_ONE );
+		++callbackCount;
+
+		if ( callbackCount <= 600 && ( callbackCount % USERCMD_HZ ) == 0 ) {
+			sceClibPrintf( "[VOQ4][async] callbacks=%u tic=%d time=%d\n",
+				callbackCount, com_ticNumber, Sys_Milliseconds() );
+		}
+
+		const uint32_t intervalUsec = Vita_NextAsyncIntervalUsec( fractionalRemainder );
+		const uint64_t nowUsec = static_cast<uint64_t>( sceKernelGetSystemTimeWide() );
+		// Async() already catches the simulation up to wall time. If scheduling
+		// made us late, restart the platform deadline from 'now' instead of
+		// spinning through stale timer callbacks.
+		if ( nextWakeUsec < nowUsec ) {
+			nextWakeUsec = nowUsec;
+		}
+		nextWakeUsec += intervalUsec;
+
+		while ( !vitaAsyncStop.load( std::memory_order_acquire ) ) {
+			const uint64_t currentUsec = static_cast<uint64_t>( sceKernelGetSystemTimeWide() );
+			if ( currentUsec >= nextWakeUsec ) {
+				break;
+			}
+			const uint64_t remainingUsec = nextWakeUsec - currentUsec;
+			sceKernelDelayThread( static_cast<SceUInt>( remainingUsec ) );
+		}
+	}
+
+	return 0;
+}
 
 struct VitaThreadStartArgs {
 	xthread_t function;
@@ -125,6 +185,60 @@ void Vita_InitThreads( void ) {
 	}
 	g_thread_count = 0;
 	vitaThreadsReady = true;
+}
+
+
+bool Vita_StartAsyncTimer( void ) {
+	if ( vitaAsyncThread > 0 ) {
+		return true;
+	}
+	if ( !vitaThreadsReady ) {
+		Vita_InitThreads();
+	}
+
+	vitaAsyncStop.store( false, std::memory_order_release );
+	vitaAsyncThread = sceKernelCreateThread(
+		"openq4-async",
+		Vita_AsyncTimerThread,
+		Vita_ThreadPriority( THREAD_ABOVE_NORMAL ),
+		512 * 1024,
+		0,
+		SCE_KERNEL_THREAD_CPU_AFFINITY_MASK_DEFAULT,
+		NULL );
+	if ( vitaAsyncThread < 0 ) {
+		Sys_Printf( "Vita_StartAsyncTimer: sceKernelCreateThread failed: 0x%08X\n", vitaAsyncThread );
+		vitaAsyncThread = 0;
+		return false;
+	}
+
+	const int startResult = sceKernelStartThread( vitaAsyncThread, 0, NULL );
+	if ( startResult < 0 ) {
+		Sys_Printf( "Vita_StartAsyncTimer: sceKernelStartThread failed: 0x%08X\n", startResult );
+		sceKernelDeleteThread( vitaAsyncThread );
+		vitaAsyncThread = 0;
+		return false;
+	}
+
+	Sys_Printf( "Vita async timer: %d Hz, thread=0x%08X\n", USERCMD_HZ, vitaAsyncThread );
+	return true;
+}
+
+void Vita_StopAsyncTimer( void ) {
+	if ( vitaAsyncThread <= 0 ) {
+		return;
+	}
+
+	vitaAsyncStop.store( true, std::memory_order_release );
+	int status = 0;
+	const int waitResult = sceKernelWaitThreadEnd( vitaAsyncThread, &status, NULL );
+	if ( waitResult < 0 ) {
+		Sys_Printf( "Vita_StopAsyncTimer: wait failed: 0x%08X\n", waitResult );
+	}
+	const int deleteResult = sceKernelDeleteThread( vitaAsyncThread );
+	if ( deleteResult < 0 ) {
+		Sys_Printf( "Vita_StopAsyncTimer: delete failed: 0x%08X\n", deleteResult );
+	}
+	vitaAsyncThread = 0;
 }
 
 void Vita_ShutdownThreads( void ) {

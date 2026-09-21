@@ -8027,6 +8027,29 @@ void idSessionLocal::Frame() {
 	}
 
 	UpdateFramePacingStats( frameStartMsec, requestedWaitMsec, actualWaitMsec, i );
+#if defined(VITA) || defined(__vita__)
+	// Target-only bring-up evidence. This does not advance time or modify game
+	// state; it reports once per second for the first 30 seconds of gameplay so
+	// a static image can be separated from a stalled 60 Hz simulation.
+	static int vitaGameplayAuditNextMsec = 0;
+	static unsigned int vitaGameplayAuditReports = 0;
+	if ( vitaGameplayAuditReports < 30 && frameStartMsec >= vitaGameplayAuditNextMsec ) {
+		vitaGameplayAuditNextMsec = frameStartMsec + 1000;
+		++vitaGameplayAuditReports;
+		common->Printf(
+			"[VOQ4][gameplay] frame=%d real=%d sim=%d tic=%d latched=%d last=%d toRun=%d ran=%d cinematic=%d sync=%d\n",
+			com_frameNumber,
+			frameStartMsec,
+			com_frameTime,
+			com_ticNumber,
+			latchedTicNumber,
+			lastGameTic,
+			gameTicsToRun,
+			i,
+			( game != NULL && game->InCinematic() ) ? 1 : 0,
+			syncNextGameFrame ? 1 : 0 );
+	}
+#endif
 }
 
 /*

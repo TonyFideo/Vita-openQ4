@@ -8,5 +8,7 @@
 
 void Vita_InitThreads( void );
 void Vita_ShutdownThreads( void );
+bool Vita_StartAsyncTimer( void );
+void Vita_StopAsyncTimer( void );
 
 #endif

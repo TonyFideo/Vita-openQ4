@@ -92,6 +92,7 @@ void Sys_Init( void ) {
 }
 
 void Sys_Shutdown( void ) {
+	Vita_StopAsyncTimer();
 	Vita_ShutdownThreads();
 }
 

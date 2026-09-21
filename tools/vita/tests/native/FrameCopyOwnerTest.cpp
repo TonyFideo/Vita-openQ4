@@ -37,12 +37,19 @@ static int sceClibPrintf(const char*,...){return 0;}
 #include "owner.inc"
 int main(){idImage image;fail=true;assert(!image.CopyFramebuffer(0,0,960,544));assert(image.opts.width==64&&image.opts.height==64);assert(readFbo==0&&readBuffer==GL_FRONT&&scissor);
 fail=false;assert(image.CopyFramebuffer(0,0,960,544));assert(image.opts.width==960&&readBuffer==GL_FRONT&&scissor);assert(image.CopyFramebuffer(0,0,960,544)&&copies==3);
-// VitaGL can blit from its default display surface. With framebuffer blit
-// enabled, a screen-to-RGBA16F capture must stay on the GPU and preserve the
-// caller's FRONT read selection after the operation.
+// A half-float destination stays a texture: even when blit is advertised, the
+// Vita profile uses the typed CopyTex path rather than attaching RGBA16F as a
+// GXM color surface. Precision/storage stay unchanged.
 GLEW_EXT_framebuffer_blit=true;readFbo=0;drawFbo=0;readBuffer=GL_FRONT;
-assert(image.CopyFramebuffer(0,0,320,180));assert(blits==1&&copies==3&&readFbo==0&&drawFbo==0&&readBuffer==GL_FRONT&&scissor);
+assert(image.CopyFramebuffer(0,0,320,180));assert(blits==0&&copies==4&&readFbo==0&&drawFbo==0&&readBuffer==GL_FRONT&&scissor);
+
+// Non-floating captures retain the native GPU blit path.
+idImage rgba8;rgba8.internalFormat=GL_RGBA8;rgba8.dataType=GL_UNSIGNED_BYTE;
+assert(rgba8.CopyFramebuffer(0,0,320,180));assert(blits==1&&copies==4&&readFbo==0&&drawFbo==0&&readBuffer==GL_FRONT&&scissor);
 RenderTexture render;backEnd.renderTexture=&render;readFbo=13;readBuffer=GL_COLOR_ATTACHMENT0;drawFbo=42;
-assert(image.CopyFramebuffer(0,0,128,64));assert(blits==2&&readFbo==13&&drawFbo==42&&readBuffer==GL_COLOR_ATTACHMENT0&&scissor);
+assert(rgba8.CopyFramebuffer(0,0,128,64));assert(blits==2&&readFbo==13&&drawFbo==42&&readBuffer==GL_COLOR_ATTACHMENT0&&scissor);
+
+// F16 remains on the typed path for an internal render source as well.
+assert(image.CopyFramebuffer(0,0,128,64));assert(blits==2&&copies==5&&readFbo==13&&drawFbo==42&&readBuffer==GL_COLOR_ATTACHMENT0&&scissor);
 fail=true;assert(!image.CopyFramebuffer(0,0,256,128));assert(image.opts.width==128&&image.opts.height==64&&readFbo==13&&drawFbo==42&&scissor);
-puts("PASS production CopyFramebuffer: Vita default/FBO GPU blits, fallback error propagation, state restore, no format downgrade");}
+puts("PASS production CopyFramebuffer: F16 typed-copy policy, RGBA8 GPU blits, fallback error propagation, state restore, no format downgrade");}

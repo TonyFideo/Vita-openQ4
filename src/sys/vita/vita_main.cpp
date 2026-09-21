@@ -142,6 +142,9 @@ int main( int argc, char **argv ) {
 	}
 
 	VitaLoadingHud_SetEngineProgress( 11, 11, "Inicializacion completa", true );
+	if ( !Vita_StartAsyncTimer() ) {
+		Sys_Error( "No se pudo iniciar el temporizador asincrono de 60 Hz" );
+	}
 	VitaLoadingHud_LogOk( "Entrando al bucle principal" );
 
 	VitaRuntimeAudit_Start();

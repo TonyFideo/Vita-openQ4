@@ -182,3 +182,48 @@ render-texture blit branches and verifies that the former does not call the
 CopyTex fallback. This should also avoid the repeated emulator surface
 readbacks observed after build 258, but only the next Vita3K run can establish
 the runtime effect.
+
+
+## Build 263 target result: presentation advances, simulation timer was absent
+
+The 20260921-065441 target log is build 263 / 4d18c864. It confirms the
+previous sampler-state and allocation fixes: there are zero
+`Attempting to use a too high client texture unit` messages, zero failed
+allocation audit records and no 4,177,920-byte RGBA16F COW allocation failures.
+The map reaches `load:ready` and the process remains alive until the user
+closes it. The visible cinematic, however, remains on its first rendered state.
+
+Source ownership explains that symptom independently of rendering. The Vita
+engine entry point runs `common->Frame()` continuously, but no Vita source
+started the idTech asynchronous timer and the current Common initialization
+contains no cross-platform replacement. Consequently nothing called
+`common->Async()`, whose `SingleAsyncTic()` is the owner of
+`com_ticNumber++`. Session gameplay derives `numCmdsToRun` from that counter,
+so presentation can continue while game/cinematic simulation remains static.
+Doom 3 ReArmed's Vita-capable path uses the same original contract: a periodic
+timer calls `common->Async()` and then wakes `TRIGGER_EVENT_ONE`.
+
+The Vita platform now owns a dedicated VitaSDK timer thread created only after
+Common initialization completes and stopped before Vita thread primitives are
+destroyed. It schedules exactly 1,000,000 microseconds across every 60 intervals
+(16,666/16,667 us distribution), invokes the existing `common->Async()`
+catch-up/precise-tic policy, and signals `TRIGGER_EVENT_ONE`. It does not run
+game logic from the renderer or manufacture frame-dependent tics. Bounded
+one-second async/gameplay traces qualify the next target session.
+
+The same 263 log still reports Vita3K OpenGL-renderer readback failures for
+GXM color format 0x01200000. VitaSDK identifies this as the valid
+`SCE_GXM_COLOR_FORMAT_F16F16F16F16_RGBA`; Vita3K's current GL surface-readback
+table implements F16 RGBA variants ABGR/ARGB but omits RGBA. The failure starts
+when `_currentRender` (GL_RGBA16F) is attached to the scratch draw FBO for a
+blit. The engine does not downgrade the image. On Vita, RGBA16F framebuffer
+captures now select the already implemented typed CopyTex route, which converts
+the source representation into the existing half-float texture without making
+that texture a color render target. Ordinary RGBA8 captures keep the GPU blit.
+The synchronized F16 CopyTex path retains the no-COW lifetime fix from build
+263; generic client subimages still use COW.
+
+The next target run must show increasing `[VOQ4][async]` / `[VOQ4][gameplay]`
+tick values and a `[VOQ4][frame-copy] ... format=0x881a path=typed-copy` line.
+Only target execution can establish that the cinematic/world presentation then
+advances correctly.
