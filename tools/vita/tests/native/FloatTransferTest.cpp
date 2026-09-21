@@ -71,7 +71,7 @@ static bool readFail=false;static GLenum observedReadType=0;
 static void glReadPixels(GLint x,GLint y,GLsizei w,GLsizei h,GLenum f,GLenum t,void*p){observedReadType=t;vgl_error=readFail?GL_INVALID_OPERATION:voq_float_read_pixels(x,y,w,h,f,t,p);}
 static void glTextureImage2D(GLuint id,GLint level,GLint internal,GLsizei w,GLsizei h,GLint border,GLenum f,GLenum t,const void*p){assert(border==0);_glTexImage2D_FlatIMPL(&texture_slots[id],level,internal,w,h,f,t,p);}
 static void glTexImage2D(GLenum target,GLint level,GLint internal,GLsizei w,GLsizei h,GLint border,GLenum f,GLenum t,const void*p){assert(target==GL_TEXTURE_2D);glTextureImage2D(texture_units[0].tex_id[0],level,internal,w,h,border,f,t,p);}
-static void glTextureSubImage2D(GLuint id,GLint level,GLint x,GLint y,GLsizei w,GLsizei h,GLenum f,GLenum t,const void*p){vgl_error=voq_float_subimage(&texture_slots[id],GL_TEXTURE_2D,level,x,y,w,h,f,t,p,unpack_row_len,voq_unpack_alignment);}
+static void glTextureSubImage2D(GLuint id,GLint level,GLint x,GLint y,GLsizei w,GLsizei h,GLenum f,GLenum t,const void*p){vgl_error=voq_float_subimage(&texture_slots[id],GL_TEXTURE_2D,level,x,y,w,h,f,t,p,unpack_row_len,voq_unpack_alignment,0);}
 static void glTexSubImage2D(GLenum target,GLint level,GLint x,GLint y,GLsizei w,GLsizei h,GLenum f,GLenum t,const void*p){assert(target==GL_TEXTURE_2D);glTextureSubImage2D(texture_units[0].tex_id[0],level,x,y,w,h,f,t,p);}
 #include "float_copy.inc"
 static void cleanup(texture&t){t.last_frame=OBJ_NOT_USED;gpu_free_texture_data(&t);t=texture();for(void*p:retired)vgl_free(p);retired.clear();}
@@ -104,7 +104,7 @@ static void capture(){
  texture t;const int w=960,h=544;std::vector<uint8_t>bytes(w*h*4);for(size_t i=0;i<bytes.size();++i)bytes[i]=i%256;
  _glTexImage2D_FlatIMPL(&t,0,GL_RGBA16F,w,h,GL_RGBA,GL_UNSIGNED_BYTE,bytes.data());assert(!vgl_error&&!legacyRoutes);
  for(unsigned y=0;y<(unsigned)h;++y)for(unsigned x=0;x<(unsigned)w;++x)for(unsigned c=0;c<4;++c)assert(halfAt(t,0,x,y,c)==referenceHalf(bytes[(y*w+x)*4+c]/255.0f));
- std::fill(bytes.begin(),bytes.end(),255);assert(voq_float_subimage(&t,GL_TEXTURE_2D,0,0,0,w,h,GL_RGBA,GL_UNSIGNED_BYTE,bytes.data(),0,4)==0);
+ std::fill(bytes.begin(),bytes.end(),255);assert(voq_float_subimage(&t,GL_TEXTURE_2D,0,0,0,w,h,GL_RGBA,GL_UNSIGNED_BYTE,bytes.data(),0,4,0)==0);
  assert(halfAt(t,0,0,0,3)==0x3c00&&halfAt(t,0,w-1,h-1,0)==0x3c00);cleanup(t);
  puts("PASS exact 960x544 byte allocation -> half storage and SubImage; no null converter or 8-byte source overread");
 }
@@ -112,9 +112,9 @@ static void storage(){
  texture t;t.use_mips=true;std::vector<uint8_t>bytes(9*5*4,128);assert(!voq_float_image(&t,0,9,5,GL_RGBA,GL_UNSIGNED_BYTE,bytes.data(),0,4));
  std::vector<uint16_t>mip(4*2*4,0x4400);assert(!voq_float_image(&t,1,4,2,GL_RGBA,GL_HALF_FLOAT,mip.data(),0,4));assert(t.mip_count==2);assert(halfAt(t,0,8,4,0)==referenceHalf(128.0f/255));assert(halfAt(t,1,3,1,0)==0x4400);
  void*old=t.data;size_t n=gpu[old];std::vector<uint8_t>saved((uint8_t*)old,(uint8_t*)old+n);t.last_frame=vgl_framecount;gpuFail=true;
- assert(voq_float_subimage(&t,GL_TEXTURE_2D,1,1,1,1,1,GL_RGBA,GL_HALF_FLOAT,mip.data(),0,4)==GL_OUT_OF_MEMORY);assert(t.data==old&&memcmp(old,saved.data(),n)==0&&retired.empty());gpuFail=false;
- uint16_t pixel[]={0x3c00,0,0xc000,0x3c00};assert(!voq_float_subimage(&t,GL_TEXTURE_2D,1,1,1,1,1,GL_RGBA,GL_HALF_FLOAT,pixel,0,4));assert(t.data!=old&&retired.size()==1&&memcmp(old,saved.data(),n)==0);assert(halfAt(t,1,1,1,2)==0xc000&&halfAt(t,1,0,0,2)==0x4400);assert(t.gxm_tex.levels==2);
- auto allocationsBefore=allocations;old=t.data;assert(voq_float_subimage(&t,GL_TEXTURE_2D,1,4,0,1,1,GL_RGBA,GL_UNSIGNED_BYTE,bytes.data(),0,4)==GL_INVALID_VALUE);assert(voq_float_subimage(&t,GL_TEXTURE_2D,0,0,0,0,0,GL_RGBA,GL_UNSIGNED_BYTE,nullptr,0,4)==0);assert(allocations==allocationsBefore&&t.data==old);
+ assert(voq_float_subimage(&t,GL_TEXTURE_2D,1,1,1,1,1,GL_RGBA,GL_HALF_FLOAT,mip.data(),0,4,0)==GL_OUT_OF_MEMORY);assert(t.data==old&&memcmp(old,saved.data(),n)==0&&retired.empty());gpuFail=false;
+ uint16_t pixel[]={0x3c00,0,0xc000,0x3c00};assert(!voq_float_subimage(&t,GL_TEXTURE_2D,1,1,1,1,1,GL_RGBA,GL_HALF_FLOAT,pixel,0,4,0));assert(t.data!=old&&retired.size()==1&&memcmp(old,saved.data(),n)==0);assert(halfAt(t,1,1,1,2)==0xc000&&halfAt(t,1,0,0,2)==0x4400);assert(t.gxm_tex.levels==2);
+ auto allocationsBefore=allocations;old=t.data;assert(voq_float_subimage(&t,GL_TEXTURE_2D,1,4,0,1,1,GL_RGBA,GL_UNSIGNED_BYTE,bytes.data(),0,4,0)==GL_INVALID_VALUE);assert(voq_float_subimage(&t,GL_TEXTURE_2D,0,0,0,0,0,GL_RGBA,GL_UNSIGNED_BYTE,nullptr,0,4,0)==0);assert(allocations==allocationsBefore&&t.data==old);
  gpuFail=true;assert(voq_float_image(&t,0,4,4,GL_RGBA,GL_FLOAT,nullptr,0,4)==GL_OUT_OF_MEMORY);assert(t.data==old&&t.gxm_tex.width==9);gpuFail=false;cleanup(t);
  puts("PASS NPOT mip repacking, per-level update, untouched mip data, busy COW, failures leave old storage intact");
 }
@@ -146,16 +146,12 @@ static void copies(){
  for(unsigned y=0;y<2;++y)for(unsigned x=0;x<3;++x)assert(halfAt(texture_slots[1],0,x,y,0)==referenceHalf(displayPixels[(1-y)*16+x*4]/255.0f));
  glCopyTextureImage2D(2,0,GL_RGBA16F,0,0,3,2,0);assert(!vgl_error&&clients.empty());
  glCopyTextureSubImage2D(2,0,0,0,0,0,3,2);glCopyTexSubImage2D(GL_TEXTURE_2D,0,0,0,0,0,3,2);assert(!vgl_error&&clients.empty());
- // A framebuffer CopyTex update is ordered after the draws which sampled the
- // destination. The production path must synchronize those draws and update
- // the existing allocation, not COW an entire fullscreen F16 texture per frame.
- auto stable=texture_slots[1].data;const unsigned stableAllocations=allocations;
- for(unsigned frame=0;frame<32;++frame){
-  texture_slots[1].last_frame=vgl_framecount;const unsigned syncBefore=syncs;
-  glCopyTexSubImage2D(GL_TEXTURE_2D,0,0,0,0,0,3,2);assert(!vgl_error);
-  assert(texture_slots[1].data==stable&&allocations==stableAllocations&&retired.empty());
-  assert(texture_slots[1].last_frame==OBJ_NOT_USED&&syncs==syncBefore+4);++vgl_framecount;
- }
+ // A busy destination still COWs for ordinary SubImage, but CopyTex owns a
+ // synchronous framebuffer snapshot and fences GXM before updating in place.
+ auto syncedDest=texture_slots[1].data;texture_slots[1].last_frame=vgl_framecount;
+ const auto allocBeforeCopy=allocations,syncBeforeCopy=syncs;
+ glCopyTexSubImage2D(GL_TEXTURE_2D,0,0,0,0,0,3,2);
+ assert(!vgl_error&&texture_slots[1].data==syncedDest&&allocations==allocBeforeCopy&&syncs>=syncBeforeCopy+2);
  auto old=texture_slots[1].data;readFail=true;glCopyTexSubImage2D(GL_TEXTURE_2D,0,0,0,0,0,3,2);assert(vgl_error==GL_INVALID_OPERATION&&texture_slots[1].data==old&&clients.empty());readFail=false;vgl_error=0;
  clientFail=true;glCopyTexImage2D(GL_TEXTURE_2D,0,GL_RGBA16F,0,0,3,2,0);assert(vgl_error==GL_OUT_OF_MEMORY&&texture_slots[1].data==old);clientFail=false;vgl_error=0;
  // Float source -> float destination must retain HDR, not quantize through U8.
@@ -169,6 +165,6 @@ static void copies(){
  active_read_fb=in_use_framebuffer=nullptr;framebuffers[0].tex=nullptr;
  vgl_error=GL_INVALID_ENUM;glCopyTexSubImage2D(GL_TEXTURE_2D,0,0,0,0,0,3,2);assert(vgl_error==GL_INVALID_ENUM&&clients.empty());vgl_error=0;
  assert(unpack_row_len==19&&voq_unpack_alignment==8);cleanup(texture_slots[1]);cleanup(texture_slots[2]);
- puts("PASS four CopyTex/DSA APIs, U8 and F16 precision, ordered busy-destination reuse, self copy, allocation/read failure");
+ puts("PASS four CopyTex/DSA APIs, U8 and F16 framebuffer precision, client-state restore, self copy, allocation/read failure");
 }
 int main(int argc,char**argv){assert(argc==2);std::string mode=argv[1];if(mode=="codec")codec();else if(mode=="formats")formats();else if(mode=="capture")capture();else if(mode=="storage")storage();else if(mode=="mips")mips();else if(mode=="read")readback();else if(mode=="copy")copies();else return 2;assert(gpu.empty()&&clients.empty()&&retired.empty());}

@@ -383,6 +383,17 @@ def patch_memory_query(root: pathlib.Path) -> None:
     path.write_text(text, encoding='utf-8')
     print('Applied initialized and validated diagnostic mspace query')
 
+
+def patch_client_texture_units(root: pathlib.Path) -> None:
+    """Reject client texture-coordinate units outside the implemented FFP range."""
+    path = root / 'source/ffp.c'
+    text = path.read_text(encoding='utf-8')
+    old = '\tif (texture - GL_TEXTURE0 >= TEXTURE_COORDS_NUM) {\n\t\tvgl_log("%s:%d Attempting to use a too high client texture unit (GL_TEXTURE%d).\\n", __FILE__, __LINE__, texture - GL_TEXTURE0);\n\t}'
+    new = '\tif (texture - GL_TEXTURE0 >= TEXTURE_COORDS_NUM) {\n\t\tSET_GL_ERROR_WITH_VALUE(GL_INVALID_ENUM, texture)\n\t}'
+    text = _legacy().replace_once(text, old, new, 'bounded client texture coordinate unit')
+    path.write_text(text, encoding='utf-8')
+    print('Applied strict fixed-function client texture-coordinate bounds')
+
 def main() -> int:
     if len(sys.argv) != 2:
         raise SystemExit('usage: patch_vitagl_vita3k.py <vitaGL-repo>')
@@ -391,6 +402,7 @@ def main() -> int:
     patch_vertex_streams(pathlib.Path(sys.argv[1]))
     patch_read_buffer_query(pathlib.Path(sys.argv[1]))
     patch_memory_query(pathlib.Path(sys.argv[1]))
+    patch_client_texture_units(pathlib.Path(sys.argv[1]))
     import patch_vitagl_memory
     patch_vitagl_memory.patch(pathlib.Path(sys.argv[1]))
     from patch_vitagl_cube import patch as patch_cube

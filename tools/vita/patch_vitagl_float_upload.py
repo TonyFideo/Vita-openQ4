@@ -176,7 +176,8 @@ static GLenum voq_float_image(texture *tex,int level,int width,int height,GLenum
     return GL_NO_ERROR;
 }
 static GLenum voq_float_subimage(texture *tex,GLenum target,int level,int x,int y,int width,int height,
-                                 GLenum format,GLenum type,const void *pixels,int row_length,int alignment) {
+                                 GLenum format,GLenum type,const void *pixels,int row_length,int alignment,
+                                 int gpu_synchronized) {
     if (target!=GL_TEXTURE_2D
 #ifdef HAVE_UNPURE_TEXFORMATS
         && target!=GL_TEXTURE_1D
@@ -199,7 +200,10 @@ static GLenum voq_float_subimage(texture *tex,GLenum target,int level,int x,int 
 #endif
     voq_float_prepare_write(tex);
     uint8_t *dest=(uint8_t *)tex->data;
-    const int replace=voq_float_busy(tex);
+    /* Ordinary subimages preserve VitaGL's copy-on-write lifetime rule.
+     * CopyTex may update in place only after it has explicitly completed all
+     * queued GXM work, so no submitted draw can still sample this storage. */
+    const int replace=!gpu_synchronized && voq_float_busy(tex);
     if (replace) {
         dest=(uint8_t *)gpu_alloc_mapped_for_gpu(layout.size);
         if (!dest) return GL_OUT_OF_MEMORY;
@@ -309,24 +313,6 @@ void voq_float_prepare_write(texture *tex) {
     if(in_use_framebuffer && in_use_framebuffer->tex==tex){
         dirty_framebuffer=GL_TRUE;scene_reset();sceGxmFinish(gxm_context);
     }
-}
-/* CopyTex is ordered after all earlier draws in the GL command stream. The
- * source snapshot is complete before this helper is called, so a destination
- * sampled by an earlier draw can be updated in-place after explicitly closing
- * and waiting for that GXM scene. Generic client SubImage updates retain the
- * normal COW path; this synchronization is specific to framebuffer copies and
- * avoids allocating an entire screen-sized float texture every frame. */
-void voq_float_sync_copy_destination(texture *tex) {
-    if(!tex || tex->status!=TEX_VALID || !tex->data)return;
-#ifndef TEXTURES_SPEEDHACK
-    if(tex->last_frame==OBJ_NOT_USED || vgl_framecount-tex->last_frame>FRAME_PURGE_FREQ)return;
-#endif
-    dirty_framebuffer=GL_TRUE;
-    scene_reset();
-    sceGxmFinish(gxm_context);
-#ifndef TEXTURES_SPEEDHACK
-    tex->last_frame=OBJ_NOT_USED;
-#endif
 }
 void voq_float_texture_changed(texture *tex) {
     for(unsigned i=0;i<BUFFERS_NUM;++i){
@@ -479,13 +465,25 @@ static void voq_copy_texture(GLenum target,GLuint tex_id,int direct,int subimage
     vgl_error=GL_NO_ERROR;
     glReadPixels(x,y,width,height,GL_RGBA,type,pixels);
     if(vgl_error==GL_NO_ERROR){
-        /* glReadPixels has snapshotted the source. Preserve GL ordering for a
-         * sampled F16 destination without turning every screen capture into a
-         * 960x544x8 copy-on-write allocation. */
-        if(subimage && half_destination)voq_float_sync_copy_destination(tex);
         const int previous_row_length=unpack_row_len,previous_alignment=voq_unpack_alignment;
         unpack_row_len=0;voq_unpack_alignment=1;
         if(subimage){
+#ifdef HAVE_VITA3K_SUPPORT
+            if(half_destination){
+                /* glReadPixels above snapshots the source. Before overwriting
+                 * a busy floating destination, complete the command queue so
+                 * its existing storage is no longer referenced by GXM. This
+                 * is a synchronized CopyTex operation, not a relaxation of
+                 * normal glTexSubImage2D copy-on-write semantics. */
+                if(voq_float_busy(tex)){
+                    dirty_framebuffer=GL_TRUE;
+                    scene_reset();
+                    sceGxmFinish(gxm_context);
+                }
+                const GLenum error=voq_float_subimage(tex,target,level,xoffset,yoffset,width,height,GL_RGBA,type,pixels,0,1,1);
+                if(error!=GL_NO_ERROR)vgl_error=error;
+            }else
+#endif
             if(direct)glTextureSubImage2D(tex_id,level,xoffset,yoffset,width,height,GL_RGBA,type,pixels);
             else glTexSubImage2D(target,level,xoffset,yoffset,width,height,GL_RGBA,type,pixels);
         }else{
@@ -528,7 +526,7 @@ def patch(root: Path) -> None:
     route='''
 #ifdef HAVE_VITA3K_SUPPORT
     if (tex->status == TEX_VALID && vglGetTexFormat(&tex->gxm_tex) == SCE_GXM_TEXTURE_FORMAT_F16F16F16F16_RGBA) {
-        const GLenum error=voq_float_subimage(tex,target,level,xoffset,yoffset,width,height,format,type,pixels,unpack_row_len,voq_unpack_alignment);
+        const GLenum error=voq_float_subimage(tex,target,level,xoffset,yoffset,width,height,format,type,pixels,unpack_row_len,voq_unpack_alignment,0);
         if (error != GL_NO_ERROR) { SET_GL_ERROR(error) }
         return;
     }
@@ -568,7 +566,7 @@ def patch(root: Path) -> None:
     body=util.replace_once(body,marker,marker+route,'float readback dispatch')
     text=text[:a]+body+text[b:];path.write_text(text)
     path=root/'source/shared.h' ;text=path.read_text();text=util.replace_once(text,'extern int unpack_row_len;',
-        'void voq_float_prepare_write(texture *tex);\nvoid voq_float_sync_copy_destination(texture *tex);\nvoid voq_float_texture_changed(texture *tex);\nextern int voq_unpack_alignment;\nextern int unpack_row_len;','alignment declaration');path.write_text(text)
+        'void voq_float_prepare_write(texture *tex);\nvoid voq_float_texture_changed(texture *tex);\nextern int voq_unpack_alignment;\nextern int unpack_row_len;','alignment declaration');path.write_text(text)
     path=root/'source/get_info.c';text=path.read_text();text=util.replace_once(text,'\tcase GL_UNPACK_ALIGNMENT:\n\t\t*data = 1;',
         '\tcase GL_UNPACK_ALIGNMENT:\n\t\t*data = voq_unpack_alignment;','alignment query');path.write_text(text)
     print('Applied typed RGBA16F uploads, exact half/float conversion, transactional storage and COW')
