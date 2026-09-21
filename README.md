@@ -1,5 +1,6 @@
 ## Vita-openQ4
-An experimental ps vita port of the openQ4 engine
+An experimental ps vita port of the openQ4 engine vibely slopped as an experiment, doesn't reflect the author code.
+
 Readme unfinished
 
 
