@@ -1,5 +1,9 @@
 <a id="top"></a>
 
+> **Vita loading follow-up:** DDS lookup metadata now grows in stable blocks to
+> avoid whole-cache copy peaks. Gameplay entry still needs target validation.
+> [Build-255 investigation and test criteria](tools/vita/GAMEPLAY_DDS_PROBE_CACHE.md).
+
 > **Vita development:** the current candidate adds row-bounded RGBA8 sky loading
 > with full native cube mip storage. Gameplay entry and the remaining menu
 > brightness require target validation. See the [cube-loading investigation](tools/vita/GAMEPLAY_CUBE_STREAMING.md),

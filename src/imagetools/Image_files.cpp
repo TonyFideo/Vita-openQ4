@@ -34,6 +34,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "ImageTools.h"
 #include "CubeStream.h"
 #include "DXT/DXTCodec.h"
+#if defined(VITA) || defined(__vita__)
+#include <psp2/kernel/clib.h>
+#endif
 
 idCVar image_usePrecompressedTextures(
 	"image_usePrecompressedTextures",
@@ -884,52 +887,83 @@ files. Image loading is single-threaded (see parseBuffer in
 Image_program.cpp), so plain statics are safe here.
 =============
 */
+// Stable nodes avoid idList's relocate-and-deep-copy peak on every growth.
+// Keep all positive and negative results for the same load window; this is a
+// storage change, not a cap on assets or a change to replacement precedence.
 struct ddsProbeCacheEntry_t {
-	idStr			name;
-	bool			found;
-	ddsFileInfo_t	info;
-	ID_TIME_T		timestamp;
+	idStr name;
+	bool found;
+	ddsFileInfo_t info;
+	ID_TIME_T timestamp;
+	ddsProbeCacheEntry_t *next;
+
+	ddsProbeCacheEntry_t() : found( false ), info(),
+		timestamp( FILE_NOT_FOUND_TIMESTAMP ), next( NULL ) {}
 };
 
+static const int DDS_PROBE_HASH_SIZE = 1024;
+static const int DDS_PROBE_BLOCK_ENTRIES = 32;
 static bool ddsProbeCacheActive = false;
-static idHashIndex ddsProbeCacheHash;
-static idList<ddsProbeCacheEntry_t> ddsProbeCacheEntries;
+static ddsProbeCacheEntry_t *ddsProbeCacheBuckets[DDS_PROBE_HASH_SIZE] = {};
+static idBlockAlloc<ddsProbeCacheEntry_t, DDS_PROBE_BLOCK_ENTRIES, 0> ddsProbeCacheEntries;
+static unsigned int ddsProbeCacheHits = 0;
+static size_t ddsProbeCacheKeyBytes = 0;
 
 void R_SetDDSProbeCacheActive( bool active ) {
+#if defined(VITA) || defined(__vita__)
+	if ( ddsProbeCacheEntries.GetAllocCount() != 0 ) {
+		sceClibPrintf( "[VOQ4][dds-probe-cache] release entries=%d hits=%u nodeBytes=%u keyBytes=%u blockEntries=%d\n",
+			ddsProbeCacheEntries.GetAllocCount(), ddsProbeCacheHits,
+			(unsigned)ddsProbeCacheEntries.Allocated(), (unsigned)ddsProbeCacheKeyBytes,
+			DDS_PROBE_BLOCK_ENTRIES );
+	}
+#endif
+	// Remove every reference before destroying the nodes. Shutdown destroys
+	// each idStr (including its owned name), not just the allocator bookkeeping.
+	memset( ddsProbeCacheBuckets, 0, sizeof( ddsProbeCacheBuckets ) );
+	ddsProbeCacheEntries.Shutdown();
+	ddsProbeCacheHits = 0;
+	ddsProbeCacheKeyBytes = 0;
 	ddsProbeCacheActive = active;
-	ddsProbeCacheHash.Free();
-	ddsProbeCacheEntries.Clear();
 }
 
 static bool R_ReadDDSFileInfo( const char *name, ddsFileInfo_t &info, ID_TIME_T *timestamp ) {
 	if ( !ddsProbeCacheActive ) {
 		return R_ReadDDSFileInfoUncached( name, info, timestamp );
 	}
-	const int hashKey = ddsProbeCacheHash.GenerateKey( name, false );
-	for ( int i = ddsProbeCacheHash.First( hashKey ); i >= 0; i = ddsProbeCacheHash.Next( i ) ) {
-		const ddsProbeCacheEntry_t &entry = ddsProbeCacheEntries[ i ];
-		if ( entry.name.Icmp( name ) == 0 ) {
+	const unsigned int bucket = (unsigned int)idStr::IHash( name ) & ( DDS_PROBE_HASH_SIZE - 1 );
+	for ( const ddsProbeCacheEntry_t *entry = ddsProbeCacheBuckets[bucket]; entry != NULL; entry = entry->next ) {
+		if ( entry->name.Icmp( name ) == 0 ) {
+			++ddsProbeCacheHits;
 			if ( timestamp != NULL ) {
-				*timestamp = entry.found ? entry.timestamp : FILE_NOT_FOUND_TIMESTAMP;
+				*timestamp = entry->found ? entry->timestamp : FILE_NOT_FOUND_TIMESTAMP;
 			}
-			if ( entry.found ) {
-				info = entry.info;
+			if ( entry->found ) {
+				info = entry->info;
 			}
-			return entry.found;
+			return entry->found;
 		}
 	}
-	ddsProbeCacheEntry_t entry;
-	entry.name = name;
-	entry.timestamp = FILE_NOT_FOUND_TIMESTAMP;
-	entry.found = R_ReadDDSFileInfoUncached( name, entry.info, &entry.timestamp );
+	// Probe first, then publish one fully initialized node. No node, key, or
+	// link that a prior lookup can reach is moved when a new block is added.
+	ddsFileInfo_t observed = {};
+	ID_TIME_T observedTimestamp = FILE_NOT_FOUND_TIMESTAMP;
+	const bool found = R_ReadDDSFileInfoUncached( name, observed, &observedTimestamp );
 	if ( timestamp != NULL ) {
-		*timestamp = entry.found ? entry.timestamp : FILE_NOT_FOUND_TIMESTAMP;
+		*timestamp = found ? observedTimestamp : FILE_NOT_FOUND_TIMESTAMP;
 	}
-	if ( entry.found ) {
-		info = entry.info;
+	if ( found ) {
+		info = observed;
 	}
-	ddsProbeCacheHash.Add( hashKey, ddsProbeCacheEntries.Append( entry ) );
-	return entry.found;
+	ddsProbeCacheEntry_t *entry = ddsProbeCacheEntries.Alloc();
+	entry->name = name;
+	entry->found = found;
+	entry->info = observed;
+	entry->timestamp = found ? observedTimestamp : FILE_NOT_FOUND_TIMESTAMP;
+	entry->next = ddsProbeCacheBuckets[bucket];
+	ddsProbeCacheKeyBytes += entry->name.Allocated();
+	ddsProbeCacheBuckets[bucket] = entry;
+	return found;
 }
 
 static bool R_ImageNameHasDDSShadowPrefix( const idStr &name ) {
