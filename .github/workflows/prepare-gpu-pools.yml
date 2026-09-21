@@ -1,0 +1,111 @@
+name: Prepare reviewed GPU pool sources
+
+on:
+  push:
+    branches: [gpu-pools-preparation]
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      BASE: 7a408d36f3e0d7e1a8c71251f09e3820c530656b
+    steps:
+      - name: Apply exact reviewed patch to immutable source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git config core.sparseCheckout true
+          cat > .git/info/sparse-checkout <<'EOF'
+          /src/
+          /tools/vita/
+          /content/baseoq4/pak0/guis/
+          /content/baseoq4/pak0/openq4_profile_vita.cfg
+          /.github/workflows/
+          /docs/dev/releases/
+          /AGENTS.md
+          /README.md
+          /meson.build
+          EOF
+          git fetch --depth 1 --filter=blob:none origin "$GITHUB_SHA" "$BASE"
+          git checkout --detach "$BASE"
+          mkdir -p .tmp evidence
+          git show "$GITHUB_SHA:tools/vita/reviewed-gpu-pools.patch.gz" > .tmp/reviewed.patch.gz
+          echo '0904413ddc07283731136365887610b002511ec34db69918c137030db0852cdb  .tmp/reviewed.patch.gz' | sha256sum -c -
+          gzip -dc .tmp/reviewed.patch.gz > .tmp/reviewed.patch
+          echo '0b6f33d0351c9536fb820a29aeeaacc2d627c3541713e3996bab8e90c77e0c8b  .tmp/reviewed.patch' | sha256sum -c -
+          git apply --check .tmp/reviewed.patch
+          git apply --index .tmp/reviewed.patch
+          git diff --cached --check
+          git diff --cached --name-only > evidence/changed-files.txt
+          git write-tree > evidence/expected-tree.txt
+          cp .tmp/reviewed.patch evidence/reviewed.patch
+
+      - name: Prepare pinned test dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends build-essential libegl1 libgl1-mesa-dri
+          pin=$(sed -n 's/^  VITAGL_SHA: //p' .github/workflows/vita-sdk.yml)
+          [[ "$pin" =~ ^[0-9a-f]{40}$ ]]
+          git init .tmp/vitagl
+          git -C .tmp/vitagl remote add origin https://github.com/Rinnegatamante/vitaGL.git
+          git -C .tmp/vitagl fetch --depth 1 origin "$pin"
+          git -C .tmp/vitagl checkout --detach FETCH_HEAD
+          python3 tools/vita/patch_vitagl_vita3k.py .tmp/vitagl | tee evidence/patch.log
+
+      - name: Run full host suite and pool sanitizers
+        shell: bash
+        run: |
+          set -euo pipefail
+          export VOQ_VITAGL_SOURCE="$(realpath .tmp/vitagl)" VITAGL_REPO="$(realpath .tmp/vitagl)"
+          export VOQ_REQUIRE_GPU_TESTS=1 LIBGL_ALWAYS_SOFTWARE=1
+          python3 -m unittest discover -s tools/vita/tests -p 'test_*.py' -v 2>&1 | tee evidence/tests.log
+          VOQ_POOLS_SANITIZE=1 python3 -m unittest discover -s tools/vita/tests -p 'test_vita_gui_memory_pools.py' -v 2>&1 | tee evidence/pools-asan.log
+
+      - name: Preserve source objects without updating production refs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, hashlib, json, os, pathlib, subprocess, tarfile, urllib.request
+          paths = subprocess.check_output(['git', 'diff', '--cached', '--name-only', '-z']).decode().strip('\0').split('\0')
+          expected = {'README.md', 'docs/dev/releases/vita-0.1-gpu-pools.md', 'src/renderer/Image_load.cpp', 'src/renderer/OpenGL/gl_Image.cpp', 'src/sys/vita/vita_glimp.cpp', 'tools/vita/GAMEPLAY_GPU_POOLS.md', 'tools/vita/patch_vitagl_memory.py', 'tools/vita/patch_vitagl_vita3k.py', 'tools/vita/tests/test_vita_glimp_policy.py', 'tools/vita/tests/test_vita_gui_memory_pools.py'}
+          assert set(paths) == expected, paths
+          api = 'https://api.github.com/repos/' + os.environ['GITHUB_REPOSITORY'] + '/git/'
+          def post(endpoint, payload):
+              request = urllib.request.Request(api + endpoint, data=json.dumps(payload).encode(), headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json'}, method='POST')
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  return json.load(response)
+          manifest = []
+          entries = []
+          for name in paths:
+              data = pathlib.Path(name).read_bytes()
+              sha = post('blobs', {'encoding': 'base64', 'content': base64.b64encode(data).decode()})['sha']
+              local = hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
+              assert sha == local
+              entries.append({'path': name, 'mode': '100644', 'type': 'blob', 'sha': sha})
+              manifest.append({'path': name, 'sha': sha, 'sha256': hashlib.sha256(data).hexdigest()})
+          tree = post('trees', {'base_tree': '8440ab64c161a634dc5d07cad7bca3a386023165', 'tree': entries})['sha']
+          assert tree == pathlib.Path('evidence/expected-tree.txt').read_text().strip()
+          pathlib.Path('evidence/manifest.json').write_text(json.dumps({'base': os.environ['BASE'], 'tree': tree, 'files': manifest}, indent=2) + '\n')
+          with tarfile.open('evidence/source.tar.gz', 'w:gz') as archive:
+              for name in paths: archive.add(name, arcname=name)
+          print('Verified canonical source tree:', tree)
+          PY
+
+      - name: Upload preparation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reviewed-gpu-pools-${{ github.sha }}
+          path: evidence/
+          retention-days: 7
