@@ -1,0 +1,125 @@
+name: Prepare reviewed float transfer sources
+
+on:
+  push:
+    branches: [float-transfer-preparation]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      BASE: 4f0113860d1b982effc7fb921ba12c173b9b6db3
+      PIN: eccee6d767ad5f632812414a6b8251031fe62f0b
+      LIBGL_ALWAYS_SOFTWARE: '1'
+      VOQ_REQUIRE_GPU_TESTS: '1'
+    steps:
+      - name: Apply exact reviewed patch to immutable source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git config core.sparseCheckout true
+          cat > .git/info/sparse-checkout <<'EOF'
+          /src/
+          /tools/vita/
+          /content/baseoq4/pak0/openq4_profile_vita.cfg
+          /.github/workflows/
+          /AGENTS.md
+          /README.md
+          /meson.build
+          /docs/dev/releases/
+          EOF
+          mkdir -p .tmp evidence
+          git fetch --depth 1 --filter=blob:none origin "$GITHUB_SHA"
+          for part in 0 1 2; do
+            git show "FETCH_HEAD:.github/float-payload/part${part}" >> .tmp/reviewed.xz.b64
+          done
+          git fetch --depth 1 --filter=blob:none origin "$BASE"
+          git checkout --detach FETCH_HEAD
+          python3 - <<'PY'
+          import base64, hashlib, lzma
+          from pathlib import Path
+          patch = lzma.decompress(base64.b64decode(Path('.tmp/reviewed.xz.b64').read_bytes(), validate=True))
+          assert hashlib.sha256(patch).hexdigest() == '780319b0d20c312210561bb632ee9b7d3f7f8729e5e6683d31e25c19b33c5237'
+          Path('evidence/reviewed.patch').write_bytes(patch)
+          PY
+          git apply --check evidence/reviewed.patch
+          git apply evidence/reviewed.patch
+
+      - name: Prepare pinned dependency and pixel reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libegl1 libgl1 libgl1-mesa-dri
+          git init .tmp/vitagl
+          git -C .tmp/vitagl remote add origin https://github.com/Rinnegatamante/vitaGL.git
+          git -C .tmp/vitagl fetch --depth 1 origin "$PIN"
+          git -C .tmp/vitagl checkout --detach FETCH_HEAD
+          python3 tools/vita/patch_vitagl_vita3k.py .tmp/vitagl | tee evidence/dependency-patch.log
+          echo "VOQ_VITAGL_SOURCE=$(realpath .tmp/vitagl)" >> "$GITHUB_ENV"
+          echo "VITAGL_REPO=$(realpath .tmp/vitagl)" >> "$GITHUB_ENV"
+
+      - name: Run complete host suite and float sanitizers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tools/vita/tests -p 'test_*.py' -v 2>&1 | tee evidence/host-tests.log
+          VOQ_FLOAT_SANITIZERS=1 python3 -m unittest discover -s tools/vita/tests -p 'test_vita_gui_float_transfer.py' -v 2>&1 | tee evidence/float-sanitizers.log
+
+      - name: Preserve canonical source objects without changing refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, hashlib, json, os, subprocess, urllib.request
+          from pathlib import Path
+          paths = [
+              'docs/dev/releases/vita-0.1-float-capture.md',
+              'src/renderer/GLES_D3/gles_shaderpasses.cpp',
+              'src/renderer/Image_load.cpp',
+              'tools/vita/GAMEPLAY_FLOAT_CAPTURE.md',
+              'tools/vita/patch_vitagl_float_upload.py',
+              'tools/vita/patch_vitagl_vita3k.py',
+              'tools/vita/tests/native/FloatTransferTest.cpp',
+              'tools/vita/tests/native/FrameCopyOwnerTest.cpp',
+              'tools/vita/tests/test_vita_gui_float_transfer.py',
+          ]
+          root = 'https://api.github.com/repos/' + os.environ['GITHUB_REPOSITORY'] + '/git/'
+          def post(endpoint, data):
+              request = urllib.request.Request(root + endpoint, data=json.dumps(data).encode(), method='POST', headers={
+                  'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                  'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json',
+                  'X-GitHub-Api-Version': '2022-11-28'})
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  return json.load(response)
+          entries = []
+          for path in paths:
+              data = Path(path).read_bytes()
+              expected = hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
+              blob = post('blobs', {'content': base64.b64encode(data).decode(), 'encoding': 'base64'})
+              assert blob['sha'] == expected, path
+              entries.append({'path': path, 'mode': '100644', 'type': 'blob', 'sha': expected})
+              target = Path('evidence/source') / path
+              target.parent.mkdir(parents=True, exist_ok=True)
+              target.write_bytes(data)
+          tree = post('trees', {'base_tree': '74a0d76dbf8663742ee965966a19a6bd11fbcc05', 'tree': entries})
+          Path('evidence/tree.json').write_text(json.dumps({'parent': os.environ['BASE'], 'tree': tree['sha'], 'entries': entries}, indent=2) + '\n')
+          print('Verified canonical tree:', tree['sha'])
+          PY
+
+      - name: Upload preparation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reviewed-float-transfer-${{ github.sha }}
+          path: evidence/
+          retention-days: 7
