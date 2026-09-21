@@ -143,3 +143,17 @@ paths, checks the pinned VitaGL image-unit/client-coordinate limits, and execute
 existing generic busy SubImage COW test remains in place. Target validation
 must still confirm that the cinematic advances, the world renders correctly and
 player input works; a running frame loop is not by itself a gameplay pass.
+
+
+### Complete programmable unbind semantics
+
+A second fixed-function leak was found in `idImageManager::BindNull`, which is
+called by the active GLES interaction, fog and shader-pass paths. The desktop
+renderer disables the previously enabled fixed-function target; GLES has no
+such target-enable state. GLES now binds texture zero to the tracked 2D/cube
+target, resets the corresponding binding-cache entry, and leaves the desktop
+compatibility path unchanged. `UnbindAll` also restores the actual active
+server image unit after walking the units instead of changing only its shadow
+integer. This prevents a later bind from silently targeting the last unit.
+The Doom 3 Vita reference likewise unbinds a texture object rather than relying
+on fixed-function target enables.

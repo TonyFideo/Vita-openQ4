@@ -58,6 +58,20 @@ class ProgrammableTextureStateTest(unittest.TestCase):
         self.assertIn('glDisable(GL_TEXTURE_CUBE_MAP_EXT)', compact_legacy)
         self.assertIn('R_BindTextureToUnit', gles)
 
+    def test_bind_null_unbinds_programmable_target_and_restores_server_unit(self):
+        bind_null = function(ROOT / 'src/renderer/ImageManager.cpp', 'void idImageManager::BindNull()')
+        unbind_all = function(ROOT / 'src/renderer/ImageManager.cpp', 'void idImageManager::UnbindAll()')
+        gles = re.sub(r'\\s+', '', preprocess(bind_null, True))
+        legacy = re.sub(r'\\s+', '', preprocess(bind_null, False))
+        self.assertIn('glBindTexture(GL_TEXTURE_CUBE_MAP_EXT,0)', gles)
+        self.assertIn('glBindTexture(GL_TEXTURE_2D,0)', gles)
+        self.assertIn('tmu->currentCubeMap=0', gles)
+        self.assertIn('tmu->current2DMap=0', gles)
+        self.assertNotIn('glDisable(GL_TEXTURE_CUBE_MAP_EXT)', gles)
+        self.assertIn('glDisable(GL_TEXTURE_CUBE_MAP_EXT)', legacy)
+        self.assertIn('GL_SelectTextureNoClient(oldTMU)', re.sub(r'\\s+', '', unbind_all))
+        self.assertNotIn('backEnd.glState.currenttmu=oldTMU;', re.sub(r'\\s+', '', unbind_all).split('else{',1)[0])
+
     def test_vitagl_image_units_are_not_ffp_coordinate_units(self):
         root = os.environ.get('VOQ_VITAGL_SOURCE')
         if not root:

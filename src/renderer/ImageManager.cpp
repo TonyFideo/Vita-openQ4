@@ -1138,12 +1138,20 @@ UnbindAll
 ===============
 */
 void idImageManager::UnbindAll() {
-	int oldTMU = backEnd.glState.currenttmu;
-	for ( int i = 1; i < MAX_MULTITEXTURE_UNITS; ++i ) {
-		GL_SelectTextureNoClient(i);
+	const int oldTMU = backEnd.glState.currenttmu;
+	const int maxUnits = Max( 0, Min( MAX_MULTITEXTURE_UNITS,
+		Min( glConfig.maxTextureUnits, glConfig.maxTextureImageUnits ) ) );
+	for ( int i = 1; i < maxUnits; ++i ) {
+		GL_SelectTextureNoClient( i );
 		BindNull();
 	}
-	backEnd.glState.currenttmu = oldTMU;
+	// Restore both the renderer shadow and the actual server texture selector.
+	// Assigning currenttmu alone leaves subsequent binds targeting the last unit.
+	if ( oldTMU >= 0 && oldTMU < maxUnits ) {
+		GL_SelectTextureNoClient( oldTMU );
+	} else {
+		backEnd.glState.currenttmu = oldTMU;
+	}
 }
 
 /*
@@ -1161,12 +1169,28 @@ void idImageManager::BindNull() {
 	tmu = &backEnd.glState.tmu[backEnd.glState.currenttmu];
 
 	RB_LogComment("BindNull()\n");
+#ifdef OPENQ4_RENDERER_GLES_MODULE
+	// Programmable GLES has no per-target texture enable state. Bind zero to
+	// the target represented by our shadow state and invalidate the matching
+	// binding cache, otherwise a later bind of the same object can be skipped
+	// even though GL still has texture zero bound.
+	if ( tmu->textureType == TT_CUBIC ) {
+		glActiveTextureARB( GL_TEXTURE0_ARB + backEnd.glState.currenttmu );
+		glBindTexture( GL_TEXTURE_CUBE_MAP_EXT, 0 );
+		tmu->currentCubeMap = 0;
+	} else if ( tmu->textureType == TT_2D ) {
+		glActiveTextureARB( GL_TEXTURE0_ARB + backEnd.glState.currenttmu );
+		glBindTexture( GL_TEXTURE_2D, 0 );
+		tmu->current2DMap = 0;
+	}
+#else
 	if (tmu->textureType == TT_CUBIC) {
 		glDisable(GL_TEXTURE_CUBE_MAP_EXT);
 	}
 	else if (tmu->textureType == TT_2D) {
 		glDisable(GL_TEXTURE_2D);
 	}
+#endif
 	tmu->textureType = TT_DISABLED;
 
 }
