@@ -44,6 +44,41 @@ class CinematicPresentationGateTest(unittest.TestCase):
             for forbidden in ('time +=','GetMSec()','RunFrame(','com_ticNumber','cinematicMaxSkipTime ='):
                 self.assertNotIn(forbidden,combined)
 
+    def test_present_guards_precede_dirty_state_consumption(self):
+        wrapper=load_wrapper()
+        fixtures = {
+            'src/game/Entity.cpp': 'void idEntity::Present( void ) {\n\tBecomeInactive( TH_UPDATEVISUALS );\n}\n',
+            'src/game/Light.cpp': 'void idLight::Present( void ) {\n\tidEntity::Present();\n}\n',
+            'src/game/AFEntity.cpp': (
+                'void idMultiModelAF::Present( void ) {\n\tBecomeInactive( TH_UPDATEVISUALS );\n}\n'
+                'void idAFEntity_Gibbable::Present( void ) {\n\tidEntity::Present();\n}\n'
+            ),
+            'src/game/BrittleFracture.cpp': 'void idBrittleFracture::Present() {\n\tBecomeInactive( TH_UPDATEVISUALS );\n}\n',
+            'src/game/Item.cpp': 'void idItem::Present( void ) {\n\tidEntity::Present();\n}\n',
+            'src/game/SecurityCamera.cpp': 'void idSecurityCamera::Present( void ) {\n\tBecomeInactive( TH_UPDATEVISUALS );\n}\n',
+            'src/game/client/ClientModel.cpp': 'void rvClientModel::PresentPresentation( int presentationTime ) {\n\treturn;\n}\n',
+        }
+        with tempfile.TemporaryDirectory(prefix='voq-vita-present-') as directory:
+            root=Path(directory)
+            for relative, contents in fixtures.items():
+                path=root/relative;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(contents)
+            # Test the same guard helper used by production staging.
+            signatures=(
+                ('src/game/Entity.cpp','void idEntity::Present( void )'),
+                ('src/game/Light.cpp','void idLight::Present( void )'),
+                ('src/game/AFEntity.cpp','void idMultiModelAF::Present( void )'),
+                ('src/game/AFEntity.cpp','void idAFEntity_Gibbable::Present( void )'),
+                ('src/game/BrittleFracture.cpp','void idBrittleFracture::Present()'),
+                ('src/game/Item.cpp','void idItem::Present( void )'),
+                ('src/game/SecurityCamera.cpp','void idSecurityCamera::Present( void )'),
+                ('src/game/client/ClientModel.cpp','void rvClientModel::PresentPresentation( int presentationTime )'),
+            )
+            for relative, signature in signatures:
+                wrapper._insert_skip_guard(root/relative,signature)
+                body=function((root/relative).read_text(),signature)
+                self.assertLess(body.index('IsCinematicFastForwarding'), body.find('BecomeInactive') if 'BecomeInactive' in body else len(body))
+                self.assertLess(body.index('IsCinematicFastForwarding'), body.find('idEntity::Present') if 'idEntity::Present' in body else len(body))
+
     def test_source_drift_fails_instead_of_fuzzy_patch(self):
         wrapper=load_wrapper()
         with tempfile.TemporaryDirectory(prefix='voq-vita-game-drift-') as directory:
@@ -61,10 +96,10 @@ class CinematicPresentationGateTest(unittest.TestCase):
         update_entity=function(text,'void idRenderWorldLocal::UpdateEntityDef(')
         add_light=function(text,'qhandle_t idRenderWorldLocal::AddLightDef(')
         update_light=function(text,'void idRenderWorldLocal::UpdateLightDef(')
-        self.assertIn('return -1;',add_entity)
-        self.assertIn('return;',update_entity)
-        self.assertIn('return -1;',add_light)
-        self.assertIn('return;',update_light)
+        self.assertNotIn('R_DeferCinematicFastForwardPresentation',add_entity)
+        self.assertIn('R_DeferCinematicFastForwardPresentation',update_entity)
+        self.assertNotIn('R_DeferCinematicFastForwardPresentation',add_light)
+        self.assertIn('R_DeferCinematicFastForwardPresentation',update_light)
         for signature in ('void idRenderWorldLocal::FreeEntityDef(', 'void idRenderWorldLocal::FreeLightDef(',
                           'bool idRenderWorldLocal::UpdateEffectDef('):
             self.assertNotIn('R_DeferCinematicFastForwardPresentation',function(text,signature))

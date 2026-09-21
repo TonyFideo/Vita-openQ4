@@ -16,7 +16,17 @@ import subprocess
 import sys
 from pathlib import Path
 
-PATCHED_FILES = ("src/game/Game.h", "src/game/Game_local.h")
+PATCHED_FILES = (
+    "src/game/Game.h",
+    "src/game/Game_local.h",
+    "src/game/Entity.cpp",
+    "src/game/Light.cpp",
+    "src/game/AFEntity.cpp",
+    "src/game/BrittleFracture.cpp",
+    "src/game/Item.cpp",
+    "src/game/SecurityCamera.cpp",
+    "src/game/client/ClientModel.cpp",
+)
 
 
 def _replace_once(path: Path, pattern: str, replacement: str, label: str) -> None:
@@ -25,6 +35,21 @@ def _replace_once(path: Path, pattern: str, replacement: str, label: str) -> Non
     if count != 1:
         raise RuntimeError(f"{label}: expected exactly one source match in {path}, found {count}")
     path.write_text(text.replace(pattern, replacement, 1), encoding="utf-8")
+
+
+def _insert_skip_guard(path: Path, signature: str) -> None:
+    text = path.read_text(encoding="utf-8")
+    if text.count(signature) != 1:
+        raise RuntimeError(
+            f"cinematic presentation guard: expected one {signature!r} in {path}, found {text.count(signature)}"
+        )
+    start = text.index(signature)
+    opening = text.index("{", start)
+    guard = "\n\tif ( gameLocal.IsCinematicFastForwarding() ) {\n\t\treturn;\n\t}\n"
+    body_prefix = text[opening + 1:opening + 1 + len(guard)]
+    if body_prefix == guard:
+        raise RuntimeError(f"cinematic presentation guard already present in {path}: {signature}")
+    path.write_text(text[:opening + 1] + guard + text[opening + 1:], encoding="utf-8")
 
 
 def apply_vita_game_patches(stage_root: Path) -> None:
@@ -44,6 +69,22 @@ def apply_vita_game_patches(stage_root: Path) -> None:
         "\tbool\t\t\t\t\tIsCinematicFastForwarding( void ) { return skipCinematic; }\n",
         "idGameLocal cinematic fast-forward query",
     )
+
+    # These functions own presentation dirty-state consumption or publish a
+    # secondary renderer def after the base Present() call. Returning before
+    # them preserves the final authoritative state for the first ordinary tic.
+    guards = (
+        ("src/game/Entity.cpp", "void idEntity::Present( void )"),
+        ("src/game/Light.cpp", "void idLight::Present( void )"),
+        ("src/game/AFEntity.cpp", "void idMultiModelAF::Present( void )"),
+        ("src/game/AFEntity.cpp", "void idAFEntity_Gibbable::Present( void )"),
+        ("src/game/BrittleFracture.cpp", "void idBrittleFracture::Present()"),
+        ("src/game/Item.cpp", "void idItem::Present( void )"),
+        ("src/game/SecurityCamera.cpp", "void idSecurityCamera::Present( void )"),
+        ("src/game/client/ClientModel.cpp", "void rvClientModel::PresentPresentation( int presentationTime )"),
+    )
+    for relative, signature in guards:
+        _insert_skip_guard(stage_root / relative, signature)
 
 
 def _sha256(path: Path) -> str:

@@ -376,10 +376,6 @@ AddEntityDef
 ===================
 */
 qhandle_t idRenderWorldLocal::AddEntityDef( const renderEntity_t *re ){
-	if ( R_DeferCinematicFastForwardPresentation() ) {
-		return -1;
-	}
-
 	// try and reuse a free spot
 	int entityHandle = entityDefs.FindNull();
 	if ( entityHandle == -1 ) {
@@ -635,10 +631,6 @@ AddLightDef
 ==================
 */
 qhandle_t idRenderWorldLocal::AddLightDef( const renderLight_t *rlight ) {
-	if ( R_DeferCinematicFastForwardPresentation() ) {
-		return -1;
-	}
-
 	// try and reuse a free spot
 	int lightHandle = lightDefs.FindNull();
 

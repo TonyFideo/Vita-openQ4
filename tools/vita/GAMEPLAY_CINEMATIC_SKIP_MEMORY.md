@@ -65,3 +65,23 @@ This is deliberately not a timescale change, a capped skip loop, an extra
 presentation frame, an allocator reset, a heap increase, or an asset-quality
 change. The engine continues to drain deferred geometry only at its existing
 safe render-frame boundary.
+
+
+### Dirty-state preservation and stable handles
+
+The first renderer-side draft rejected AddEntityDef/AddLightDef outright while
+fast-forwarding. That is not a complete contract: callers such as rvIcon expect
+AddEntityDef to return a stable handle immediately, and several Present()
+implementations clear TH_UPDATEVISUALS before calling UpdateEntityDef. A pure
+renderer no-op would therefore be able to lose the final dirty state.
+
+The completed version keeps normal Add* handle allocation and defers the
+Update* publication. In addition, every SP Present override that owns a
+renderer entity and can consume visual dirty state returns before doing so
+while skipCinematic is active. Secondary light/item/AF/security-camera/client
+model presentation is covered as well. Direct Think paths that update
+entity/light defs every authoritative tic remain simulated; their renderer
+Update* call is deferred centrally and naturally retries on the first ordinary
+tic. This preserves caller handle invariants and final-state publication while
+still allowing FreeEntityDef/FreeLightDef to retire objects that genuinely die
+during the skip.
