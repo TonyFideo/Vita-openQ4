@@ -1,35 +1,29 @@
-# Vita cinematic-skip milestone (build 266)
+# Vita cinematic-skip memory milestone (build 266)
 
 Build 266 reaches `load:ready`, runs the opening airdefense1 cinematic with a
-working 60 Hz async clock, and advances game simulation continuously. The
-cinematic itself is therefore no longer the failing boundary.
+working 60 Hz async clock, and repeatedly captures `_currentRender` through the
+typed RGBA16F path. The user-triggered cinematic skip is now the first failing
+boundary.
 
-## What the target log actually shows after Start
+The first allocation failure is an aligned 262144-byte request after the engine
+has spent roughly 27 seconds inside the synchronous cinematic fast-forward. The
+libc heap reports about 312.9 MB live with only a small top chunk. The wrapper's
+return address resolves to `Mem_Alloc16`; that is not yet the allocation's
+semantic owner.
 
-The Start press is followed immediately by `Game Map Shutdown`, main-menu
-construction, and a second `Game Map Init` for airdefense1. That second load
-again reaches `load:ready`. Only later does the fragmented 300 MiB CPU heap
-fail a 262,144-byte allocation, followed by the expected recursive-fatal
-allocation. The OOM is therefore downstream of an unintended session
-menu/reload transition, not evidence that cinematic fast-forward itself needs a
-larger heap.
+A separate, exact arithmetic clue exists during map settle. Between
+`load:media:done` and `load:settle:done`, the libc arena grows 9,474,048
+bytes. This equals nine times 1,052,672 bytes (1 MiB plus a 4 KiB arena/page
+increment). The renderer frame allocator itself grows in 1 MiB
+`MEMORY_BLOCK_SIZE` chunks and only resets usage at a presentation-frame
+toggle. The cinematic skip likewise executes many authoritative game tics
+inside one session frame. This is strong evidence worth measuring, not yet a
+license to reset renderer memory from inside gameplay.
 
-The ownership bug is in Session::ProcessEvent. Vita Start is K_JOY7 and enters
-the generic ESC path. The game layer receives HandleESC first. During a
-cinematic, idPlayer::HandleESC delegates to SkipCinematic. Some valid game skip
-modes (notably an instantSkip camera) stop the cinematic and return false;
-Session interpreted that as ESC_MAIN and then called StartMenu on the *same*
-button press.
-
-The Vita path now consumes Start after delivering it to the active cinematic
-game layer. The game's own instantSkip, fast-forward, camera stop and queued
-disconnect behavior is unchanged. Outside cinematics Start remains the normal
-pause/menu key. Select (K_JOY8) is no longer stolen by session pause handling,
-so its configured gameplay binding remains reachable.
-
-The allocator/frame-arena probes added after build 266 remain useful
-observability and do not change allocator policy. The next target run should
-show `[VOQ4][input] Start cinematic ...` and should not immediately show
-`Game Map Shutdown` merely because Start was pressed. If the game itself
-subsequently queues its documented disconnect transition, that later shutdown
-is legitimate and can be distinguished in the log.
+The diagnostic revision therefore changes no heap size, no assets, no skip
+duration and no simulation logic. It records every retained frame-arena block
+growth, the immediate `Mem_Alloc`/`Mem_Alloc16` caller on allocation failure,
+re-arms the bounded allocation-traffic sampler after `load:ready`, and records
+the ESC/START event before and after the game accepts it. The next target log
+can establish whether frame-arena growth begins specifically after the skip
+request and identify which renderer callsite crosses each 1 MiB boundary.

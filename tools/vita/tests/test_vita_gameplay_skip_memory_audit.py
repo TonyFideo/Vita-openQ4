@@ -59,12 +59,10 @@ class GameplaySkipMemoryAuditTest(unittest.TestCase):
         process=function(session,'bool idSessionLocal::ProcessEvent(')
         before=process.index('"input:escape-or-start"')
         call=process.index('game->HandleESC( &gui )')
-        after_ignore=process.index('"input:handled-ignore"')
-        after_consume=process.index('"input:cinematic-consumed"')
+        after=process.index('"input:handled-ignore"')
         self.assertLess(before,call)
-        self.assertLess(call,after_ignore)
-        self.assertLess(call,after_consume)
-        block=process[before:max(after_ignore,after_consume)+300]
+        self.assertLess(call,after)
+        block=process[before:after+200]
         for forbidden in ('R_ToggleSmpFrame','Mem_Free','skipCinematic =','com_ticNumber++'):
             self.assertNotIn(forbidden,block)
 

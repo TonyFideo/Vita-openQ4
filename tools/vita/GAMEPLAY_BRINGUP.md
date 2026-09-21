@@ -151,24 +151,3 @@ contract specifies that blend/depth tests are ignored, but write masks and
 scissor apply: https://wikis.khronos.org/opengl/GLAPI/glClear . Compare the
 Android OpenQ4 and Doom3-ReArmed command/asset contracts, not their unrelated
 memory capacities or renderer workarounds.
-
-
-## Build 266 cinematic milestone and Start ownership
-
-Target build 266 reaches and continuously advances the airdefense1 cinematic.
-The Vita async timer produces increasing 60 Hz tics and the session repeatedly
-runs game tics with `cinematic=1`. This establishes that map loading, player
-creation, renderer finalization, cinematic simulation and presentation all
-crossed their previous bring-up boundaries.
-
-A Start press entered Session::ProcessEvent's generic JOY7 escape path. The game
-was already cinematic, but an ESC_MAIN result caused Session to call StartMenu,
-unload airdefense1, parse the main menu and then load airdefense1 a second time.
-That second complete load later exhausted the fragmented 300 MiB CPU heap; the
-first failed allocation was 262,144 bytes. The session now gives Vita Start to
-Game::HandleESC while cinematic and consumes that event regardless of the skip
-mode's continuation return value. This preserves the game's own instantSkip,
-fast-forward and queued-disconnect semantics without also opening the session
-menu in the same input event. Outside cinematics Start remains pause/menu. Vita
-Select (JOY8) is no longer intercepted as pause and reaches its configured
-gameplay binding.
