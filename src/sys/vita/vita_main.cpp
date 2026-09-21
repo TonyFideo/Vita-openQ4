@@ -25,7 +25,7 @@ extern "C" void *__real_memalign(size_t, size_t);
 
 static volatile unsigned vitaAuditRequested = 0;
 static volatile int vitaAuditReporting = 0;
-static unsigned vitaAuditSnapshots = 0;
+static volatile unsigned vitaAuditSnapshots = 0;
 
 void VitaRuntimeAudit_Memory(const char *reason, size_t count, size_t size,
                             const void *caller, bool failed) {
@@ -80,6 +80,13 @@ void VitaRuntimeAudit_Memory(const char *reason, size_t count, size_t size,
     }
     __sync_lock_release(&vitaAuditReporting);
     errno = savedErrno;
+}
+
+void VitaRuntimeAudit_ResetTrafficWindow(const char *reason) {
+    __sync_lock_test_and_set(&vitaAuditRequested, 0u);
+    __sync_lock_test_and_set(&vitaAuditSnapshots, 0u);
+    VitaRuntimeAudit_Memory(reason != NULL ? reason : "traffic-window-reset",
+                            0, 0, NULL, false);
 }
 
 static void VitaAuditAllocation(void *result, const char *kind, size_t count,

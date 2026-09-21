@@ -1,3 +1,7 @@
+#if defined(VITA) || defined(__vita__)
+#include "../sys/vita/vita_runtime_audit.h"
+#endif
+
 
 
 
@@ -55,8 +59,10 @@ void Memory::Error(const char *errStr)
 // RAVEN BEGIN
 // jnewquist: send all allocations through one place on the Xenon
 inline
-void *local_malloc(size_t size)
+void *local_malloc(size_t size, const char *auditReason = NULL, const void *auditCaller = NULL)
 {
+	(void)auditReason;
+	(void)auditCaller;
 #ifndef _XENON
 // RAVEN BEGIN
 // jsinger: attempt to eliminate cross-DLL allocation issues
@@ -65,6 +71,11 @@ void *local_malloc(size_t size)
 	#else
 		void *addr = malloc(size);
 		if( !addr && size ) {
+#if defined(VITA) || defined(__vita__)
+			if ( auditReason != NULL ) {
+				VitaRuntimeAudit_Memory( auditReason, 1, size, auditCaller, true );
+			}
+#endif
 			common->FatalError( "Out of memory" );
 		}
 		return( addr );
@@ -1530,7 +1541,11 @@ void *Mem_Alloc( const size_t size, byte tag ) {
 		*((int*)0x0) = 1;
 #endif
 // jnewquist: send all allocations through one place on the Xenon
+#if defined(VITA) || defined(__vita__)
+		return local_malloc( size, "mem-alloc-origin", __builtin_return_address(0) );
+#else
 		return local_malloc( size );
+#endif
 	}
 // amccarthy: Added allocation tag
 	void *mem = mem_heap->Allocate( static_cast<dword>( heapSize ), tag );
@@ -1582,7 +1597,11 @@ void *Mem_Alloc16( const size_t size, byte tag ) {
 		*((int*)0x0) = 1;
 #endif
 // jnewquist: send all allocations through one place on the Xenon
+#if defined(VITA) || defined(__vita__)
+		return local_malloc( size, "mem-alloc16-origin", __builtin_return_address(0) );
+#else
 		return local_malloc( size );
+#endif
 	}
 
 // amccarthy: Added allocation tag

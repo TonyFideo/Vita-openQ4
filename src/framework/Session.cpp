@@ -6325,6 +6325,10 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 	mapSpawned = true;
 #if defined(VITA) || defined(__vita__)
 	VitaRuntimeAudit_Memory( "load:ready", 0, 0, NULL, false );
+	// Map loading consumes the bounded allocation-traffic sample window. Re-arm
+	// it only after the world is ready so runtime/cinematic transitions get the
+	// same allocator visibility without changing allocation policy.
+	VitaRuntimeAudit_ResetTrafficWindow( "gameplay:traffic-reset" );
 #endif
 #ifdef ID_DEDICATED
 	common->Printf( "Dedicated map ready: %s\n", mapString.c_str() );
@@ -7085,7 +7089,15 @@ bool idSessionLocal::ProcessEvent( const sysEvent_t *event ) {
 		if ( game ) {
 			idUserInterface	*gui = NULL;
 			escReply_t		op;
+#if defined(VITA) || defined(__vita__)
+			VitaRuntimeAudit_Memory( "input:escape-or-start", (size_t)event->evValue, 0, NULL, false );
+#endif
 			op = game->HandleESC( &gui );
+#if defined(VITA) || defined(__vita__)
+			if ( op == ESC_IGNORE ) {
+				VitaRuntimeAudit_Memory( "input:handled-ignore", (size_t)event->evValue, 0, NULL, false );
+			}
+#endif
 			if ( op == ESC_IGNORE ) {
 				return true;
 			} else if ( op == ESC_GUI ) {

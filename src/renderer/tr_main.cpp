@@ -33,6 +33,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "LevelShotDepth.h"
 #include "RendererMetrics.h"
 #include "ScenePackets.h"
+#if defined(VITA) || defined(__vita__)
+#include "../sys/vita/vita_runtime_audit.h"
+#endif
 #ifdef __ppc__
 #include <vecLib/vecLib.h>
 #endif
@@ -200,9 +203,26 @@ void R_ToggleSmpFrame( void ) {
 	frameMemoryBlock_t	*block;
 
 	// update the highwater mark
-	R_CountFrameData();
+	const int frameBytesUsed = R_CountFrameData();
 
 	frame = frameData;
+#if defined(VITA) || defined(__vita__)
+	// Report only when the retained block count changes. This observes the
+	// renderer's existing frame-memory lifetime; it never frees, caps or grows
+	// anything beyond what R_FrameAlloc already decided to allocate.
+	static unsigned int lastReportedFrameBlockCount = 0;
+	unsigned int frameBlockCount = 0;
+	for ( frameMemoryBlock_t *scan = frame->memory; scan != NULL; scan = scan->next ) {
+		++frameBlockCount;
+	}
+	if ( frameBlockCount != lastReportedFrameBlockCount ) {
+		lastReportedFrameBlockCount = frameBlockCount;
+		VitaRuntimeAudit_Memory( "frame-arena-reset", frameBlockCount,
+			(size_t)Max( 0, frameBytesUsed ), __builtin_return_address(0), false );
+	}
+#else
+	(void)frameBytesUsed;
+#endif
 
 	// reset the memory allocation to the first block
 	frame->alloc = frame->memory;
@@ -491,6 +511,16 @@ void *R_FrameAlloc( int bytes ) {
 		block->used = 0;
 		block->next = NULL;
 		frame->alloc->next = block;
+#if defined(VITA) || defined(__vita__)
+		unsigned int frameBlockCount = 0;
+		for ( frameMemoryBlock_t *scan = frame->memory; scan != NULL; scan = scan->next ) {
+			++frameBlockCount;
+		}
+		if ( frameBlockCount <= 96 ) {
+			VitaRuntimeAudit_Memory( "frame-arena-grow", frameBlockCount,
+				(size_t)bytes, __builtin_return_address(0), false );
+		}
+#endif
 	}
 
 	// we could fix this if we needed to...

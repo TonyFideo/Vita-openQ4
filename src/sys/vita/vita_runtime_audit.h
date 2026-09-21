@@ -5,5 +5,6 @@
 void VitaRuntimeAudit_Start();
 void VitaRuntimeAudit_Memory(const char *reason, size_t count, size_t size,
                             const void *caller, bool failed);
+void VitaRuntimeAudit_ResetTrafficWindow(const char *reason);
 bool VitaRuntimeAudit_GpuFree(size_t freeBytes[3]);
 #endif
