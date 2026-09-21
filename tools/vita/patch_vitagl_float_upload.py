@@ -310,6 +310,24 @@ void voq_float_prepare_write(texture *tex) {
         dirty_framebuffer=GL_TRUE;scene_reset();sceGxmFinish(gxm_context);
     }
 }
+/* CopyTex is ordered after all earlier draws in the GL command stream. The
+ * source snapshot is complete before this helper is called, so a destination
+ * sampled by an earlier draw can be updated in-place after explicitly closing
+ * and waiting for that GXM scene. Generic client SubImage updates retain the
+ * normal COW path; this synchronization is specific to framebuffer copies and
+ * avoids allocating an entire screen-sized float texture every frame. */
+void voq_float_sync_copy_destination(texture *tex) {
+    if(!tex || tex->status!=TEX_VALID || !tex->data)return;
+#ifndef TEXTURES_SPEEDHACK
+    if(tex->last_frame==OBJ_NOT_USED || vgl_framecount-tex->last_frame>FRAME_PURGE_FREQ)return;
+#endif
+    dirty_framebuffer=GL_TRUE;
+    scene_reset();
+    sceGxmFinish(gxm_context);
+#ifndef TEXTURES_SPEEDHACK
+    tex->last_frame=OBJ_NOT_USED;
+#endif
+}
 void voq_float_texture_changed(texture *tex) {
     for(unsigned i=0;i<BUFFERS_NUM;++i){
         framebuffer *fb=&framebuffers[i];
@@ -461,6 +479,10 @@ static void voq_copy_texture(GLenum target,GLuint tex_id,int direct,int subimage
     vgl_error=GL_NO_ERROR;
     glReadPixels(x,y,width,height,GL_RGBA,type,pixels);
     if(vgl_error==GL_NO_ERROR){
+        /* glReadPixels has snapshotted the source. Preserve GL ordering for a
+         * sampled F16 destination without turning every screen capture into a
+         * 960x544x8 copy-on-write allocation. */
+        if(subimage && half_destination)voq_float_sync_copy_destination(tex);
         const int previous_row_length=unpack_row_len,previous_alignment=voq_unpack_alignment;
         unpack_row_len=0;voq_unpack_alignment=1;
         if(subimage){
@@ -546,7 +568,7 @@ def patch(root: Path) -> None:
     body=util.replace_once(body,marker,marker+route,'float readback dispatch')
     text=text[:a]+body+text[b:];path.write_text(text)
     path=root/'source/shared.h' ;text=path.read_text();text=util.replace_once(text,'extern int unpack_row_len;',
-        'void voq_float_prepare_write(texture *tex);\nvoid voq_float_texture_changed(texture *tex);\nextern int voq_unpack_alignment;\nextern int unpack_row_len;','alignment declaration');path.write_text(text)
+        'void voq_float_prepare_write(texture *tex);\nvoid voq_float_sync_copy_destination(texture *tex);\nvoid voq_float_texture_changed(texture *tex);\nextern int voq_unpack_alignment;\nextern int unpack_row_len;','alignment declaration');path.write_text(text)
     path=root/'source/get_info.c';text=path.read_text();text=util.replace_once(text,'\tcase GL_UNPACK_ALIGNMENT:\n\t\t*data = 1;',
         '\tcase GL_UNPACK_ALIGNMENT:\n\t\t*data = voq_unpack_alignment;','alignment query');path.write_text(text)
     print('Applied typed RGBA16F uploads, exact half/float conversion, transactional storage and COW')

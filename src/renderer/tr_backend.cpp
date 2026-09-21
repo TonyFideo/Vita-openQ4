@@ -135,7 +135,6 @@ void RB_SetDefaultGLState( void ) {
 	// active unit for the shared image binding code.
 	if ( maxStateUnits > 0 ) {
 		glActiveTextureARB( GL_TEXTURE0_ARB );
-		glClientActiveTextureARB( GL_TEXTURE0_ARB );
 		backEnd.glState.currenttmu = 0;
 	}
 #else
@@ -206,8 +205,18 @@ void GL_SelectTexture( int unit ) {
 	}
 
 	glActiveTextureARB( GL_TEXTURE0_ARB + unit );
+#ifdef OPENQ4_RENDERER_GLES_MODULE
+	// GLES_D3 uses explicit vertex attributes and shader texgen. A sampler
+	// image unit is not a fixed-function client texture-coordinate unit.
+	// VitaGL intentionally exposes many image units but only the small number
+	// of client coordinate arrays implemented by its FFP compatibility layer.
+	// Selecting that client state here corrupts an unrelated state domain and
+	// rejects legitimate sampler units 2+ used by interaction shaders.
+	RB_LogComment( "glActiveTextureARB( %i );\n", unit );
+#else
 	glClientActiveTextureARB( GL_TEXTURE0_ARB + unit );
 	RB_LogComment( "glActiveTextureARB( %i );\nglClientActiveTextureARB( %i );\n", unit, unit );
+#endif
 
 	backEnd.glState.currenttmu = unit;
 }

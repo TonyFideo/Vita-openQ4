@@ -146,6 +146,16 @@ static void copies(){
  for(unsigned y=0;y<2;++y)for(unsigned x=0;x<3;++x)assert(halfAt(texture_slots[1],0,x,y,0)==referenceHalf(displayPixels[(1-y)*16+x*4]/255.0f));
  glCopyTextureImage2D(2,0,GL_RGBA16F,0,0,3,2,0);assert(!vgl_error&&clients.empty());
  glCopyTextureSubImage2D(2,0,0,0,0,0,3,2);glCopyTexSubImage2D(GL_TEXTURE_2D,0,0,0,0,0,3,2);assert(!vgl_error&&clients.empty());
+ // A framebuffer CopyTex update is ordered after the draws which sampled the
+ // destination. The production path must synchronize those draws and update
+ // the existing allocation, not COW an entire fullscreen F16 texture per frame.
+ auto stable=texture_slots[1].data;const unsigned stableAllocations=allocations;
+ for(unsigned frame=0;frame<32;++frame){
+  texture_slots[1].last_frame=vgl_framecount;const unsigned syncBefore=syncs;
+  glCopyTexSubImage2D(GL_TEXTURE_2D,0,0,0,0,0,3,2);assert(!vgl_error);
+  assert(texture_slots[1].data==stable&&allocations==stableAllocations&&retired.empty());
+  assert(texture_slots[1].last_frame==OBJ_NOT_USED&&syncs==syncBefore+4);++vgl_framecount;
+ }
  auto old=texture_slots[1].data;readFail=true;glCopyTexSubImage2D(GL_TEXTURE_2D,0,0,0,0,0,3,2);assert(vgl_error==GL_INVALID_OPERATION&&texture_slots[1].data==old&&clients.empty());readFail=false;vgl_error=0;
  clientFail=true;glCopyTexImage2D(GL_TEXTURE_2D,0,GL_RGBA16F,0,0,3,2,0);assert(vgl_error==GL_OUT_OF_MEMORY&&texture_slots[1].data==old);clientFail=false;vgl_error=0;
  // Float source -> float destination must retain HDR, not quantize through U8.
@@ -159,6 +169,6 @@ static void copies(){
  active_read_fb=in_use_framebuffer=nullptr;framebuffers[0].tex=nullptr;
  vgl_error=GL_INVALID_ENUM;glCopyTexSubImage2D(GL_TEXTURE_2D,0,0,0,0,0,3,2);assert(vgl_error==GL_INVALID_ENUM&&clients.empty());vgl_error=0;
  assert(unpack_row_len==19&&voq_unpack_alignment==8);cleanup(texture_slots[1]);cleanup(texture_slots[2]);
- puts("PASS four CopyTex/DSA APIs, U8 and F16 framebuffer precision, client-state restore, self copy, allocation/read failure");
+ puts("PASS four CopyTex/DSA APIs, U8 and F16 precision, ordered busy-destination reuse, self copy, allocation/read failure");
 }
 int main(int argc,char**argv){assert(argc==2);std::string mode=argv[1];if(mode=="codec")codec();else if(mode=="formats")formats();else if(mode=="capture")capture();else if(mode=="storage")storage();else if(mode=="mips")mips();else if(mode=="read")readback();else if(mode=="copy")copies();else return 2;assert(gpu.empty()&&clients.empty()&&retired.empty());}

@@ -1161,8 +1161,12 @@ void idImage::Bind() {
 
 	tmu_t* tmu = &backEnd.glState.tmu[texUnit];
 
-	// enable or disable apropriate texture modes
+	// Track the target bound on this image unit. Only the desktop
+	// compatibility renderer needs fixed-function texture target enables.
+	// GLES_D3 selects the target by binding it and samples through shader
+	// samplers; GL_TEXTURE_2D / GL_TEXTURE_CUBE_MAP are not enable caps there.
 	if (tmu->textureType != opts.textureType && (backEnd.glState.currenttmu < glConfig.maxTextureUnits)) {
+#ifndef OPENQ4_RENDERER_GLES_MODULE
 		if (tmu->textureType == TT_CUBIC) {
 			glDisable(GL_TEXTURE_CUBE_MAP_EXT);
 		}
@@ -1176,6 +1180,7 @@ void idImage::Bind() {
 		else if (opts.textureType == TT_2D) {
 			glEnable(GL_TEXTURE_2D);
 		}
+#endif
 		tmu->textureType = opts.textureType;
 	}
 

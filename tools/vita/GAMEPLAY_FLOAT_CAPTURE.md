@@ -100,3 +100,46 @@ bounded [VOQ4][frame-copy] image=_currentRender... ok=1 trace, then validate
 world appearance and player control. Reaching a log marker alone is not
 visual correctness. The menu brightness and autosave-validation issues remain
 separate; neither is suppressed by this revision.
+
+
+## Build 258 target result: first world/cinematic frame
+
+The 20260921-034034 target session reaches the first rendered world/cinematic
+frame and continues executing instead of crashing. The remaining visible stall
+is accompanied by two independent state/lifetime defects rather than evidence
+that the cinematic decoder stopped.
+
+First, `GL_SelectTexture` selected both the shader image unit and the legacy
+client texcoord-array unit. GLES_D3 uses explicit attributes and up to the
+normal programmable sampler range; VitaGL intentionally exposes 16 image units
+but only 2 client FFP texcoord sets (3 in its optional high-FFP profile). Units
+2 through 5 are therefore valid sampler selections but invalid client-array
+selections. GLES_D3 now changes only the image unit. The compatibility
+renderer retains `glClientActiveTexture`, and image binding no longer toggles
+fixed-function `GL_TEXTURE_2D`/`GL_TEXTURE_CUBE_MAP` enable caps on GLES.
+
+Second, `_currentRender` is a 960x544 RGBA16F screen image. A CopyTex update of
+that image legitimately follows draws which sampled its previous contents. The
+generic F16 SubImage implementation uses copy-on-write for an in-flight client
+update, so applying it directly to this ordered framebuffer copy allocated a
+new 4,177,920-byte image repeatedly. The copy implementation already snapshots
+the framebuffer source. It now closes and waits for prior GXM work when the F16
+destination is still busy, marks that completed generation unused, and updates
+the existing storage. Generic client SubImage calls retain COW semantics.
+Allocation failure still leaves the old texture intact.
+
+The current Vita3K GL renderer separately reports native GXM color format
+`0x01200000` as unsupported during surface readback. VitaSDK identifies that
+value as `SCE_GXM_COLOR_FORMAT_F16F16F16F16_RGBA`, the valid 64-bit surface
+created by the pinned VitaGL for an RGBA16F attachment. This change does not
+downgrade the render target or alter its channel swizzle just to satisfy the
+emulator. Repeated attachment replacement was one trigger for those readbacks;
+the next target run will show whether eliminating the replacement churn also
+removes or reduces the emulator-side messages.
+
+Host regression coverage preprocesses the production GLES and compatibility
+paths, checks the pinned VitaGL image-unit/client-coordinate limits, and executes
+32 consecutive busy CopyTex updates without a new GPU texture allocation. The
+existing generic busy SubImage COW test remains in place. Target validation
+must still confirm that the cinematic advances, the world renders correctly and
+player input works; a running frame loop is not by itself a gameplay pass.
