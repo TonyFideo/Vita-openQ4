@@ -1446,8 +1446,13 @@ bool idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight,
 	const GLenum readAttachment = GL_COLOR_ATTACHMENT0;
 	const bool needsStorageResize = ( opts.width != imageWidth ) || ( opts.height != imageHeight );
 
-	opts.width = imageWidth;
-	opts.height = imageHeight;
+#if defined(VITA) || defined(__vita__)
+	// Attribute new errors to this transfer, but report pre-existing failures.
+	const GLenum priorError = glGetError();
+	if ( priorError != GL_NO_ERROR ) {
+		common->Warning( "Before framebuffer capture %s: GL error 0x%x", GetName(), priorError );
+	}
+#endif
 
 	if ( readingFromRenderTexture && ( GLEW_EXT_framebuffer_blit || GLEW_ARB_framebuffer_object || GLEW_VERSION_3_0 ) ) {
 		GLint previousReadFbo = 0;
@@ -1457,8 +1462,8 @@ bool idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight,
 
 		glGetIntegerv( GL_READ_FRAMEBUFFER_BINDING, &previousReadFbo );
 		glGetIntegerv( GL_DRAW_FRAMEBUFFER_BINDING, &previousDrawFbo );
-#if !defined(VITA) && !defined(__vita__)
 		glGetIntegerv( GL_READ_BUFFER, &previousReadBuffer );
+#if !defined(VITA) && !defined(__vita__)
 		glGetIntegerv( GL_DRAW_BUFFER, &previousDrawBuffer );
 #endif
 
@@ -1505,7 +1510,7 @@ bool idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight,
 		glBindFramebuffer( GL_DRAW_FRAMEBUFFER, previousDrawFbo );
 #if defined(VITA) || defined(__vita__)
 		// VitaGL exposes a single colour source per FBO and no draw-buffer query.
-		glReadBuffer( previousReadFbo != 0 ? GL_COLOR_ATTACHMENT0 : GL_BACK );
+		glReadBuffer( previousReadBuffer );
 #else
 		glReadBuffer( previousReadBuffer );
 		glDrawBuffer( previousDrawBuffer );
@@ -1514,9 +1519,7 @@ bool idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight,
 		GLint previousReadFbo = 0;
 		GLint previousReadBuffer = GL_BACK;
 		glGetIntegerv( GL_READ_FRAMEBUFFER_BINDING, &previousReadFbo );
-#if !defined(VITA) && !defined(__vita__)
 		glGetIntegerv( GL_READ_BUFFER, &previousReadBuffer );
-#endif
 
 		if ( readingFromRenderTexture ) {
 			glBindFramebuffer( GL_READ_FRAMEBUFFER, backEnd.renderTexture->GetDeviceHandle() );
@@ -1552,7 +1555,7 @@ bool idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight,
 
 		glBindFramebuffer( GL_READ_FRAMEBUFFER, previousReadFbo );
 #if defined(VITA) || defined(__vita__)
-		glReadBuffer( previousReadFbo != 0 ? GL_COLOR_ATTACHMENT0 : GL_BACK );
+		glReadBuffer( previousReadBuffer );
 #else
 		glReadBuffer( previousReadBuffer );
 #endif
@@ -1565,7 +1568,21 @@ bool idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight,
 		}
 	}
 
-//	backEnd.pc.c_copyFrameBuffer++;
+#if defined(VITA) || defined(__vita__)
+	const GLenum copyError = glGetError();
+	if ( copyError != GL_NO_ERROR ) {
+		common->Warning( "Framebuffer capture %s %ix%i failed: GL error 0x%x", GetName(), imageWidth, imageHeight, copyError );
+		return false;
+	}
+	static unsigned captureReports = 0;
+	if ( captureReports < 4 ) {
+		++captureReports;
+		sceClibPrintf( "[VOQ4][frame-copy] image=%s size=%ix%i format=0x%x ok=1\n", GetName(), imageWidth, imageHeight, internalFormat );
+	}
+#endif
+	// Do not publish dimensions for a failed allocation/copy.
+	opts.width = imageWidth;
+	opts.height = imageHeight;
 	return true;
 }
 

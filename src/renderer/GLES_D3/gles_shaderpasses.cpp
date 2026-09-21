@@ -232,9 +232,9 @@ void R_GLESD3_ReportSkipCounts( void ) {
 	glasswarp and refraction families all go.
 
 	The copy itself is idImage::CopyFramebuffer, which is shared. Its non-blit
-	branch had to grow an ES case: _currentRender is FMT_RGBA16F, and ES 3.0
-	refuses to copy the fixed-point default framebuffer into a float texture,
-	so on ES the image is respecified as RGBA8 before the copy.
+	branch uses VitaGL's typed transfer on Vita: _currentRender remains
+	FMT_RGBA16F. The framebuffer's transfer type is distinct from the texture's
+	storage type; no byte data is reinterpreted as half floats.
 
 	_currentDepth is deliberately NOT captured here. ES has no legal
 	glCopyTexSubImage2D into a depth texture, so it needs a depth-attachment
@@ -440,8 +440,11 @@ void R_GLESD3_CaptureCurrentRender( void ) {
 		( void )glGetError();	// drain, so the probe below attributes correctly
 	}
 
-	sceneImage->CopyFramebuffer( backEnd.viewDef->viewport.x1, backEnd.viewDef->viewport.y1,
-			width, height );
+	if ( !sceneImage->CopyFramebuffer( backEnd.viewDef->viewport.x1, backEnd.viewDef->viewport.y1,
+			width, height ) ) {
+		common->Error( "Cannot capture _currentRender (%ix%i)", width, height );
+		return;
+	}
 	backEnd.currentRenderCopied = true;
 
 	// Kept as a probe rather than removed: this copy failed silently for the

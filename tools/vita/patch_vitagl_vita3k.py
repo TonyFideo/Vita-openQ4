@@ -395,6 +395,8 @@ def main() -> int:
     patch_vitagl_memory.patch(pathlib.Path(sys.argv[1]))
     from patch_vitagl_cube import patch as patch_cube
     patch_cube(pathlib.Path(sys.argv[1]))
+    import patch_vitagl_float_upload
+    patch_vitagl_float_upload.patch(pathlib.Path(sys.argv[1]))
     return 0
 
 
