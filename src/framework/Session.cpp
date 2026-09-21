@@ -8037,8 +8037,7 @@ void idSessionLocal::Frame() {
 		vitaGameplayAuditNextMsec = frameStartMsec + 1000;
 		++vitaGameplayAuditReports;
 		common->Printf(
-			"[VOQ4][gameplay] frame=%d real=%d sim=%d tic=%d latched=%d last=%d toRun=%d ran=%d cinematic=%d sync=%d\n",
-			com_frameNumber,
+			"[VOQ4][gameplay] real=%d sim=%d tic=%d latched=%d last=%d toRun=%d ran=%d cinematic=%d sync=%d\n",
 			frameStartMsec,
 			com_frameTime,
 			com_ticNumber,
