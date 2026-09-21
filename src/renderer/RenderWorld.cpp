@@ -31,6 +31,32 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "tr_local.h"
 
+#if defined(VITA) || defined(__vita__)
+/*
+===================
+R_DeferCinematicFastForwardPresentation
+
+Quake 4's cinematic skip executes many authoritative game tics inside one
+host/session frame.  Those intermediate entity/light presentations can never
+be consumed by a render frame.  Retaining them is not only wasted work: each
+UpdateEntityDef may retire dynamic triangle snapshots to the deferred-free
+queue, which is drained only at the next real render-frame boundary.
+
+The game owns whether it is inside that synchronous skip.  Keep simulation,
+events, sound, BSE lifetime service and frees untouched; only defer renderer
+Add/Update publication until the skip has returned to normal game tics.
+===================
+*/
+static ID_INLINE bool R_DeferCinematicFastForwardPresentation( void ) {
+	return game != NULL && game->IsCinematicFastForwarding();
+}
+#else
+static ID_INLINE bool R_DeferCinematicFastForwardPresentation( void ) {
+	return false;
+}
+#endif
+
+
 /*
 ===================
 R_ListRenderLightDefs_f
@@ -350,6 +376,10 @@ AddEntityDef
 ===================
 */
 qhandle_t idRenderWorldLocal::AddEntityDef( const renderEntity_t *re ){
+	if ( R_DeferCinematicFastForwardPresentation() ) {
+		return -1;
+	}
+
 	// try and reuse a free spot
 	int entityHandle = entityDefs.FindNull();
 	if ( entityHandle == -1 ) {
@@ -375,6 +405,10 @@ visible entities
 int c_callbackUpdate;
 
 void idRenderWorldLocal::UpdateEntityDef( qhandle_t entityHandle, const renderEntity_t *re ) {
+	if ( R_DeferCinematicFastForwardPresentation() ) {
+		return;
+	}
+
 	if ( r_skipUpdates.GetBool() ) {
 		return;
 	}
@@ -601,6 +635,10 @@ AddLightDef
 ==================
 */
 qhandle_t idRenderWorldLocal::AddLightDef( const renderLight_t *rlight ) {
+	if ( R_DeferCinematicFastForwardPresentation() ) {
+		return -1;
+	}
+
 	// try and reuse a free spot
 	int lightHandle = lightDefs.FindNull();
 
@@ -626,6 +664,10 @@ Does not write to the demo file, which will only be done for visible lights
 =================
 */
 void idRenderWorldLocal::UpdateLightDef( qhandle_t lightHandle, const renderLight_t *rlight ) {
+	if ( R_DeferCinematicFastForwardPresentation() ) {
+		return;
+	}
+
 	if ( r_skipUpdates.GetBool() ) {
 		static bool s_warned = false;
 		if ( !s_warned ) {

@@ -565,9 +565,13 @@ if needs_game_headers
     error('openQ4-game multiplayer source directory not found: ' + game_libs_source_root / 'mpgame')
   endif
 
+  game_stage_script = meson.project_source_root() / 'tools' / 'build' / 'stage_gamelibs.py'
+  if host_system == 'vita'
+    game_stage_script = meson.project_source_root() / 'tools' / 'vita' / 'stage_gamelibs_vita.py'
+  endif
   game_stage_result = run_command(
     py,
-    meson.project_source_root() / 'tools' / 'build' / 'stage_gamelibs.py',
+    game_stage_script,
     meson.project_source_root(),
     game_libs_repo_root,
     meson.project_source_root() / '.tmp' / 'gamelibs_stage',
