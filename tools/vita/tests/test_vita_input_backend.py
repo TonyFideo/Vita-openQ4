@@ -73,3 +73,32 @@ class VitaInputBackendTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VitaSessionInputOwnershipTest(unittest.TestCase):
+    def test_start_cinematic_is_consumed_before_menu_transition(self):
+        session = (ROOT / "src/framework/Session.cpp").read_text()
+        start = session.index("bool idSessionLocal::ProcessEvent")
+        end = session.index("idSessionLocal::DrawWipeModel", start)
+        body = session[start:end]
+        cinematic = body.index("game != NULL && game->InCinematic()")
+        handled = body.index("game->HandleESC( &gui )", cinematic)
+        consumed = body.index("return true;", handled)
+        menu = body.index("StartMenu();")
+        self.assertLess(cinematic, handled)
+        self.assertLess(handled, consumed)
+        self.assertLess(consumed, menu)
+        self.assertIn("[VOQ4][input] Start cinematic", body)
+        self.assertIn('"input:cinematic-consumed"', body)
+
+    def test_vita_select_is_not_session_pause_key(self):
+        session = (ROOT / "src/framework/Session.cpp").read_text()
+        start = session.index("bool idSessionLocal::ProcessEvent")
+        end = session.index("idSessionLocal::DrawWipeModel", start)
+        body = session[start:end]
+        self.assertIn("#if !defined(VITA) && !defined(__vita__)", body)
+        guarded = body.index("menuKey = menuKey || event->evValue == K_JOY8;")
+        guard = body.rfind("#if !defined(VITA) && !defined(__vita__)", 0, guarded)
+        endif = body.index("#endif", guarded)
+        self.assertLess(guard, guarded)
+        self.assertGreater(endif, guarded)

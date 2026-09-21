@@ -7078,9 +7078,46 @@ idSessionLocal::ProcessEvent
 ===============
 */
 bool idSessionLocal::ProcessEvent( const sysEvent_t *event ) {
-	// hitting escape anywhere brings up the menu
-	if ( !guiActive && event->evType == SE_KEY && event->evValue2 == 1 &&
-		( event->evValue == K_ESCAPE || event->evValue == K_JOY7 || event->evValue == K_JOY8 ) ) {
+	const bool keyDown = event->evType == SE_KEY && event->evValue2 == 1;
+
+#if defined(VITA) || defined(__vita__)
+	// On Vita, Start is the pause/ESC control. While the game owns an active
+	// cinematic, however, that same ESC is first a cinematic-skip request.
+	// idPlayer::HandleESC() forwards it to SkipCinematic(); its return value
+	// describes whether cinematic fast-forward remains active, not whether the
+	// input should also open the session menu. In particular instantSkip stops
+	// the camera and returns false. Consuming the already-delivered Start here
+	// prevents one button press from both ending the cinematic and unloading
+	// the current map through StartMenu().
+	if ( !guiActive && keyDown && event->evValue == K_JOY7 &&
+			game != NULL && game->InCinematic() ) {
+		console->Close();
+		idUserInterface *gui = NULL;
+		VitaRuntimeAudit_Memory( "input:escape-or-start", (size_t)event->evValue, 0, NULL, false );
+		const escReply_t op = game->HandleESC( &gui );
+		if ( op == ESC_IGNORE ) {
+			VitaRuntimeAudit_Memory( "input:handled-ignore", (size_t)event->evValue, 0, NULL, false );
+		} else {
+			VitaRuntimeAudit_Memory( "input:cinematic-consumed", (size_t)event->evValue,
+				(size_t)op, NULL, false );
+		}
+		common->Printf( "[VOQ4][input] Start cinematic HandleESC=%d gui=%p stillCinematic=%d\n",
+			static_cast<int>( op ), gui, game->InCinematic() ? 1 : 0 );
+		if ( op == ESC_GUI && gui != NULL ) {
+			SetGUI( gui, NULL );
+		}
+		return true;
+	}
+#endif
+
+	// Hitting Escape/Start outside a cinematic brings up the menu. Vita Select
+	// is JOY8 and remains a gameplay binding; other platforms keep the legacy
+	// JOY8 escape alias.
+	bool menuKey = event->evValue == K_ESCAPE || event->evValue == K_JOY7;
+#if !defined(VITA) && !defined(__vita__)
+	menuKey = menuKey || event->evValue == K_JOY8;
+#endif
+	if ( !guiActive && keyDown && menuKey ) {
 		console->Close();
 		if ( IsDemoPlaybackActive() ) {
 			OpenDemoMenu( false );
@@ -7150,7 +7187,6 @@ bool idSessionLocal::ProcessEvent( const sysEvent_t *event ) {
 
 	return false;
 }
-
 /*
 ===============
 idSessionLocal::DrawWipeModel
