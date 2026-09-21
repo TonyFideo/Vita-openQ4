@@ -140,7 +140,7 @@ void idImage::SubImageUpload( int mipLevel, int x, int y, int z, int width, int 
 		glPixelStorei( GL_UNPACK_SWAP_BYTES, GL_TRUE );
 	}
 #endif
-#ifdef DEBUG
+#if defined(DEBUG) && !defined(VITA) && !defined(__vita__)
 	GL_CheckErrors();
 #endif
 	if ( IsCompressed() ) {
@@ -188,7 +188,7 @@ void idImage::SubImageUpload( int mipLevel, int x, int y, int z, int width, int 
 
 		glTexSubImage2D( uploadTarget, mipLevel, x, y, width, height, dataFormat, dataType, pic );
 	}
-#ifdef DEBUG
+#if defined(DEBUG) && !defined(VITA) && !defined(__vita__)
 	GL_CheckErrors();
 #endif
 #if !defined(VITA) && !defined(__vita__)
@@ -713,7 +713,21 @@ void idImage::AllocImage() {
 				glTexImage2D( uploadTarget + side, level, internalFormat, w, h, 0, dataFormat, dataType, NULL );
 			}
 
+#if defined(VITA) || defined(__vita__)
+			// BEGIN VITA IMAGE STORAGE RESULT
+			// GL_CheckErrors only logs and consumes the failure. Do not continue
+			// allocating/uploading subsequent levels of incomplete storage.
+			const GLenum storageError = glGetError();
+			if ( storageError != GL_NO_ERROR ) {
+				PurgeImage();
+				common->Error( "Image storage failed for %s side %d mip %d (GL 0x%x)",
+					GetName(), side, level, (unsigned)storageError );
+				return;
+			}
+			// END VITA IMAGE STORAGE RESULT
+#else
 			GL_CheckErrors();
+#endif
 
 			w = Max( 1, w >> 1 );
 			h = Max( 1, h >> 1 );

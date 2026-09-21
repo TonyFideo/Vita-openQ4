@@ -1072,6 +1072,17 @@ void idImage::ActuallyLoadImage( bool fromBackEnd ) {
 			// path performs synchronous CPU block reordering into GPU storage.
 			im.ReleaseImageData( i );
 #if defined(VITA) || defined(__vita__)
+			// BEGIN VITA IMAGE UPLOAD RESULT
+			const GLenum uploadError = glGetError();
+			if ( uploadError != GL_NO_ERROR ) {
+				const int failedLevel = img.level;
+				im.Clear(); // release the file/remaining staging before error handling
+				PurgeImage();
+				common->Error( "Image upload failed for %s mip %d (GL 0x%x)",
+					GetName(), failedLevel, (unsigned)uploadError );
+				return;
+			}
+			// END VITA IMAGE UPLOAD RESULT
 			if ( logGuiMip ) {
 				VitaLoadingHud_LogOk( "GPU mip OK %d/%d: %s", i + 1, imageCount, GetName() );
 			}

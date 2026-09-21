@@ -39,9 +39,10 @@ using GLboolean = bool;
 constexpr bool GL_TRUE = true;
 constexpr int GL_VERSION = 1, SCE_GXM_MULTISAMPLE_NONE = 0;
 static bool vitaGLReady = false, versionValid = true, unrelatedModified = true;
+static bool poolReady = true;
+extern "C" int voq_vgl_memory_init_ok() { return poolReady; }
 static int nativeInits = 0, checkpoints = 0;
 void VitaGLimp_Log(const char *) {}
-int VitaGLimp_FreeCdramBytes() { return 128 * 1024 * 1024; }
 void VitaLoadingHud_SetCheckpoint(const char *message) {
     assert(std::strcmp(message, "IMAGE policy primed before upload") == 0);
     ++checkpoints;
@@ -51,15 +52,22 @@ void VitaLoadingHud_RendererInitialized() {}
 void VitaLoadingHud_LogError(const char *) {}
 void vglSetCircularPoolSize(int) {}
 void vglSetParamBufferSize(int) {}
-bool vglInitWithCustomThreshold(int,int,int,int,int,int,int,int) { ++nativeInits; return false; }
+bool vglInitWithCustomThreshold(int,int,int,int ram,int cdram,int phy,int dialog,int) {
+    assert(ram == 10 * 1024 * 1024 && cdram == 0 && phy == 0 && dialog == 0x8C6000);
+    ++nativeInits; return false;
+}
 void vglWaitVblankStart(bool) {}
 const char *glGetString(int) { return versionValid ? "test" : nullptr; }
 __FUNCTIONS__
 int main() {
+    // Pool failure must stop before enabling a context or priming image state.
+    poolReady = false;
+    assert(!GLimp_Init({}) && !vitaGLReady && manager.primes == 0);
+    poolReady = true;
     // Failed initialization must not consume pending configuration changes.
     versionValid = false;
     assert(!GLimp_Init({}));
-    assert(manager.primes == 0 && manager.reductionModified && manager.samplingModified);
+    assert(!vitaGLReady && manager.primes == 0 && manager.reductionModified && manager.samplingModified);
     // Successful initialization consumes only the image policy flags.
     vitaGLReady = false; versionValid = true;
     assert(GLimp_Init({}));

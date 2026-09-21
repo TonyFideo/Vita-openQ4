@@ -1,8 +1,8 @@
 <a id="top"></a>
 
-> **Vita loading follow-up:** DDS lookup metadata now grows in stable blocks to
-> avoid whole-cache copy peaks. Gameplay entry still needs target validation.
-> [Build-255 investigation and test criteria](tools/vita/GAMEPLAY_DDS_PROBE_CACHE.md).
+> **Vita loading follow-up:** graphics initialization now uses the intended CDRAM
+> pool and stops on incomplete texture storage. Gameplay still needs target validation.
+> [Build-256 memory-bank investigation](tools/vita/GAMEPLAY_GPU_POOLS.md).
 
 > **Vita development:** the current candidate adds row-bounded RGBA8 sky loading
 > with full native cube mip storage. Gameplay entry and the remaining menu

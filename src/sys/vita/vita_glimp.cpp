@@ -16,6 +16,8 @@
 
 namespace {
 
+extern "C" int voq_vgl_memory_init_ok(void);
+
 static bool vitaGLReady = false;
 static bool vitaGLLogging = false;
 
@@ -41,14 +43,6 @@ static void VitaGLimp_PrimeImagePolicy( void ) {
 	}
 }
 
-static int VitaGLimp_FreeCdramBytes( void ) {
-	SceKernelFreeMemorySizeInfo freeMemory = {};
-	freeMemory.size = sizeof( freeMemory );
-	if ( sceKernelGetFreeMemorySize( &freeMemory ) < 0 ) {
-		return 128 * 1024 * 1024;
-	}
-	return static_cast<int>( freeMemory.size_cdram );
-}
 
 }
 
@@ -184,7 +178,10 @@ bool GLimp_Init( glimpParms_t parms ) {
 	vglSetParamBufferSize( 14 * 1024 * 1024 );
 
 	const int ramThreshold = 10 * 1024 * 1024;
-	const int cdramThreshold = VitaGLimp_FreeCdramBytes();
+	// A threshold is memory to LEAVE OUT, not the desired pool capacity.
+	// The live HUD allocation is already excluded from the kernel free count.
+	// Reserving that whole count disabled CDRAM and diverted textures to newlib.
+	const int cdramThreshold = 0;
 	const int phycontThreshold = 0;
 	const int commonDialogThreshold = 0x8C6000;
 
@@ -200,7 +197,10 @@ bool GLimp_Init( glimpParms_t parms ) {
 		commonDialogThreshold,
 		SCE_GXM_MULTISAMPLE_NONE );
 
-	vitaGLReady = true;
+	if ( !voq_vgl_memory_init_ok() ) {
+		VitaLoadingHud_LogError( "VitaGL: memory pool initialization failed" );
+		return false;
+	}
 	vglWaitVblankStart( GL_TRUE );
 
 	glConfig.vidWidth = 960;
@@ -216,6 +216,7 @@ bool GLimp_Init( glimpParms_t parms ) {
 	}
 
 	const bool rendererValid = glGetString( GL_VERSION ) != NULL;
+	vitaGLReady = rendererValid;
 	if ( rendererValid ) {
 		VitaGLimp_PrimeImagePolicy();
 		VitaLoadingHud_RendererInitialized();
