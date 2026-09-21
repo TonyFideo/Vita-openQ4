@@ -29,6 +29,7 @@ jobs:
           /src/
           /tools/vita/
           /content/baseoq4/pak0/openq4_profile_vita.cfg
+          /content/baseoq4/pak0/guis/
           /.github/workflows/
           /AGENTS.md
           /README.md
@@ -80,7 +81,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import base64, hashlib, json, os, subprocess, urllib.request
+          import base64, hashlib, json, os, urllib.request
           from pathlib import Path
           paths = [
               'docs/dev/releases/vita-0.1-float-capture.md',
