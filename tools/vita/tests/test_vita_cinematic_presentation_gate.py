@@ -35,6 +35,22 @@ class CinematicPresentationGateTest(unittest.TestCase):
             (game/'Game_local.h').write_text(
                 'class idGameLocal {\npublic:\n\tbool\t\t\t\t\tInCinematic( void ) { return inCinematic; }\n'
                 'bool inCinematic; bool skipCinematic;\n};\n')
+            fixture_files = {
+                'Entity.cpp': 'void idEntity::Present( void ) {\\n\\tBecomeInactive( TH_UPDATEVISUALS );\\n}\\n',
+                'Light.cpp': 'void idLight::Present( void ) {\\n\\tidEntity::Present();\\n}\\n',
+                'AFEntity.cpp': (
+                    'void idMultiModelAF::Present( void ) {\\n\\tBecomeInactive( TH_UPDATEVISUALS );\\n}\\n'
+                    'void idAFEntity_Gibbable::Present( void ) {\\n\\tidEntity::Present();\\n}\\n'
+                ),
+                'BrittleFracture.cpp': 'void idBrittleFracture::Present() {\\n\\tBecomeInactive( TH_UPDATEVISUALS );\\n}\\n',
+                'Item.cpp': 'void idItem::Present( void ) {\\n\\tidEntity::Present();\\n}\\n',
+                'SecurityCamera.cpp': 'void idSecurityCamera::Present( void ) {\\n\\tBecomeInactive( TH_UPDATEVISUALS );\\n}\\n',
+                'client/ClientModel.cpp': 'void rvClientModel::PresentPresentation( int presentationTime ) {\\n\\treturn;\\n}\\n',
+            }
+            for relative, contents in fixture_files.items():
+                path = game / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(contents)
             wrapper.apply_vita_game_patches(root)
             interface=(game/'Game.h').read_text()
             local=(game/'Game_local.h').read_text()
@@ -76,8 +92,12 @@ class CinematicPresentationGateTest(unittest.TestCase):
             for relative, signature in signatures:
                 wrapper._insert_skip_guard(root/relative,signature)
                 body=function((root/relative).read_text(),signature)
-                self.assertLess(body.index('IsCinematicFastForwarding'), body.find('BecomeInactive') if 'BecomeInactive' in body else len(body))
-                self.assertLess(body.index('IsCinematicFastForwarding'), body.find('idEntity::Present') if 'idEntity::Present' in body else len(body))
+                body_text = body[body.index('{') + 1:]
+                guard_index = body_text.index('IsCinematicFastForwarding')
+                become_index = body_text.find('BecomeInactive')
+                base_present_index = body_text.find('idEntity::Present();')
+                self.assertLess(guard_index, become_index if become_index >= 0 else len(body_text))
+                self.assertLess(guard_index, base_present_index if base_present_index >= 0 else len(body_text))
 
     def test_source_drift_fails_instead_of_fuzzy_patch(self):
         wrapper=load_wrapper()
