@@ -73,7 +73,9 @@ class VitaAsyncTimerTest(unittest.TestCase):
     def test_gameplay_audit_observes_without_driving_simulation(self):
         session = (ROOT / 'src/framework/Session.cpp').read_text()
         marker = session.index('[VOQ4][gameplay]')
-        block = session[marker - 1800:marker + 1000]
+        start = session.rfind('static int vitaGameplayAuditNextMsec', 0, marker)
+        self.assertGreaterEqual(start, 0)
+        block = session[start:marker + 1000]
         for token in ('com_ticNumber', 'latchedTicNumber', 'lastGameTic',
                       'gameTicsToRun', 'game->InCinematic()', 'syncNextGameFrame'):
             self.assertIn(token, block)
