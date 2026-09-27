@@ -1,5 +1,15 @@
 ## Vita-openQ4
-An experimental ps vita port of the openQ4 engine vibely slopped as an experiment, doesn't reflect the author code.
+An experimental ps vita port of the openQ4 engine vibely slopped as an experiment, doesn't reflect the author code, don't expect something polished for a long while.
+## Progress
+-Core game logic.
+
+-Main menu.
+
+-Basic touch support for menus.
+
+-Loads the first cutscene when starting a new game.
+
+-Crashes when reaching gameplay.
 
 Readme unfinished
 
